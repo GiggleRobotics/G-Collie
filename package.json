@@ -1,0 +1,52 @@
+{
+  "name": "g-collie",
+  "version": "0.3.3",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx server/index.ts",
+    "build": "vite build",
+    "start": "NODE_ENV=production tsx server/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test server/*.test.ts",
+    "setup": "node scripts/setup.mjs",
+    "service:install": "node scripts/service.mjs install",
+    "service:start": "node scripts/service.mjs start",
+    "service:stop": "node scripts/service.mjs stop",
+    "service:restart": "node scripts/service.mjs restart",
+    "service:status": "node scripts/service.mjs status",
+    "service:uninstall": "node scripts/service.mjs uninstall",
+    "release:pack": "node scripts/release.mjs",
+    "package:deb": "node scripts/package-deb.mjs",
+    "package:apk": "bash scripts/package-apk.sh",
+    "build:network": "bash scripts/build-network.sh",
+    "package:flutter-apk": "bash scripts/package-flutter-apk.sh"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "lucide-react": "^1.59.0",
+    "mammoth": "^1.13.0",
+    "marked": "^18.1.1",
+    "pdfjs-dist": "^6.4.299",
+    "qrcode": "^1.5.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "sanitize-html": "^2.18.1",
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/sanitize-html": "^2.16.2",
+    "@types/web-push": "^3.6.4",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0",
+    "vite": "^6.3.0"
+  }
+}

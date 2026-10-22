@@ -1,0 +1,19 @@
+node_modules/
+dist/
+.data/
+.env
+
+releases/
+screenshots/
+
+.tools
+.packaging
+
+android/lib/
+
+# Python caches and local editor / environment files
+__pycache__/
+*.py[cod]
+.DS_Store
+.env.*
+!.env.example

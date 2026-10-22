@@ -1,0 +1,1 @@
+{"id": "/", "name": "G-Collie", "short_name": "G-Collie", "description": "帮你照看每一个 Agent", "start_url": "/", "scope": "/", "display": "standalone", "background_color": "#ffffff", "theme_color": "#212121", "icons": [{"src": "/brand/collie-mark-v2.png", "sizes": "1254x1254", "type": "image/png", "purpose": "any"}]}

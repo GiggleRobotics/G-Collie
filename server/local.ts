@@ -1,0 +1,6 @@
+import {execFile} from 'node:child_process';import {promisify} from 'node:util';import{join}from'node:path';import{readFile}from'node:fs/promises';
+const exec=promisify(execFile);let cached:any;let expires=0;let pending:Promise<any>|undefined;
+async function read(mode:string,id?:string){const{stdout}=await exec('python3',[join(process.cwd(),'scripts/read-local.py'),mode,...(id?[id]:[])],{maxBuffer:16*1024*1024,timeout:20000});return JSON.parse(stdout)}
+export async function listLocal(){if(cached&&Date.now()<expires)return cached;if(!pending)pending=read('list').then(v=>{cached=v;expires=Date.now()+10000;return v}).finally(()=>{pending=undefined});return pending}
+export function invalidateLocal(){cached=undefined;expires=0}
+export async function detailLocal(id:string){if(!/^(codex|hermes):[a-zA-Z0-9_-]+$/.test(id))throw Error('无效会话 ID');const detail=await read('detail',id);const token=(await readFile(join(process.env.GCOLLIE_DATA_DIR||join(process.cwd(),'.data'),'access-token'),'utf8')).trim();if(token)detail.events=JSON.parse(JSON.stringify(detail.events||[]).split(token).join('[配对密钥已隐藏]'));return detail}

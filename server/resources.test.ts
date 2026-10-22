@@ -1,0 +1,11 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,writeFile,mkdir,symlink} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import express from 'express';
+import {references,resourceFile,installPreviews} from './resources.js';
+const fixture=async()=>{const cwd=await mkdtemp(join(tmpdir(),'collie-resource-'));await writeFile(join(cwd,'report.md'),'# Report\n<script>alert(1)</script>\n[bad](javascript:alert(1))');return {cwd,id:'codex:test',events:[{role:'assistant',text:'[报告](report.md)'}]};};
+test('only message references can be read; reject traversal into secret files and symlinks',async()=>{const d=await fixture();const r=references(d)[0];assert.equal((await resourceFile(d,r.id)).name,'report.md');await assert.rejects(resourceFile(d,'a'.repeat(32)));await mkdir(join(d.cwd,'.ssh'));await writeFile(join(d.cwd,'.ssh','key.md'),'secret');await symlink(join(d.cwd,'.ssh','key.md'),join(d.cwd,'leak.md'));d.events.push({role:'assistant',text:'[leak](leak.md)'});await assert.rejects(resourceFile(d,references(d)[1].id));});
+test('structured inline image survives projection and validates mime',async()=>{const d={id:'codex:image',events:[{role:'user',media:['data:image/png;base64,aGVsbG8='],text:''}]};const r=references(d)[0];assert.equal(r.image,true);assert.equal((await resourceFile(d,r.id)).data?.toString(),'hello');});
+test('browser ticket previews sanitized markdown, supports download and revocation',async()=>{const d=await fixture();let allowed=true;const app=express();const issue=installPreviews(app,async()=>d,()=>allowed);const server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));try{const port=(server.address() as any).port;const path=await issue(d.id,references(d)[0].id,'phone');const base='http://127.0.0.1:'+port;const html=await(await fetch(base+path)).text();assert.match(html,/<h1>Report/);const embedded=await(await fetch(base+path+'?embedded=1')).text();assert.doesNotMatch(embedded,/<header>/);assert.match(embedded,/<h1>Report/);assert.doesNotMatch(html,/alert\(1\)/);const download=await fetch(base+path.replace('/view','/content?download=1'));assert.match(download.headers.get('content-disposition')||'',/attachment/);allowed=false;assert.equal((await fetch(base+path)).status,410);}finally{server.close();}});
