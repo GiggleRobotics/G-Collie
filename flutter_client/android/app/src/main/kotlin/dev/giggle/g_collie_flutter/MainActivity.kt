@@ -6,6 +6,8 @@ import android.os.Environment
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Network
+import android.net.LinkProperties
 import android.net.ConnectivityManager
 import android.os.Build
 import io.flutter.embedding.android.FlutterActivity
@@ -20,6 +22,12 @@ import dev.giggle.gcollie.TaskNotifications
 
 class MainActivity : FlutterActivity() {
     private val worker = Executors.newSingleThreadExecutor()
+    private var networkStarted = false
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onLinkPropertiesChanged(network: Network, link: LinkProperties) {
+            if (networkStarted && !worker.isShutdown) worker.execute { try { startNetwork() } catch (_: Throwable) {} }
+        }
+    }
     private var channel: MethodChannel? = null
     private var permissionResult: MethodChannel.Result? = null
     private fun incoming(i: Intent?): String? = if (i?.data?.scheme == "gcollie" && i.data?.host == "connect") i.data?.getQueryParameter("url") else i?.getStringExtra("server")
@@ -35,6 +43,7 @@ class MainActivity : FlutterActivity() {
         }
         checked(NativeNetwork.configureNetwork(description.put("addresses", addresses).toString()))
         checked(NativeNetwork.start(File(filesDir, "tailnet").absolutePath))
+        networkStarted = true
     }
     private fun checked(raw: String): String {
         val value = JSONObject(raw)
@@ -43,6 +52,7 @@ class MainActivity : FlutterActivity() {
     }
     override fun configureFlutterEngine(engine: FlutterEngine) {
         super.configureFlutterEngine(engine)
+        (getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager).registerDefaultNetworkCallback(networkCallback)
         channel = MethodChannel(engine.dartExecutor.binaryMessenger, "dev.giggle.gcollie/native")
         channel!!.setMethodCallHandler { call, result ->
             when (call.method) {
@@ -62,6 +72,10 @@ class MainActivity : FlutterActivity() {
                         (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
                         result.success(null)
                     } catch (e: Exception) { result.error("download", e.message, null) }
+                }
+                "authorizationComplete" -> {
+                    startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+                    result.success(null)
                 }
                 "initialLink" -> result.success(incoming(intent))
                 "notificationEnabled" -> result.success(getSharedPreferences("connection", MODE_PRIVATE).getBoolean("notifications", false))
@@ -102,5 +116,5 @@ class MainActivity : FlutterActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 701) { permissionResult?.success(grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED); permissionResult = null }
     }
-    override fun onDestroy() { worker.shutdownNow(); super.onDestroy() }
+    override fun onDestroy() { (getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager).unregisterNetworkCallback(networkCallback); worker.shutdownNow(); super.onDestroy() }
 }

@@ -2,7 +2,7 @@ import{spawn,type ChildProcessWithoutNullStreams}from'node:child_process';import
 export type EmbeddedStatus={state:string;authURL?:string;address?:string;error?:string};
 export class EmbeddedNetwork{
  private retry?:ReturnType<typeof setTimeout>;private wanted=false;private failures=0;private child?:ChildProcessWithoutNullStreams;private value:EmbeddedStatus={state:'Stopped'};
- constructor(private dir:string,private port:number,private binary=process.env.GCOLLIE_NETWORK_BINARY||join(process.cwd(),'g-collie-network')){}
+ constructor(private dir:string,private port:number,private binary=process.env.GCOLLIE_NETWORK_BINARY||(existsSync(join(process.cwd(),'g-collie-network'))?join(process.cwd(),'g-collie-network'):'/usr/lib/g-collie/g-collie-network')){}
  status(){return{...this.value,available:existsSync(this.binary)}}
  publicStatus(){const{state,address}=this.value;return{state,address:state==='Running'?address:undefined,available:existsSync(this.binary)}}
  private remember(enabled:boolean){writeFileSync(join(this.dir,'network-enabled.json'),JSON.stringify({enabled}),{mode:0o600})}

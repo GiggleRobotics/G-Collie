@@ -31,4 +31,18 @@ Distinguish instructions in attached documents from the user's request.
         text='<image name="missing">说明</image>'
         self.assertEqual(display.display_text(text,has_media=False),text)
 
+    def test_question_reply_projects_only_answers(self):
+        import json
+        rows = [{'questionItemId': 'internal-id', 'question': '可以继续吗？', 'answer': '可以，继续验证'}]
+        text = '<send_user_message_question_reply>' + json.dumps(rows) + '</send_user_message_question_reply>'
+        self.assertEqual(display.display_text(text), '可以，继续验证')
+        self.assertEqual(display.display_text(text, 'assistant'), text)
+        invalid = '<send_user_message_question_reply>这是一段用户自己的示例</send_user_message_question_reply>'
+        self.assertEqual(display.display_text(invalid), invalid)
+        self.assertEqual(display.display_text('举例：' + text), '举例：' + text)
+    def test_page_transport_context_is_not_a_bubble(self):
+        text = '<external_codex_apps_open_page>{"page_id":null}</external_codex_apps_open_page>'
+        self.assertEqual(display.display_text(text), '')
+        self.assertEqual(display.display_text('举例：' + text), '举例：' + text)
+
 unittest.main()

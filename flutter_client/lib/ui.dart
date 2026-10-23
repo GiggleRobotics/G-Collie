@@ -1,3 +1,4 @@
+import 'reset_credits.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'dart:math' as math;
@@ -8,6 +9,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'api.dart';
+import 'project_picker.dart';
 import 'native.dart';
 import 'resources.dart';
 import 'process_record.dart';
@@ -34,7 +36,9 @@ Widget glyph(String name, {double size = 22, Color? color}) => Builder(
     ),
   ),
 );
-Widget agentLogo(String agent, {double size = 22}) => agent == 'Codex'
+Widget agentLogo(String agent, {double size = 22}) => agent == 'Claude Code'
+    ? Icon(Icons.auto_awesome, size: size, color: const Color(0xffd97757))
+    : agent == 'Codex'
     ? SvgPicture.asset('assets/codex.svg', width: size, height: size)
     : Image.asset('assets/hermes.png', width: size, height: size);
 Widget collieMark({double size = 30}) => Image.asset(
@@ -207,6 +211,7 @@ class _CollieShellState extends State<CollieShell> {
   bool large = false, uploading = false;
   final uploads = <Json>[];
   String uploadError = '';
+  String uploadStatus = '';
   @override
   void initState() {
     super.initState();
@@ -223,7 +228,9 @@ class _CollieShellState extends State<CollieShell> {
     }
   }
 
-  Future<void> upload(bool image) async {
+  Future<void> upload(String kind) async {
+    final image = kind == 'image';
+    final video = kind == 'video';
     if (uploading || !widget.enabled) return;
     final id = widget.detail?['id'];
     try {
@@ -235,25 +242,52 @@ class _CollieShellState extends State<CollieShell> {
                   extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
                 ),
               ]
+            : video
+            ? [
+                const XTypeGroup(
+                  label: '视频',
+                  extensions: ['mp4', 'mov', 'm4v', 'webm'],
+                ),
+              ]
             : [],
       );
       if (files.length + uploads.length > 5) {
         throw ApiException('每条消息最多添加 5 个附件');
       }
       if (files.isEmpty) return;
-      setState(() => uploading = true);
+      setState(() {
+        uploading = true;
+        uploadStatus = '正在上传附件…';
+      });
       for (final f in files) {
         final length = await f.length();
-        if (length == 0 || length > 10 * 1024 * 1024) {
-          throw ApiException('请选择不超过 10 MB 的非空文件');
+        if (length == 0 || length > (video ? 100 : 10) * 1024 * 1024) {
+          throw ApiException(
+            video ? '请选择不超过 100 MB 的视频' : '请选择不超过 10 MB 的非空文件',
+          );
         }
-        final data = base64Encode(await f.readAsBytes());
-        final value = await widget.api.call('/attachments', {
-          'session': id,
-          'name': f.name,
-          'image': image,
-          'data': data,
-        });
+        final value = video
+            ? await widget.api.uploadVideo(
+                id as String,
+                f.name,
+                length,
+                f.openRead(),
+                onProgress: (sent, total) {
+                  if (mounted) {
+                    setState(
+                      () => uploadStatus = sent >= total
+                          ? '正在完成视频上传…'
+                          : '正在上传视频 ${(sent * 100 / total).floor()}%',
+                    );
+                  }
+                },
+              )
+            : await widget.api.call('/attachments', {
+                'session': id,
+                'name': f.name,
+                'image': image,
+                'data': base64Encode(await f.readAsBytes()),
+              });
         if (!mounted || widget.detail?['id'] != id) return;
         setState(() => uploads.add(Map<String, dynamic>.from(value)));
       }
@@ -265,6 +299,18 @@ class _CollieShellState extends State<CollieShell> {
   }
 
   ThemeMode mode = ThemeMode.system;
+  Future<void> create() async {
+    final settings = await chooseSessionSettings();
+    if (settings == null || !mounted) return;
+    setState(() => page = 'chat');
+    widget.onCreate();
+    await WidgetsBinding.instance.endOfFrame;
+    if (mounted && widget.detail?['draft'] == true) {
+      widget.onOpen('draft-agent:${settings['agent']}');
+      widget.onOpen('draft-project:${settings['cwd']}');
+    }
+  }
+
   void open(String id) {
     setState(() => page = 'chat');
     widget.onOpen(id);
@@ -371,7 +417,7 @@ class _CollieShellState extends State<CollieShell> {
                         ? null
                         : () {
                             Navigator.pop(context);
-                            widget.onCreate();
+                            create();
                           },
                   ),
                 ],
@@ -607,7 +653,7 @@ class _CollieShellState extends State<CollieShell> {
             ),
             Row(
               children: [
-                for (final value in ['all', 'Codex', 'Hermes'])
+                for (final value in ['all', 'Codex', 'Hermes', 'Claude Code'])
                   Expanded(
                     child: Padding(
                       padding: const EdgeInsets.all(3),
@@ -876,7 +922,7 @@ class _CollieShellState extends State<CollieShell> {
       const SizedBox(height: 26),
       Row(
         children: [
-          for (final a in ['Codex', 'Hermes', 'projects'])
+          for (final a in ['Codex', 'Hermes', 'Claude Code', 'projects'])
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 3),
@@ -1006,7 +1052,9 @@ class _CollieShellState extends State<CollieShell> {
       Center(
         child: muted(
           context,
-          !widget.online
+          d['draft'] == true
+              ? '直接发送第一条消息，自动生成会话名称'
+              : !widget.online
               ? '电脑连接中断 · 状态未知'
               : d['desktopLive'] == true
               ? '桌面实时连接 · ${const {'idle': '空闲', 'running': '执行中', 'waiting': '等待处理', 'starting': '加载中'}[d['status']] ?? '状态未知'} · 最近 ${d['historyLimit'] ?? 200} 条记录'
@@ -1092,6 +1140,7 @@ class _CollieShellState extends State<CollieShell> {
           ),
       if (d['liveInflight']?['assistant'] != null)
         markdown('${d['liveInflight']['assistant']}'),
+      if (d['agent'] == 'Codex' && RegExp(r'额度|usage.limit|rate.limit|quota', caseSensitive: false).hasMatch('${d['error'] ?? d['desktopError'] ?? ''}')) outlineAction('查看额度与重置卡', () => setState(() => page = 'usage')),
       if (d['desktopError'] != null) ...[
         muted(context, '${d['desktopError']}'),
         outlineAction(
@@ -1101,11 +1150,263 @@ class _CollieShellState extends State<CollieShell> {
       ],
       if (widget.pending != null) widget.pending!,
       const SizedBox(height: 28),
-      Center(child: muted(context, '已加载的会话记录', size: 10)),
+      if (d['draft'] != true)
+        Center(child: muted(context, '已加载的会话记录', size: 10)),
     ],
   );
+  Future<Json?> chooseSessionSettings({Json? initial}) {
+    String? selectedAgent = initial?['agent'];
+    String? selectedProject = initial?['cwd'];
+    final options = widget.projects
+        .map((p) => Map<String, dynamic>.from(p))
+        .toList();
+    return showModalBottomSheet<Json>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, change) {
+          Future<void> newProject() async {
+            final result = await showModalBottomSheet<Json>(
+              context: ctx,
+              isScrollControlled: true,
+              useSafeArea: true,
+              showDragHandle: true,
+              builder: (_) => NewProjectSheet(api: widget.api),
+            );
+            if (result == null || !ctx.mounted) return;
+            change(() {
+              options.removeWhere((p) => p['path'] == result['path']);
+              options.add(result);
+              selectedProject = result['path'];
+            });
+            widget.onRefresh();
+          }
+
+          Widget card(
+            double width,
+            String key,
+            String label,
+            String? path,
+            Widget icon,
+            bool selected,
+            VoidCallback tap, {
+            bool assistant = false,
+          }) => SizedBox(
+            width: width,
+            height: assistant ? 68 : 78,
+            child: OutlinedButton(
+              key: ValueKey(key),
+              onPressed: tap,
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.all(10),
+                backgroundColor: selected
+                    ? companionGreen.withValues(alpha: .08)
+                    : null,
+                side: BorderSide(
+                  color: selected
+                      ? companionGreen
+                      : Theme.of(ctx).dividerColor.withValues(alpha: .3),
+                  width: selected ? 1.5 : 1,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Row(
+                    children: [
+                      icon,
+                      const Spacer(),
+                      if (selected)
+                        glyph('Check', size: 17, color: companionGreen),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: assistant ? 12 : 13,
+                      height: 1.2,
+                      fontWeight: FontWeight.w600,
+                      color: Theme.of(ctx).colorScheme.onSurface,
+                    ),
+                  ),
+                  if (path != null)
+                    Text(
+                      path,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 10,
+                        height: 1.2,
+                        color: mutedColor(ctx),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          );
+          return SizedBox(
+            height: MediaQuery.sizeOf(ctx).height * .85,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          '新会话设置',
+                          style: TextStyle(
+                            fontSize: 21,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: '关闭新会话设置',
+                        onPressed: () => Navigator.pop(ctx),
+                        icon: glyph('X'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      child: LayoutBuilder(
+                        builder: (ctx, constraints) {
+                          final width = (constraints.maxWidth - 12) / 2;
+                          final agentWidth = (constraints.maxWidth - 20) / 3;
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              const Text(
+                                '选择助手',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              Wrap(
+                                spacing: 10,
+                                runSpacing: 10,
+                                children: [
+                                  for (final name in [
+                                    'Codex',
+                                    'Hermes',
+                                    'Claude Code',
+                                  ])
+                                    card(
+                                      agentWidth,
+                                      'session-agent:$name',
+                                      name,
+                                      null,
+                                      agentLogo(name, size: 24),
+                                      selectedAgent == name,
+                                      () => change(() => selectedAgent = name),
+                                      assistant: true,
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(height: 18),
+                              const Text(
+                                '选择项目',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              Wrap(
+                                spacing: 12,
+                                runSpacing: 12,
+                                children: [
+                                  card(
+                                    width,
+                                    'session-new-project',
+                                    '新建项目',
+                                    null,
+                                    glyph('Plus', size: 24),
+                                    false,
+                                    newProject,
+                                  ),
+                                  card(
+                                    width,
+                                    'session-project:',
+                                    '无项目',
+                                    '默认目录',
+                                    glyph('Folder', size: 22),
+                                    selectedProject == '',
+                                    () => change(() => selectedProject = ''),
+                                  ),
+                                  for (final p in options)
+                                    card(
+                                      width,
+                                      'session-project:${p['path']}',
+                                      p['name'],
+                                      p['path'],
+                                      glyph('Folder', size: 22),
+                                      selectedProject == p['path'],
+                                      () => change(
+                                        () => selectedProject = p['path'],
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(height: 16),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton(
+                    key: const ValueKey('session-start'),
+                    onPressed: selectedAgent != null && selectedProject != null
+                        ? () => Navigator.pop(ctx, {
+                            'agent': selectedAgent,
+                            'cwd': selectedProject,
+                          })
+                        : null,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: companionGreen,
+                      padding: const EdgeInsets.symmetric(vertical: 15),
+                    ),
+                    child: const Text('开始会话'),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   Future<void> sessionMenu() async {
     final d = widget.detail!;
+    if (d['draft'] == true) {
+      final settings = await chooseSessionSettings(initial: d);
+      if (settings != null && mounted) {
+        widget.onOpen('draft-agent:${settings['agent']}');
+        widget.onOpen('draft-project:${settings['cwd']}');
+      }
+      return;
+    }
     await collieSheet<void>(
       context,
       d['agent'],
@@ -1269,6 +1570,9 @@ class _CollieShellState extends State<CollieShell> {
 
   Widget composer() {
     final d = widget.detail;
+    final hasContent =
+        widget.draft.text.trim().isNotEmpty || uploads.isNotEmpty;
+    final showStop = widget.running && !hasContent;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
       child: Column(
@@ -1289,6 +1593,9 @@ class _CollieShellState extends State<CollieShell> {
                     children: [
                       for (final file in uploads)
                         Container(
+                          constraints: BoxConstraints(
+                            maxWidth: MediaQuery.sizeOf(context).width - 64,
+                          ),
                           padding: const EdgeInsets.symmetric(
                             horizontal: 10,
                             vertical: 5,
@@ -1300,11 +1607,39 @@ class _CollieShellState extends State<CollieShell> {
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              glyph('Paperclip', size: 18),
+                              file['video'] == true
+                                  ? const Icon(
+                                      Icons.video_library_outlined,
+                                      size: 18,
+                                    )
+                                  : glyph(
+                                      file['image'] == true
+                                          ? 'Image'
+                                          : 'Paperclip',
+                                      size: 18,
+                                    ),
                               const SizedBox(width: 7),
-                              Text(
-                                file['name'],
-                                style: const TextStyle(fontSize: 11),
+                              Flexible(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      file['name'],
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(fontSize: 11),
+                                    ),
+                                    if (file['video'] == true)
+                                      const Text(
+                                        '画面分析 · 不含音频',
+                                        style: TextStyle(
+                                          fontSize: 9,
+                                          color: Colors.grey,
+                                        ),
+                                      ),
+                                  ],
+                                ),
                               ),
                               iconAction(
                                 'X',
@@ -1320,6 +1655,24 @@ class _CollieShellState extends State<CollieShell> {
                         ),
                     ],
                   ),
+                if (uploading)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(
+                      children: [
+                        const SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(strokeWidth: 1.5),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          uploadStatus,
+                          style: const TextStyle(fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
                 if (uploadError.isNotEmpty)
                   Text(
                     uploadError,
@@ -1327,12 +1680,12 @@ class _CollieShellState extends State<CollieShell> {
                   ),
                 TextField(
                   controller: widget.draft,
-                  enabled: widget.enabled && !widget.running,
+                  enabled: widget.enabled,
                   minLines: 1,
                   maxLines: 6,
                   maxLength: 4000,
                   onChanged: (_) => widget.onDraft(),
-                  style: const TextStyle(fontSize: 13, height: 1.6),
+                  style: const TextStyle(fontSize: 14, height: 1.6),
                   decoration: InputDecoration(
                     hintText: widget.loading
                         ? '正在加载历史会话…'
@@ -1345,31 +1698,33 @@ class _CollieShellState extends State<CollieShell> {
                         : '只读 · 暂不能发送消息',
                     border: InputBorder.none,
                     enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    focusedErrorBorder: InputBorder.none,
+                    errorBorder: InputBorder.none,
                     disabledBorder: InputBorder.none,
+                    filled: false,
                     isDense: true,
                     counterText: '',
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 4,
-                      vertical: 1,
+                      vertical: 5,
                     ),
                   ),
                 ),
                 const SizedBox(height: 8),
                 Row(
                   children: [
-                    PopupMenuButton<bool>(
+                    PopupMenuButton<String>(
                       tooltip: '添加附件',
                       enabled:
                           widget.enabled &&
-                          !widget.running &&
                           !uploading &&
                           widget.detail?['managed'] != true,
                       icon: glyph('Plus', size: 23),
                       onSelected: upload,
                       itemBuilder: (_) => [
                         PopupMenuItem(
-                          value: true,
-                          enabled: widget.detail?['agent'] == 'Codex',
+                          value: 'image',
                           child: Row(
                             children: [
                               glyph('Image', size: 19),
@@ -1379,7 +1734,20 @@ class _CollieShellState extends State<CollieShell> {
                           ),
                         ),
                         PopupMenuItem(
-                          value: false,
+                          value: 'video',
+                          child: Row(
+                            children: [
+                              const Icon(
+                                Icons.video_library_outlined,
+                                size: 19,
+                              ),
+                              const SizedBox(width: 12),
+                              const Text('添加视频'),
+                            ],
+                          ),
+                        ),
+                        PopupMenuItem(
+                          value: 'file',
                           child: Row(
                             children: [
                               glyph('Paperclip', size: 19),
@@ -1401,15 +1769,15 @@ class _CollieShellState extends State<CollieShell> {
                       ),
                     ),
                     IconButton(
-                      tooltip: widget.running ? '停止当前轮' : '发送',
+                      tooltip: showStop ? '停止当前轮' : '发送',
                       onPressed:
                           widget.enabled &&
                               !uploading &&
-                              (widget.running
+                              (showStop
                                   ? (d?['turnId'] != null)
                                   : (widget.draft.text.trim().isNotEmpty ||
                                         uploads.isNotEmpty))
-                          ? widget.running
+                          ? showStop
                                 ? widget.onStop
                                 : () async {
                                     if (await widget.onSend(
@@ -1432,7 +1800,7 @@ class _CollieShellState extends State<CollieShell> {
                         fixedSize: const Size(32, 32),
                         padding: const EdgeInsets.all(6),
                       ),
-                      icon: widget.running
+                      icon: showStop
                           ? const Icon(Icons.stop, size: 16)
                           : glyph('ArrowUp', size: 20, color: Colors.white),
                     ),
@@ -1458,7 +1826,9 @@ class _CollieShellState extends State<CollieShell> {
       appBar: AppBar(
         automaticallyImplyLeading: false,
         title: Text(
-          widget.api.gatewayCookie.isEmpty ? 'G-Collie' : 'G-Collie · 内置私有连接',
+          ['127.0.0.1', 'localhost', '::1'].contains(widget.api.base.host)
+              ? 'G-Collie · USB 调试连接'
+              : 'G-Collie · 私有网络连接',
           style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w400),
         ),
         toolbarHeight: 40,
@@ -1509,11 +1879,15 @@ class _CollieShellState extends State<CollieShell> {
                                 children: [
                                   agentLogo(d['agent'], size: 24),
                                   const SizedBox(width: 7),
-                                  Text(
-                                    d['agent'],
-                                    style: const TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.w600,
+                                  Flexible(
+                                    child: Text(
+                                      d['agent'],
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w600,
+                                      ),
                                     ),
                                   ),
                                   const SizedBox(width: 7),
@@ -1539,7 +1913,7 @@ class _CollieShellState extends State<CollieShell> {
                               ],
                             ),
                     ),
-                    if (d != null && page == 'chat')
+                    if (d != null && d['draft'] != true && page == 'chat')
                       iconAction(
                         'RefreshCw',
                         '刷新会话',
@@ -1549,9 +1923,7 @@ class _CollieShellState extends State<CollieShell> {
                     iconAction(
                       'SquarePen',
                       '新建会话',
-                      widget.role == 'view' || widget.busy
-                          ? null
-                          : widget.onCreate,
+                      widget.role == 'view' || widget.busy ? null : create,
                     ),
                   ],
                 ),
@@ -1569,6 +1941,7 @@ class _CollieShellState extends State<CollieShell> {
                         style: const TextStyle(fontSize: 12),
                       ),
                     ),
+                    if (widget.detail?['agent'] == 'Codex' && RegExp(r'额度|usage.limit|rate.limit|quota', caseSensitive: false).hasMatch(widget.error)) TextButton(onPressed: () => setState(() => page = 'usage'), child: const Text('查看额度与重置卡')),
                     iconAction('X', '关闭提示', widget.onClearError, size: 16),
                   ],
                 ),
@@ -1606,7 +1979,7 @@ class _CollieShellState extends State<CollieShell> {
                       ],
                     )
                   : page == 'usage'
-                  ? UsagePage(api: widget.api, onOpen: open)
+                  ? UsagePage(api: widget.api, onOpen: open, readOnly: widget.role == 'view')
                   : d == null
                   ? RefreshIndicator(
                       onRefresh: widget.onRefresh,
@@ -1762,9 +2135,10 @@ class _SettingsBodyState extends State<SettingsBody> {
 }
 
 class UsagePage extends StatefulWidget {
+  final bool readOnly;
   final CollieApi api;
   final void Function(String) onOpen;
-  const UsagePage({super.key, required this.api, required this.onOpen});
+  const UsagePage({super.key, required this.api, required this.onOpen, this.readOnly = false});
   @override
   State<UsagePage> createState() => _UsagePageState();
 }
@@ -1782,7 +2156,7 @@ class _UsagePageState extends State<UsagePage> {
   Future<void> load() async {
     setState(() => busy = true);
     try {
-      final value = await widget.api.call('/usage');
+      final value = await widget.api.call('/usage?refresh=1');
       if (mounted) {
         setState(() {
           data = value;
@@ -1893,24 +2267,43 @@ class _UsagePageState extends State<UsagePage> {
         const SizedBox(height: 20),
         Row(
           children: [
-            for (final value in ['Codex', 'Hermes'])
-              TextButton(
-                onPressed: () => setState(() {
-                  agent = value;
-                  tab = 'daily';
-                }),
-                style: TextButton.styleFrom(
-                  foregroundColor: Theme.of(context).colorScheme.onSurface,
-                  backgroundColor: agent == value ? panelColor(context) : null,
-                ),
-                child: Row(
-                  children: [
-                    agentLogo(value, size: 22),
-                    const SizedBox(width: 8),
-                    Text(value),
-                  ],
+            for (final value in ['Codex', 'Hermes', 'Claude Code']) ...[
+              if (value != 'Codex') const SizedBox(width: 8),
+              Expanded(
+                child: Semantics(
+                  selected: agent == value,
+                  child: OutlinedButton(
+                    onPressed: () => setState(() {
+                      agent = value;
+                      tab = 'daily';
+                    }),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Theme.of(context).colorScheme.onSurface,
+                      backgroundColor: agent == value ? panelColor(context) : null,
+                      side: BorderSide(
+                        color: agent == value
+                            ? Theme.of(context).colorScheme.onSurface
+                            : Theme.of(context).dividerColor,
+                        width: agent == value ? 1.5 : 1,
+                      ),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 16),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        agentLogo(value, size: 28),
+                        const SizedBox(height: 10),
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(value, maxLines: 1, style: TextStyle(fontSize: 12, fontWeight: agent == value ? FontWeight.w600 : FontWeight.w400)),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
+            ],
           ],
         ),
         if (agent == 'Codex')
@@ -1923,6 +2316,8 @@ class _UsagePageState extends State<UsagePage> {
           context,
           accountScope
               ? 'Codex 官方账号统计 · 上游数据可能延迟。每日日期沿用账号口径。'
+              : agent == 'Claude Code'
+              ? 'Claude Code · 主会话及子代理日志，按消息 ID 去重。输入包含缓存读取和写入，不代表账号全设备额度。'
               : '本机可解析日志 · 输入已包含缓存，推理属于输出。缺失日志的旧快照单独列出。',
         ),
         if (error.isNotEmpty) Text(error),
@@ -1970,7 +2365,8 @@ class _UsagePageState extends State<UsagePage> {
                 for (final item in [
                   ['输入', 'input'],
                   ['输出', 'output'],
-                  ['其中缓存', 'cached'],
+                  ['缓存读取', 'cached'],
+                  ['缓存写入', 'cacheWrite'],
                   ['其中推理', 'reasoning'],
                   ['已记录请求', 'requests'],
                 ])
@@ -2052,12 +2448,13 @@ class _UsagePageState extends State<UsagePage> {
                       const SizedBox(height: 8),
                       muted(
                         context,
-                        '剩余 ${(100 - (w['usedPercent'] as num? ?? 0)).clamp(0, 100)}%',
+                        '剩余 ${(100 - (w['usedPercent'] as num? ?? 0)).clamp(0, 100)}% · 自动恢复：${w['resetsAt'] is num ? DateTime.fromMillisecondsSinceEpoch((w['resetsAt'] as num).toInt() * 1000).toLocal() : '未知'}',
                       ),
                     ],
                   ),
                 ),
             ],
+            ResetCredits(key: ValueKey(account?['accountKey']), account: account, api: widget.api, readOnly: widget.readOnly, onRefresh: () async { final value = await widget.api.call('/usage?refresh=1'); if (mounted) setState(() => data = value); }),
             if ((account?['limits'] as List? ?? []).isEmpty)
               muted(context, account?['limitsError'] ?? '账号未提供可显示的额度窗口'),
           ],
@@ -2114,7 +2511,7 @@ class NetworkPane extends StatefulWidget {
 class _NetworkPaneState extends State<NetworkPane> {
   Json? state;
   String error = '';
-  bool busy = false, loginRequested = false;
+  bool busy = false, loginRequested = false, authorizing = false;
   Timer? poller;
   @override
   void initState() {
@@ -2140,7 +2537,14 @@ class _NetworkPaneState extends State<NetworkPane> {
           url.scheme == 'https' &&
           url.host == 'login.tailscale.com') {
         loginRequested = false;
-        await launchUrl(url, mode: LaunchMode.externalApplication);
+        if (!await launchUrl(url, mode: LaunchMode.inAppBrowserView)) {
+          throw ApiException('无法打开 App 内授权窗口，请检查默认浏览器是否支持授权');
+        }
+      }
+      if (authorizing && s['state'] == 'Running') {
+        authorizing = false;
+        await NativeBridge.invoke<void>('authorizationComplete');
+        NativeBridge.onNetworkReady?.call();
       }
       if (mounted) {
         setState(() {
@@ -2172,10 +2576,10 @@ class _NetworkPaneState extends State<NetworkPane> {
         ),
         const SizedBox(height: 16),
         const Text(
-          '本应用会作为独立设备加入你的 Tailscale 网络。首次需在系统浏览器登录授权；不会接管其他应用的流量。电脑和手机须加入同一有访问权限的网络。',
+          '本应用会作为独立设备加入你的 Tailscale 网络。首次在 App 内的官方授权窗口登录；不会接管其他应用的流量。电脑和手机须加入同一有访问权限的网络。',
         ),
         const SizedBox(height: 12),
-        for (final p in state?['peers'] ?? [])
+        for (final p in state?['computers'] ?? [])
           TextButton(
             onPressed: () => NativeBridge.onLink?.call(p['address']),
             child: Text('${p['name']}\n${p['address']}'),
@@ -2183,6 +2587,7 @@ class _NetworkPaneState extends State<NetworkPane> {
         outlineAction('登录 / 授权入网', () async {
           try {
             loginRequested = true;
+            authorizing = true;
             await NativeBridge.network('Login');
             await refresh();
           } catch (e) {

@@ -7,6 +7,10 @@ class FakeApi extends CollieApi {
   final calls = <String>[];
   Json? sent;
   Json? pending;
+  String status = 'idle';
+  String agent = 'Codex';
+  Json? created;
+  Json? projectAdded;
   FakeApi() : super(Uri.parse('http://localhost:4310'));
   @override
   Future<dynamic> call(String path, [Json? body]) async {
@@ -25,6 +29,31 @@ class FakeApi extends CollieApi {
         'warnings': [],
       };
     }
+    if (path.startsWith('/folders')) {
+      final selected = path.contains('path=');
+      return {
+        'path': selected ? '/home/test/demo' : '/home/test',
+        'parent': selected ? '/home/test' : null,
+        'folders': selected
+            ? []
+            : [
+                {'name': '工作目录', 'path': '/home/test/demo'},
+              ],
+      };
+    }
+    if (path == '/projects') {
+      projectAdded = body;
+      return {
+        'name': body!['name'],
+        'path': body['path'],
+        'agents': [],
+        'sessions': 0,
+      };
+    }
+    if (path == '/sessions') {
+      created = body;
+      return {'id': 'codex:one'};
+    }
     if (path == '/desktop/one') {
       sent = body;
       return {'ok': true};
@@ -33,10 +62,13 @@ class FakeApi extends CollieApi {
       'id': 'codex:one',
       'nativeId': 'one',
       'title': 'Example session',
-      'agent': 'Codex',
+      'agent': agent,
+      'claudeLive': agent == 'Claude Code',
+      'hermesLive': agent == 'Hermes',
       'desktopLive': true,
       'desktopControl': true,
-      'status': pending == null ? 'idle' : 'waiting',
+      'status': pending == null ? status : 'waiting',
+      if (status == 'running') 'turnId': 'active-turn',
       if (pending != null) 'pending': pending,
       'events': [
         {'role': 'assistant', 'text': 'Hello from computer'},
@@ -46,6 +78,181 @@ class FakeApi extends CollieApi {
 }
 
 void main() {
+  testWidgets(
+    'running composer accepts text; empty draft stops, content sends',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = FakeApi()..status = 'running';
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Workspace(api: api, role: 'control'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Example session'));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('停止当前轮'), findsOneWidget);
+      await tester.enterText(find.byType(TextField).last, '补充要求');
+      await tester.pump();
+      expect(find.byTooltip('停止当前轮'), findsNothing);
+      await tester.tap(find.byTooltip('发送'));
+      await tester.pumpAndSettle();
+      expect(api.sent?['action'], 'send');
+      expect(api.sent?['text'], '补充要求');
+      expect(find.byTooltip('停止当前轮'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      api.close();
+    },
+  );
+  testWidgets(
+    'new session opens blank composer and creates only on first send',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = FakeApi();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Workspace(api: api, role: 'control'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('新建会话'));
+      await tester.pumpAndSettle();
+      expect(find.text('新会话设置'), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(find.byKey(const ValueKey('session-start')))
+            .onPressed,
+        isNull,
+      );
+      final codex = tester.getTopLeft(
+        find.byKey(const ValueKey('session-agent:Codex')),
+      );
+      final hermes = tester.getTopLeft(
+        find.byKey(const ValueKey('session-agent:Hermes')),
+      );
+      final claude = tester.getTopLeft(
+        find.byKey(const ValueKey('session-agent:Claude Code')),
+      );
+      expect(codex.dy, hermes.dy);
+      expect(codex.dy, claude.dy);
+      expect(codex.dx, lessThan(hermes.dx));
+      await tester.tap(find.byKey(const ValueKey('session-agent:Hermes')));
+      await tester.pumpAndSettle();
+      expect(find.text('新会话设置'), findsOneWidget);
+      expect(
+        tester
+            .widget<FilledButton>(find.byKey(const ValueKey('session-start')))
+            .onPressed,
+        isNull,
+      );
+      await tester.tap(find.byKey(const ValueKey('session-project:')));
+      await tester.pumpAndSettle();
+      expect(find.text('新会话设置'), findsOneWidget);
+      await tester.ensureVisible(find.byKey(const ValueKey('session-start')));
+      await tester.tap(find.byKey(const ValueKey('session-start')));
+      await tester.pumpAndSettle();
+      expect(find.text('名称'), findsNothing);
+      expect(find.text('第一条消息'), findsNothing);
+      expect(api.created, isNull);
+      await tester.enterText(find.byType(TextField).last, '帮我写一份报告');
+      await tester.pump();
+      await tester.tap(find.byTooltip('发送'));
+      await tester.pumpAndSettle();
+      expect(api.created?['prompt'], '帮我写一份报告');
+      expect(api.created?.containsKey('title'), false);
+      expect(api.created?['draftId'], 'draft:${api.created?['requestId']}');
+      await tester.pumpWidget(const SizedBox());
+      api.close();
+    },
+  );
+  testWidgets(
+    'plus project card opens project creation; chosen folder is confirmed before chatting',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = FakeApi();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Workspace(api: api, role: 'control'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('新建会话'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('session-agent:Hermes')));
+      await tester.pumpAndSettle();
+      expect(find.text('选择已有文件夹'), findsNothing);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('session-new-project')),
+      );
+      await tester.tap(find.byKey(const ValueKey('session-new-project')));
+      await tester.pumpAndSettle();
+      expect(find.text('新建文件夹'), findsOneWidget);
+      await tester.tap(find.text('选择已有文件夹'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('工作目录'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('选择此文件夹'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('添加项目'));
+      await tester.pumpAndSettle();
+      expect(api.projectAdded?['path'], '/home/test/demo');
+      expect(find.text('新会话设置'), findsOneWidget);
+      expect(api.created, isNull);
+      await tester.tap(find.byKey(const ValueKey('session-start')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).last, 'hello');
+      await tester.pump();
+      await tester.tap(find.byTooltip('发送'));
+      await tester.pumpAndSettle();
+      expect(api.created?['cwd'], '/home/test/demo');
+      expect(api.created?['agent'], 'Hermes');
+      await tester.pumpWidget(const SizedBox());
+      api.close();
+    },
+  );
+  for (final agent in ['Codex', 'Hermes', 'Claude Code']) {
+    testWidgets('$agent shares enabled photo, video and file actions', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = FakeApi()..agent = agent;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Workspace(api: api, role: 'control'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Example session'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.byTooltip('添加附件'));
+      await tester.pumpAndSettle();
+      for (final action in ['添加照片', '添加视频', '上传文件']) {
+        expect(
+          tester
+              .widget<PopupMenuItem<String>>(
+                find.widgetWithText(PopupMenuItem<String>, action),
+              )
+              .enabled,
+          true,
+        );
+      }
+      await tester.pumpWidget(const SizedBox());
+      api.close();
+    });
+  }
   testWidgets('open history and send to original desktop session', (
     tester,
   ) async {

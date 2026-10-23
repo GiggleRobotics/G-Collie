@@ -1,0 +1,15 @@
+import React,{useRef,useState}from'react';
+export const resetMessage=(outcome:string)=>({reset:'额度已重置',alreadyRedeemed:'本次重置已完成',nothingToReset:'当前没有可重置的额度，未消耗重置卡',noCredit:'账号暂无可用重置卡'}[outcome]||'重置结果未知，请使用原操作重试');
+export default function ResetCredits({account,api,onRefresh,readOnly=false}:{account:any;api:(p:string,b?:any)=>Promise<any>;onRefresh:()=>Promise<void>;readOnly?:boolean}){
+ const[confirm,setConfirm]=useState(false),[busy,setBusy]=useState(false),[message,setMessage]=useState('');const locked=useRef(false);
+ let pending=false;try{pending=!!localStorage.getItem('gcollie-reset:'+account?.accountKey)}catch{}
+ const summary=account?.resetCredits,storageKey='gcollie-reset:'+account?.accountKey;
+ async function consume(){if(locked.current)return;locked.current=true;setBusy(true);setMessage('');try{
+  let key=localStorage.getItem(storageKey);if(!key){const bytes=crypto.getRandomValues(new Uint8Array(16));bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;const hex=Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');key=hex.slice(0,8)+'-'+hex.slice(8,12)+'-'+hex.slice(12,16)+'-'+hex.slice(16,20)+'-'+hex.slice(20);localStorage.setItem(storageKey,key)}
+  const result=await api('/usage/codex/reset',{accountKey:account.accountKey,idempotencyKey:key});
+  if(!['reset','alreadyRedeemed','nothingToReset','noCredit'].includes(result.outcome))throw Error('重置结果未知，请重试原操作');
+  localStorage.removeItem(storageKey);setConfirm(false);setMessage(resetMessage(result.outcome));
+  try{await onRefresh()}catch{setMessage(resetMessage(result.outcome)+'；最新额度读取失败，请刷新确认')}
+ }catch(e){setMessage((e as Error).message+'。结果未确认时，重试将沿用原操作编号。')}finally{locked.current=false;setBusy(false)}}
+ return <div className="usage-limit-bucket"><h3>额度重置卡 {summary?`· ${summary.availableCount} 张可用`:''}</h3><p className="muted">{!summary?'当前后端未提供重置卡信息，请刷新或更新 Codex。':'使用 1 张恢复符合条件的账号额度，具体范围以服务端为准。'}</p>{account?.accountLabel&&<p>账号：{account.accountLabel}</p>}{summary?.credits?.filter((c:any)=>c.status==='available').map((c:any)=><p className="muted" key={c.id}>{c.title||'额度重置卡'} · {c.expiresAt?'有效期至 '+new Date(c.expiresAt*1000).toLocaleString('zh-CN'):'未提供到期时间'}</p>)}<button className="outlined-button" disabled={busy||readOnly||!account?.accountKey||!summary||(summary.availableCount===0&&!pending)} onClick={()=>setConfirm(true)}>{readOnly?'只读设备不可使用':pending?'重试原重置操作':summary?.availableCount===0?'暂无可用重置卡':'使用重置卡'}</button>{message&&<p role="status">{message}</p>}{confirm&&<div className="modal-backdrop"><section className="reset-dialog" role="dialog" aria-modal="true" aria-labelledby="reset-title"><h2 id="reset-title">使用 1 张重置卡？</h2><p>账号：{account.accountLabel||account.accountKey}</p><p>恢复符合条件的额度；卡片使用后将被消耗。重置范围和下次恢复时间以服务端结果为准。</p><p>服务端将选择下一张可用重置卡。</p>{message&&<p role="alert">{message}</p>}<div className="reset-actions"><button autoFocus className="outlined-button" disabled={busy} onClick={()=>setConfirm(false)}>取消</button> <button className="outlined-button" disabled={busy} onClick={consume}>{busy?'正在重置…':'使用 1 张并重置'}</button></div></section></div>}</div>
+}

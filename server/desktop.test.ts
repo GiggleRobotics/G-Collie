@@ -6,3 +6,14 @@ import{desktopPending,desktopAnswer}from'./desktop.js';
 test('桌面审批绑定原请求，过期审批不能误批新请求',()=>{const c={id:'t',requests:[{id:7,method:'item/commandExecution/requestApproval',params:{threadId:'t',turnId:'turn',command:'echo test',availableDecisions:['accept','decline']}}]};const p=desktopPending(c)!;assert.equal(p.kind,'approval');assert.deepEqual(desktopAnswer(c,{pendingId:p.id,decision:'accept'}),{method:'thread-follower-command-approval-decision',params:{conversationId:'t',requestId:7,decision:'accept'}});c.requests=[];assert.throws(()=>desktopAnswer(c,{pendingId:p.id,decision:'accept'}),/过期/)});
 test('桌面问题要求每题有答案，响应不含内部上下文',()=>{const c={id:'t',requests:[{id:'q1',method:'item/tool/requestUserInput',params:{threadId:'t',turnId:'turn',questions:[{id:'color',question:'颜色？'}],secret:'never-export'}}]};const p=desktopPending(c)!;assert.equal((p.params as any).secret,undefined);assert.throws(()=>desktopAnswer(c,{pendingId:p.id,answers:{}}));assert.deepEqual(desktopAnswer(c,{pendingId:p.id,answers:{color:'blue'}}).params.response,{answers:{color:{answers:['blue']}}})});
 test('文件审批使用文件响应通道，不能扩大桌面提供的授权选项',()=>{const c={id:'t',requests:[{id:'file',method:'item/fileChange/requestApproval',params:{threadId:'t',turnId:'turn',grantRoot:'/test',availableDecisions:['decline']}}]};const p=desktopPending(c)!;assert.throws(()=>desktopAnswer(c,{pendingId:p.id,decision:'accept'}),/未提供/);assert.equal(desktopAnswer(c,{pendingId:p.id,decision:'decline'}).method,'thread-follower-file-approval-decision')});
+import {desktopSend} from './desktop.js';
+test('执行中追加消息使用桌面 steer，不启动第二轮；附件也可单独发送',()=>{
+ const b={text:'追加要求',requestId:'request-steer'};
+ const active=desktopSend('thread',{status:'running',turnId:'turn'},b);
+ assert.equal(active.method,'thread-follower-steer-turn');assert.equal(active.version,1);
+ assert.equal(active.params.input![0].text,'追加要求');assert.equal(active.params.clientUserMessageId,b.requestId);assert.deepEqual(active.params.restoreMessage?.context,{});
+ assert.equal(desktopSend('thread',{status:'idle'},b).method,'thread-follower-start-turn');
+ assert.throws(()=>desktopSend('thread',{status:'unknown'},b),/尚未同步/);
+ const image=desktopSend('thread',{status:'waiting',turnId:'turn'},{text:'',requestId:'image',attachments:[{image:true,path:'/selected/image.png'}]});
+ assert.deepEqual(image.params.input,[{type:'localImage',path:'/selected/image.png'}]);
+});

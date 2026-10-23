@@ -1,5 +1,5 @@
 """Read-only, allowlisted session projection. Never exports settings or credentials."""
-import json,sqlite3,pathlib,sys,datetime,re
+import json,sqlite3,pathlib,sys,datetime,re,os
 from message_display import display_text
 from process_records import ProcessRecords
 HOME=pathlib.Path.home()
@@ -17,7 +17,14 @@ try:APP_STATE=json.loads((HOME/'.codex/.codex-global-state.json').read_text())
 except:APP_STATE={}
 REGISTERED=APP_STATE.get('local-projects',{})
 PROJECTLESS=set(APP_STATE.get('projectless-thread-ids',[]))
+try:
+ FOLDER_DATA=pathlib.Path(os.environ.get('GCOLLIE_DATA_DIR',str(pathlib.Path.cwd()/'.data')))
+ FOLDER_PROJECTS={p['path']:p for p in json.loads((FOLDER_DATA/'folder-projects.json').read_text())}
+ FOLDER_ASSIGNMENTS=json.loads((FOLDER_DATA/'folder-session-projects.json').read_text())
+except:FOLDER_PROJECTS={};FOLDER_ASSIGNMENTS={}
 def project_for(agent,r,cwd):
+ folder=FOLDER_PROJECTS.get(FOLDER_ASSIGNMENTS.get(r['id']))
+ if folder:return dict(path=folder['path'],name=folder['name'])
  if agent=='Codex':
   if r['id'] in PROJECTLESS:return None
   assignment=APP_STATE.get('thread-project-assignments',{}).get(r['id'],{})

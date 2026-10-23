@@ -60,3 +60,17 @@ Linux 用户级服务，首次安装在 Codex 终端环境执行，保存当前�
 来源标志说明见 `public/icons/README.md`。第三方商标、分发许可与其他正式商用事项仍需确认。
 
 安装包：Linux amd64 DEB 与 Android APK 的安装、数据迁移、限制和构建方式见 [RELEASE.md](RELEASE.md)。
+
+## Claude Code / DeepSeek
+
+本机安装 `claude` CLI 后，可在“新建会话”选择 **Claude Code**。CLI 默认位置为 `~/.local/bin/claude`，可用 `GCOLLIE_CLAUDE_BIN` 指定。DeepSeek URL、模型和独立 Key 配置在本机 `~/.claude/settings.json` 的 `env` 中，配置文件应为 600 权限，勿提交到仓库。
+
+G-Collie 新建的 Claude Code 会话支持发送、继续原会话和停止当前轮；终端单独创建的会话仅查看历史，避免接管终端任务。CLI 使用 `dontAsk` 权限模式，需要额外授权的工具会被拒绝，可在电脑终端处理。已接入原生图片输入和视频画面抽样；暂未接入 Claude Code 的手机审批、分享与推送；用量页已支持本机日志汇总。不要同时在终端运行 G-Collie 正在执行的同一个会话。
+
+三个助手使用同一套 Flutter 聊天与附件界面。照片/文件单个最大 10 MB，视频最大 100 MB；视频保留原件并抽样最多 6 帧供模型查看，不包含音频分析。服务端需要 FFmpeg，可用 `GCOLLIE_FFMPEG` 指定，或在 Linux x86_64 开发机运行 `python3 scripts/setup-ffmpeg.py` 安装本地固定版本依赖（不会自动打包进 Debian 包）。
+
+## 用量与额度重置
+
+用量页通过一行三个卡片切换 Codex、Hermes、Claude Code。Claude Code 按本机主会话及子代理日志统计日/月、项目、会话和模型用量，按消息 ID 去重，输入包含缓存读取与写入；该统计不代表账号全设备账单。
+
+Codex 账号额度下显示可用重置卡与有效期，使用前确认当前账号。服务端校验账号身份并调用官方消费接口，成功后重新读取真实额度；未知结果重试沿用原操作编号，避免重复消耗。只读设备不能使用重置卡，未提供卡片信息时不会显示为零张。

@@ -1,2 +1,2 @@
 import React from 'react';
-export default function AgentIcon({agent}:{agent:string}){return <img className="agent-logo" src={agent==='Codex'?'/icons/codex.svg':'/icons/hermes.png'} alt={`${agent} 图标`} width="32" height="32"/>}
+export default function AgentIcon({agent}:{agent:string}){if(agent==='Claude Code')return <span className="agent-logo" aria-label="Claude Code" style={{display:'inline-grid',placeItems:'center',background:'#d97757',color:'white',borderRadius:8,fontSize:20,width:32,height:32}}>✳</span>;return <img className="agent-logo" src={agent==='Codex'?'/icons/codex.svg':'/icons/hermes.png'} alt={`${agent} 图标`} width="32" height="32"/>}

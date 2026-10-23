@@ -1,11 +1,33 @@
 """Remove known app-generated attachment envelopes, preserving the human request."""
 import re
+import json
 from pathlib import PurePath
 from urllib.parse import quote
 
 
 def display_text(text, role='user', has_media=False):
     if role == 'user':
+        reply = re.fullmatch(r'\s*<send_user_message_question_reply>\s*(.*?)\s*</send_user_message_question_reply>\s*', text, re.S)
+        if reply:
+            try:
+                rows = json.loads(reply[1])
+                if isinstance(rows, list) and rows and all(
+                    isinstance(row, dict) and isinstance(row.get('questionItemId'), str)
+                    and isinstance(row.get('question'), str) and isinstance(row.get('answer'), str)
+                    for row in rows
+                ):
+                    text = '\n\n'.join(row['answer'] for row in rows)
+            except (ValueError, TypeError):
+                pass
+        # These are transport context snapshots, not human chat messages.
+        context = re.fullmatch(r'\s*<external_codex_apps_open_page>\s*(.*?)\s*</external_codex_apps_open_page>\s*', text, re.S)
+        if context:
+            try:
+                value = json.loads(context[1])
+                if isinstance(value, dict) and set(value) == {'page_id'}:
+                    return ''
+            except (ValueError, TypeError):
+                pass
         # Only unwrap the complete known envelope. A user's ordinary headings
         # with the same words must not be removed.
         envelope = re.match(

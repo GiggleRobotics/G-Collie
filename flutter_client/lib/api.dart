@@ -35,7 +35,11 @@ String requestId() => List.generate(
 ).join();
 String controlPath(Json detail) {
   if (detail['desktopLive'] == true && detail['managed'] != true) {
-    return '/${detail['hermesLive'] == true ? 'hermes' : 'desktop'}/${Uri.encodeComponent(detail['nativeId'] as String)}';
+    return '/${detail['claudeLive'] == true
+        ? 'claude'
+        : detail['hermesLive'] == true
+        ? 'hermes'
+        : 'desktop'}/${Uri.encodeComponent(detail['nativeId'] as String)}';
   }
   return '/control/${Uri.encodeComponent(detail['id'] as String)}';
 }
@@ -148,6 +152,52 @@ class CollieApi {
       if (bytes.length > 15 * 1024 * 1024) throw ApiException('图片超过 15 MB');
     }
     return bytes;
+  }
+
+  Future<Json> uploadVideo(
+    String session,
+    String name,
+    int length,
+    Stream<List<int>> bytes, {
+    void Function(int, int)? onProgress,
+  }) async {
+    final url = endpoint
+        .resolve('/api/attachments/media')
+        .replace(queryParameters: {'session': session, 'name': name});
+    HttpClientRequest? request;
+    try {
+      request = await _client.postUrl(url);
+      request.followRedirects = false;
+      request.contentLength = length;
+      request.headers.contentType = ContentType.binary;
+      if (requestCookie.isNotEmpty) {
+        request.headers.set(HttpHeaders.cookieHeader, requestCookie);
+      }
+      var sent = 0;
+      await request
+          .addStream(
+            bytes.map((chunk) {
+              sent += chunk.length;
+              onProgress?.call(sent, length);
+              return chunk;
+            }),
+          )
+          .timeout(const Duration(minutes: 3));
+      final response = await request.close().timeout(
+        const Duration(minutes: 3),
+      );
+      final data =
+          jsonDecode(await response.transform(utf8.decoder).join())
+              as Map<String, dynamic>;
+      if (response.statusCode != 200) {
+        throw ApiException('${data['error'] ?? '视频上传失败'}', response.statusCode);
+      }
+      return data;
+    } catch (e) {
+      request?.abort();
+      if (e is ApiException) rethrow;
+      throw ApiException('视频上传中断，请重新选择；不会自动重发消息');
+    }
   }
 
   Future<dynamic> call(String path, [Json? body]) async {

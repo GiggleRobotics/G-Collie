@@ -34,4 +34,25 @@ class UsageTests(unittest.TestCase):
     c.execute('UPDATE sessions SET input_tokens=20,output_tokens=8,cache_read_tokens=60,api_call_count=2');c.commit();b=u.report();self.assertEqual(b['agents']['Hermes']['today']['total'],23)
     self.assertEqual(u.report()['agents']['Hermes']['today']['total'],23)
    finally:u.HOME,u.DATA=oldhome,olddata;c.close()
+class ClaudeUsageTests(unittest.TestCase):
+ def row(self,id='msg1',output=5,**extra):
+  return dict(type='assistant',timestamp='2026-10-23T04:00:00Z',cwd='/work/project',message=dict(id=id,model='deepseek-flash',usage=dict(input_tokens=10,cache_read_input_tokens=20,cache_creation_input_tokens=30,output_tokens=output)),**extra)
+ def test_streaming_duplicates_count_once_and_include_cache(self):
+  with tempfile.TemporaryDirectory() as d:
+   p=pathlib.Path(d)/'s.jsonl';p.write_text('\n'.join(json.dumps(r) for r in [self.row(output=1),self.row(),self.row(),dict(type='progress'),dict(type='user',message=dict(content='private prompt'))])+'\n{partial')
+   data=u.scan_claude(p);self.assertEqual(len(data['events']),1);v=data['events'][0]['usage']
+   self.assertEqual(v['input'],60);self.assertEqual(v['output'],5);self.assertEqual(v['requests'],1);self.assertEqual(v['cacheWrite'],30);self.assertEqual(data['badLines'],1)
+   self.assertNotIn('private prompt',json.dumps(data['events']))
+ def test_report_includes_subagents_dates_project_and_clickable_session(self):
+  with tempfile.TemporaryDirectory() as d:
+   home=pathlib.Path(d)/'home';data=pathlib.Path(d)/'data';root=home/'.claude/projects/proj';root.mkdir(parents=True)
+   p=root/'session.jsonl';p.write_text(json.dumps(self.row())+'\n')
+   sub=root/'session/subagents';sub.mkdir(parents=True);(sub/'agent.jsonl').write_text(json.dumps(self.row(id='child',output=7))+'\n')
+   oldhome,olddata=u.HOME,u.DATA;u.HOME,u.DATA=home,data
+   try:
+    a=u.report()['agents']['Claude Code'];self.assertEqual(a['total']['total'],132);self.assertEqual(a['total']['requests'],2)
+    self.assertEqual(a['sessions'][0]['id'],'claude:session');self.assertEqual(a['projects'][0]['path'],'/work/project');self.assertEqual(a['daily'][0]['usage']['total'],132)
+    self.assertEqual(u.report()['agents']['Claude Code']['total'],a['total'])
+    p.write_text(p.read_text()+json.dumps(self.row(id='next',output=2))+'\n');self.assertEqual(u.report()['agents']['Claude Code']['total']['total'],194)
+   finally:u.HOME,u.DATA=oldhome,olddata
 if __name__=='__main__':unittest.main()

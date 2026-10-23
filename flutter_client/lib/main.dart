@@ -97,6 +97,11 @@ class _ConnectionState extends State<ConnectionPage> {
   @override
   void initState() {
     super.initState();
+    NativeBridge.onNetworkReady = () {
+      if (mounted && address.text.isNotEmpty) {
+        NativeBridge.onLink?.call(address.text);
+      }
+    };
     NativeBridge.onLink = (value) async {
       if (!mounted) return;
       Navigator.of(context).popUntil((r) => r.isFirst);
@@ -288,8 +293,50 @@ class _ConnectionState extends State<ConnectionPage> {
     return api!;
   }
 
+  Future<CollieApi> preferRemote(CollieApi current) async {
+    if (!['127.0.0.1', 'localhost', '::1'].contains(current.base.host)) {
+      return current;
+    }
+    CollieApi? remote;
+    try {
+      final network = await current.call('/network');
+      final target =
+          network['embedded']?['address'] ?? network['tailscale']?['httpsURL'];
+      if (target is! String || !NativeBridge.embedded(serverUri(target))) {
+        return current;
+      }
+      final base = serverUri(target);
+      remote = CollieApi(
+        base,
+        cookie: current.cookie,
+        saveCookie: (c) => storage.write(key: 'cookie:$base', value: c),
+      );
+      await NativeBridge.connect(remote);
+      final before = await current.call('/auth/status');
+      final after = await remote.call('/auth/status');
+      if (after['paired'] != true ||
+          before['device']?['id'] != after['device']?['id']) {
+        throw ApiException('远程电脑身份不匹配');
+      }
+      await storage.write(key: 'cookie:$base', value: remote.cookie);
+      await storage.write(key: 'server', value: '$base');
+      address.text = '$base';
+      current.close();
+      return remote;
+    } catch (_) {
+      remote?.close();
+      return current;
+    }
+  }
+
   Future<void> enter(CollieApi client, String role) async {
     if (!mounted) return;
+    client = await preferRemote(client);
+    api = client;
+    if (!mounted) {
+      client.close();
+      return;
+    }
     setState(() => busy = false);
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -563,6 +610,14 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   }
 
   Future<void> open(String id) async {
+    if (id.startsWith('draft-agent:') && detail?['draft'] == true) {
+      setState(() => detail = {...detail!, 'agent': id.substring(12)});
+      return;
+    }
+    if (id.startsWith('draft-project:') && detail?['draft'] == true) {
+      setState(() => detail = {...detail!, 'cwd': id.substring(14)});
+      return;
+    }
     final token = ++generation;
     setState(() {
       loading = true;
@@ -610,7 +665,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     final current = detail;
     try {
       if (++ticks % 8 == 0) await load();
-      if (current != null) {
+      if (current != null && current['draft'] != true) {
         final d = await widget.api.call(
           '/local/${Uri.encodeComponent(current['id'])}',
         );
@@ -670,147 +725,54 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   }
 
   Future<void> create() async {
-    final title = TextEditingController(), prompt = TextEditingController();
-    String selected = 'Hermes', cwd = '';
-    final result = await collieSheet<Json>(
-      context,
-      '新建会话',
-      (ctx) => StatefulBuilder(
-        builder: (ctx, change) => Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            muted(ctx, '选择助手，开始一项新工作', size: 13),
-            const SizedBox(height: 18),
-            Row(
-              children: [
-                for (final value in ['Hermes', 'Codex'])
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: OutlinedButton(
-                        onPressed: () => change(() => selected = value),
-                        style: OutlinedButton.styleFrom(
-                          backgroundColor: selected == value
-                              ? panelColor(ctx)
-                              : null,
-                          padding: const EdgeInsets.all(14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            agentLogo(value),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                value,
-                                style: TextStyle(
-                                  color: Theme.of(ctx).colorScheme.onSurface,
-                                ),
-                              ),
-                            ),
-                            if (selected == value) glyph('Check', size: 17),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            muted(
-              ctx,
-              selected == 'Codex'
-                  ? '在电脑 Codex 创建，并发送第一条消息。'
-                  : '在电脑 Hermes 后端创建，首次发送后保存历史记录。',
-            ),
-            const SizedBox(height: 18),
-            const Text('项目', style: TextStyle(fontSize: 13)),
-            const SizedBox(height: 8),
-            DropdownButtonFormField<String>(
-              initialValue: cwd,
-              isExpanded: true,
-              items: [
-                const DropdownMenuItem(value: '', child: Text('无项目 · 默认目录')),
-                ...projects.map(
-                  (p) => DropdownMenuItem<String>(
-                    value: p['path'],
-                    child: Text(
-                      '${p['name']} · ${p['path']}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ),
-              ],
-              onChanged: (v) => change(() => cwd = v!),
-            ),
-            const SizedBox(height: 18),
-            const Text('名称', style: TextStyle(fontSize: 13)),
-            const SizedBox(height: 8),
-            TextField(
-              controller: title,
-              maxLength: 100,
-              onChanged: (_) => change(() {}),
-              decoration: const InputDecoration(
-                hintText: '想开展什么工作？',
-                counterText: '',
-              ),
-            ),
-            if (selected == 'Codex') ...[
-              const SizedBox(height: 18),
-              const Text('第一条消息', style: TextStyle(fontSize: 13)),
-              const SizedBox(height: 8),
-              TextField(
-                controller: prompt,
-                maxLength: 4000,
-                maxLines: 3,
-                onChanged: (_) => change(() {}),
-                decoration: const InputDecoration(
-                  hintText: '想让 Codex 做什么？',
-                  counterText: '',
-                ),
-              ),
-            ],
-            const SizedBox(height: 22),
-            OutlinedButton(
-              onPressed:
-                  title.text.trim().isEmpty ||
-                      (selected == 'Codex' && prompt.text.trim().isEmpty)
-                  ? null
-                  : () => Navigator.pop(ctx, {
-                      'agent': selected,
-                      'title': title.text.trim(),
-                      'prompt': selected == 'Codex' ? prompt.text : '',
-                      'cwd': cwd,
-                      'requestId': requestId(),
-                    }),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Text('开始会话'),
-                  const SizedBox(width: 12),
-                  glyph('ArrowUp', size: 18),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-    // Controllers are released after the dialog's closing animation.
-    await Future<void>.delayed(const Duration(milliseconds: 300));
-    title.dispose();
-    prompt.dispose();
-    if (result == null || !mounted) return;
-    setState(() => busy = true);
+    final previous = detail;
+    setState(() {
+      generation++;
+      loading = false;
+      error = '';
+      draft.clear();
+      answers.clear();
+      detail = {
+        'id': 'draft:${requestId()}',
+        'draft': true,
+        'agent': previous?['agent'] ?? 'Hermes',
+        'cwd': previous?['projectPath'] ?? '',
+        'title': '新会话',
+        'status': 'idle',
+        'events': <Json>[],
+      };
+    });
+  }
+
+  Future<bool> sendDraft(List<String> ids) async {
+    final d = detail!;
+    if (busy || !online || (draft.text.trim().isEmpty && ids.isEmpty)) {
+      return false;
+    }
+    final text = draft.text;
+    final token = generation;
+    setState(() {
+      busy = true;
+      error = '';
+    });
     try {
-      final d = await widget.api.call('/sessions', result);
-      await load();
-      if (mounted) await open(d['id']);
+      final result = await widget.api.call('/sessions', {
+        'agent': d['agent'],
+        'cwd': d['cwd'],
+        'prompt': text,
+        'draftId': d['id'],
+        'attachments': ids,
+        'requestId': (d['id'] as String).substring(6),
+      });
+      if (mounted && token == generation) {
+        await open(result['id']);
+        await load();
+      }
+      return true;
     } catch (e) {
-      failure(e);
+      // Keep the draft and its request id: an uncertain submission must not replay.
+      if (mounted && token == generation) setState(() => error = '$e');
+      return false;
     } finally {
       if (mounted) setState(() => busy = false);
     }
@@ -934,7 +896,9 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         !busy &&
         !loading &&
         active &&
-        canControl(d, widget.role, online);
+        (d['draft'] == true
+            ? online && widget.role != 'view'
+            : canControl(d, widget.role, online));
     void home() {
       setState(() {
         generation++;
@@ -976,6 +940,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         onCreate: create,
         onDisconnect: disconnect,
         onSend: (ids) async {
+          if (detail?['draft'] == true) return sendDraft(ids);
           await control('send', {'text': draft.text, 'attachments': ids});
           return error.isEmpty;
         },

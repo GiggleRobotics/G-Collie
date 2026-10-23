@@ -32,6 +32,9 @@ void main() {
       '/control/managed%3Aabc',
     );
   });
+  test('Claude sessions use Claude control endpoint', () {
+    expect(controlPath({'desktopLive': true, 'claudeLive': true, 'nativeId': 'abc'}), '/claude/abc');
+  });
   test('read-only, disconnected and archived devices cannot control', () {
     final detail = {'desktopLive': true, 'desktopControl': true};
     expect(canControl(detail, 'control', true), isTrue);

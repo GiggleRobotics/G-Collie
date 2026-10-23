@@ -1,5 +1,5 @@
 import ChatConsole from './ChatConsole';import React,{useEffect,useState}from'react';import{createRoot}from'react-dom/client';import'./chat.css';
-const linkedSession=new URLSearchParams(location.search).get('session');if(linkedSession&&/^(codex|hermes|managed):[a-zA-Z0-9_-]+$/.test(linkedSession))localStorage.setItem('orbit-session',linkedSession);
+const linkedSession=new URLSearchParams(location.search).get('session');if(linkedSession&&/^(codex|hermes|claude|managed):[a-zA-Z0-9_-]+$/.test(linkedSession))localStorage.setItem('orbit-session',linkedSession);
 const hash=new URLSearchParams(location.hash.slice(1));let legacy=hash.get('token')||localStorage.getItem('orbit-token')||'';const pairing=hash.get('pair')||'';if(hash.get('token')||pairing)history.replaceState(null,'',location.pathname);
 let deviceRole='view';
 export async function api(path:string,body?:any){const r=await fetch('/api'+path,{credentials:'same-origin',headers:{...(body?{'Content-Type':'application/json'}:{})},method:body?'POST':'GET',body:body?JSON.stringify(body):undefined});const d=await r.json();if(r.status===401)window.dispatchEvent(new Event('gcollie-auth-lost'));if(!r.ok)throw Error(d.error||'连接失败');if(deviceRole==='view'&&d&&typeof d==='object'&&'desktopLive'in d)return{...d,desktopControl:false,readOnly:true};return d}

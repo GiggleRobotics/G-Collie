@@ -1,2 +1,12 @@
 import{test}from'node:test';import assert from'node:assert/strict';import{mkdtempSync,rmSync,readFileSync}from'node:fs';import{join}from'node:path';import{tmpdir}from'node:os';import{AttachmentStore,attachmentInput}from'./attachments.js';
 test('附件绑定设备和会话，禁止路径注入及错误图片，文件与原生图片输入独立',()=>{const root=mkdtempSync(join(tmpdir(),'gcollie-files-'));try{const store=new AttachmentStore(root);const file=store.add('phone','codex:test',{name:'../../notes.txt',data:Buffer.from('ATTACHMENT_OK').toString('base64')});assert.equal(file.name,'.._.._notes.txt');assert.equal('path'in file,false);assert.throws(()=>store.resolve([file.id],'other','codex:test'));assert.throws(()=>store.resolve([file.id],'phone','codex:other'));assert.throws(()=>store.content('../access-token','phone'));assert.throws(()=>store.add('phone','codex:test',{name:'fake.png',data:'dGVzdA==',image:true}));assert.throws(()=>store.add('phone','codex:test',{name:'test',data:'%%%' }));const input=attachmentInput('',store.resolve([file.id],'phone','codex:test'));assert.equal(input[0].type,'text');assert.match(input[0].text,/notes.txt/);const img=store.add('phone','codex:test',{name:'picture.png',image:true,data:Buffer.from([137,80,78,71,13,10,26,10,1]).toString('base64')});const image=attachmentInput('see picture',store.resolve([img.id],'phone','codex:test'));assert.equal(image[1].type,'localImage');assert.equal(image[1].path,store.content(img.id,'phone').path);assert.equal(readFileSync(store.content(file.id,'phone').path,'utf8'),'ATTACHMENT_OK');assert.throws(()=>store.resolve([file.id,file.id],'phone','codex:test'));store.remove(file.id,'phone');assert.throws(()=>store.content(file.id,'phone'))}finally{rmSync(root,{recursive:true,force:true})}});
+test('首条消息附件从草稿绑定到真实会话，不能跨设备或重复借用',()=>{
+ const root=mkdtempSync(join(tmpdir(),'gcollie-draft-files-'));
+ try{const s=new AttachmentStore(root);const f=s.add('phone','draft:request123',{name:'notes.md',data:Buffer.from('notes').toString('base64')});
+ assert.throws(()=>s.rebind([f.id],'other','draft:request123','codex:new'));
+ s.rebind([f.id],'phone','draft:request123','codex:new');
+ assert.equal(s.resolve([f.id],'phone','codex:new').length,1);
+ assert.throws(()=>s.resolve([f.id],'phone','draft:request123'));
+ assert.throws(()=>s.resolve([f.id],'phone','hermes:other'));
+ }finally{rmSync(root,{recursive:true,force:true})}
+});

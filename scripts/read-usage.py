@@ -61,6 +61,26 @@ def scan(path,native):
  if undated['input'] or undated['output']:events.append(dict(key=None,day=None,model='历史未分模型',usage=undated))
  return dict(events=events,limits=limits,badLines=bad,modern=modern)
 
+def scan_claude(path):
+ messages={};cwd='';title='Claude Code';bad=0
+ with path.open() as f:
+  for line in f:
+   try:r=json.loads(line)
+   except (ValueError,UnicodeError):bad+=1;continue
+   cwd=cwd or r.get('cwd') or ''
+   m=r.get('message') or {}
+   if r.get('type')=='user' and not r.get('isMeta') and title=='Claude Code':
+    content=m.get('content');text=content if isinstance(content,str) else next((p.get('text','') for p in content or [] if isinstance(p,dict) and p.get('type')=='text'),'')
+    if text.strip():title=' '.join(text.split())[:160]
+   if r.get('type')!='assistant' or not isinstance(m.get('usage'),dict):continue
+   raw=m['usage'];n=lambda k:max(0,raw.get(k) or 0)
+   amount=dict(input=n('input_tokens')+n('cache_read_input_tokens')+n('cache_creation_input_tokens'),output=n('output_tokens'),cached=n('cache_read_input_tokens'),cacheWrite=n('cache_creation_input_tokens'),reasoning=max(0,(raw.get('output_tokens_details') or {}).get('thinking_tokens') or 0),requests=1,unclassified=0)
+   key='claude:'+(m.get('id') or r.get('uuid') or hashlib.sha256(line.encode()).hexdigest())
+   old=messages.get(key)
+   if old:amount={k:max(old['usage'][k],amount[k]) for k in FIELDS}
+   messages[key]=dict(key=key,day=day(r.get('timestamp','')) or (old or {}).get('day'),model=m.get('model') or '未知',usage=amount)
+ return dict(events=list(messages.values()),cwd=cwd,title=title,badLines=bad)
+
 def project_for(agent,r,state):
  if agent=='Codex':
   if r['id'] in state.get('projectless-thread-ids',[]):return None
@@ -70,6 +90,7 @@ def project_for(agent,r,state):
  matches=[(root,p) for p in state.get('local-projects',{}).values() for root in p.get('rootPaths',[]) if cwd and (pathlib.Path(cwd)==pathlib.Path(root) or pathlib.Path(cwd).is_relative_to(pathlib.Path(root)))]
  if matches:
   root,p=max(matches,key=lambda x:len(x[0]));return dict(path=root,name=p.get('name') or pathlib.Path(root).name)
+ if agent=='Claude Code' and cwd:return dict(path=cwd,name=pathlib.Path(cwd).name)
  if agent=='Hermes' and r.get('git_repo_root'):return dict(path=r['git_repo_root'],name=pathlib.Path(r['git_repo_root']).name)
  return None
 
@@ -81,7 +102,7 @@ def report():
  try:state=json.loads((HOME/'.codex/.codex-global-state.json').read_text())
  except:state={}
  result=dict(generatedAt=datetime.datetime.now().astimezone().isoformat(),timezone=str(datetime.datetime.now().astimezone().tzinfo),trackingSince=cache['trackingSince'],agents={},warnings=[])
- agents={a:dict(total=blank(),days={},sessions=[],projects={},models={},coverage=dict(sessions=0,withUsage=0,missingFiles=0,undated=blank())) for a in ['Codex','Hermes']}
+ agents={a:dict(total=blank(),days={},sessions=[],projects={},models={},coverage=dict(sessions=0,withUsage=0,missingFiles=0,undated=blank())) for a in ['Codex','Hermes','Claude Code']}
  global_seen=set();latest_limits=None;newfiles={}
  def ingest(agent,r,events,extra=None):
   a=agents[agent];a['coverage']['sessions']+=1;p=project_for(agent,r,state);total=blank();modelTotals={}
@@ -97,7 +118,7 @@ def report():
   if finish(total)['total'] or total.get('unclassified'):a['coverage']['withUsage']+=1
   pk=p['path'] if p else ''
   proj=a['projects'].setdefault(pk,dict(name=p['name'] if p else '未关联项目',path=pk,usage=blank(),sessions=0));add(proj['usage'],total);proj['sessions']+=1
-  a['sessions'].append(dict(id=agent.lower()+':'+r['id'],title=(r.get('name') or r.get('title') or '未命名会话')[:160],project=p['name'] if p else '无项目',model=r.get('model'),usage=finish(total),**(extra or {})))
+  a['sessions'].append(dict(id=('claude' if agent=='Claude Code' else agent.lower())+':'+r['id'],title=(r.get('name') or r.get('title') or '未命名会话')[:160],project=p['name'] if p else '无项目',model=r.get('model'),usage=finish(total),**(extra or {})))
  try:
   files=list((HOME/'.codex').glob('state_*.sqlite'))
   if not files:raise FileNotFoundError()
@@ -156,6 +177,24 @@ def report():
    agents['Hermes']['costCNY']=dict(low=low,high=high,unknownModels=unknown,pricingDate='2026-10-19',source='https://api-docs.deepseek.com/zh-cn/quick_start/pricing/')
    agents['Hermes']['cost']=dict(estimatedUSD=estimated if estimated_count else None,actualUSD=actual if actual_count else None,estimatedSessions=estimated_count,actualSessions=actual_count,unknownSessions=unknown_count)
  except Exception:result['warnings'].append('Hermes 本地数据库不可读，统计可能不完整')
+ claude_files={}
+ root=(HOME/'.claude/projects').resolve()
+ for path in sorted(root.glob('*/*.jsonl')):
+  if path.is_symlink() or not path.resolve().is_relative_to(root):continue
+  try:
+   sources=[path]+sorted(path.with_suffix('').glob('subagents/*.jsonl'))
+   events=[];main=None
+   for source in sources:
+    if source.is_symlink() or not source.resolve().is_relative_to(root):continue
+    st=source.stat();signature=[str(source),st.st_size,st.st_mtime_ns];key=str(source.relative_to(root));old=cache.get('claudeFiles',{}).get(key)
+    data=old['data'] if old and old['signature']==signature else scan_claude(source)
+    claude_files[key]=dict(signature=signature,data=data)
+    if source==path:main=data
+    events.extend(data['events'])
+    if data.get('badLines'):result['warnings'].append('Claude Code 存在不完整日志行，统计可能不完整')
+   ingest('Claude Code',dict(id=path.stem,title=main['title'],cwd=main['cwd']),events)
+  except (OSError,ValueError,TypeError):result['warnings'].append('Claude Code 部分日志不可读，统计可能不完整')
+ cache['claudeFiles']=claude_files
  today=datetime.datetime.now().astimezone().date();month=today.isoformat()[:7]
  for name,a in agents.items():
   for k in ['total']:a[k]=finish(a[k])
