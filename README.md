@@ -2,6 +2,10 @@
 
 帮你照看每一个 Agent。电脑执行，手机查看和操作原来的 Codex / Hermes 会话。
 
+## 开发文档
+
+需求、当前工作、页面流程与原型、开发发布规范见 [开发文档目录](docs/开发/README.md)；全部说明见 [文档总目录](docs/README.md)。
+
 ## 使用说明
 
 新增独立的 [Flutter Android 客户端](flutter_client/README.md)，复用现有电脑服务，支持配对、原会话聊天与控制。当前为首版，功能边界与验证情况见客户端说明。

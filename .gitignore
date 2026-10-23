@@ -17,3 +17,6 @@ __pycache__/
 .DS_Store
 .env.*
 !.env.example
+
+# Generated shared Flutter UI preview (rebuild with scripts/build-ui-prototype.py)
+docs/开发/交互原型/flutter/
