@@ -1,4 +1,5 @@
 import 'reset_credits.dart';
+import 'quota_notice.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'dart:math' as math;
@@ -132,6 +133,9 @@ class CollieShell extends StatefulWidget {
   final ThemeMode initialTheme;
   final bool initialLarge;
   final String role, error;
+  final String? computerName;
+  final VoidCallback? onManageComputers;
+  final bool connecting;
   final bool online, loading, busy, enabled, running;
   final List<dynamic> sessions, projects, warnings;
   final Json? detail;
@@ -152,6 +156,9 @@ class CollieShell extends StatefulWidget {
   const CollieShell({
     super.key,
     required this.api,
+    this.computerName,
+    this.onManageComputers,
+    this.connecting = false,
     this.initialTheme = ThemeMode.system,
     this.initialLarge = false,
     required this.role,
@@ -185,6 +192,7 @@ class CollieShell extends StatefulWidget {
 }
 
 class _CollieShellState extends State<CollieShell> {
+  bool quotaBlocked = false;
   final Map<String, SessionResources> _resourceSessions = {};
   SessionResources get resources {
     final id = widget.detail?['id'] as String? ?? '';
@@ -651,12 +659,16 @@ class _CollieShellState extends State<CollieShell> {
                 ),
               ],
             ),
-            Row(
-              children: [
-                for (final value in ['all', 'Codex', 'Hermes', 'Claude Code'])
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.all(3),
+            LayoutBuilder(
+              builder: (ctx, constraints) => Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  for (final value in ['all', 'Codex', 'Hermes', 'Claude Code'])
+                    SizedBox(
+                      width: constraints.maxWidth < 300
+                          ? constraints.maxWidth
+                          : (constraints.maxWidth - 12) / 2,
                       child: filterCard(
                         value == 'all' ? '全部' : value,
                         '${widget.sessions.where((s) => value == 'all' || s['agent'] == value).length} 个会话',
@@ -665,10 +677,11 @@ class _CollieShellState extends State<CollieShell> {
                             : agentLogo(value, size: 20),
                         a == value,
                         () => change(() => a = value),
+                        stacked: true,
                       ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
             const SizedBox(height: 24),
             muted(ctx, '项目'),
@@ -678,7 +691,7 @@ class _CollieShellState extends State<CollieShell> {
               ...widget.projects,
             ])
               Padding(
-                padding: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.only(bottom: 12),
                 child: filterCard(
                   item['name'],
                   '${widget.sessions.where((s) => (a == 'all' || s['agent'] == a) && (item['path'] == '' || s['projectPath'] == item['path'])).length} 个会话',
@@ -719,12 +732,13 @@ class _CollieShellState extends State<CollieShell> {
     String count,
     Widget icon,
     bool selected,
-    VoidCallback action,
-  ) => InkWell(
+    VoidCallback action, {
+    bool stacked = false,
+  }) => InkWell(
     onTap: action,
     borderRadius: BorderRadius.circular(14),
     child: Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
       decoration: BoxDecoration(
         color: selected ? panelColor(context) : null,
         border: Border.all(
@@ -732,27 +746,62 @@ class _CollieShellState extends State<CollieShell> {
         ),
         borderRadius: BorderRadius.circular(14),
       ),
-      child: Row(
-        children: [
-          icon,
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
+      child: stacked
+          ? Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Row(
+                  children: [
+                    icon,
+                    const Spacer(),
+                    SizedBox(
+                      width: 16,
+                      height: 20,
+                      child: selected ? glyph('Check', size: 16) : null,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
                 Text(
                   title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12),
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
-                muted(context, count, size: 10),
+                const SizedBox(height: 5),
+                muted(context, count, size: 12),
+              ],
+            )
+          : Row(
+              children: [
+                icon,
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      muted(context, count, size: 12),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 6),
+                SizedBox(
+                  width: 16,
+                  child: selected ? glyph('Check', size: 16) : null,
+                ),
               ],
             ),
-          ),
-          if (selected) glyph('Check', size: 12),
-        ],
-      ),
     ),
   );
   Future<void> workspaceMenu() async {
@@ -779,6 +828,10 @@ class _CollieShellState extends State<CollieShell> {
   }
 
   Future<void> settings(String title) async {
+    if (title == '电脑与连接' && widget.onManageComputers != null) {
+      widget.onManageComputers!();
+      return;
+    }
     if (title == '内置网络') {
       await showDialog<void>(
         context: context,
@@ -1140,7 +1193,12 @@ class _CollieShellState extends State<CollieShell> {
           ),
       if (d['liveInflight']?['assistant'] != null)
         markdown('${d['liveInflight']['assistant']}'),
-      if (d['agent'] == 'Codex' && RegExp(r'额度|usage.limit|rate.limit|quota', caseSensitive: false).hasMatch('${d['error'] ?? d['desktopError'] ?? ''}')) outlineAction('查看额度与重置卡', () => setState(() => page = 'usage')),
+      if (d['agent'] == 'Codex' &&
+          RegExp(
+            r'额度|usage.limit|rate.limit|quota',
+            caseSensitive: false,
+          ).hasMatch('${d['error'] ?? d['desktopError'] ?? ''}'))
+        outlineAction('查看额度与重置卡', () => setState(() => page = 'usage')),
       if (d['desktopError'] != null) ...[
         muted(context, '${d['desktopError']}'),
         outlineAction(
@@ -1570,6 +1628,7 @@ class _CollieShellState extends State<CollieShell> {
 
   Widget composer() {
     final d = widget.detail;
+    final quotaBlocked = this.quotaBlocked && d?['agent'] == 'Codex';
     final hasContent =
         widget.draft.text.trim().isNotEmpty || uploads.isNotEmpty;
     final showStop = widget.running && !hasContent;
@@ -1680,18 +1739,22 @@ class _CollieShellState extends State<CollieShell> {
                   ),
                 TextField(
                   controller: widget.draft,
-                  enabled: widget.enabled,
+                  enabled: (widget.enabled && !quotaBlocked),
                   minLines: 1,
                   maxLines: 6,
                   maxLength: 4000,
                   onChanged: (_) => widget.onDraft(),
                   style: const TextStyle(fontSize: 14, height: 1.6),
                   decoration: InputDecoration(
-                    hintText: widget.loading
+                    hintText: quotaBlocked
+                        ? '额度恢复后可继续，草稿会保留'
+                        : !widget.online
+                        ? '电脑连接后可发送'
+                        : widget.loading
                         ? '正在加载历史会话…'
                         : d?['archived'] == true
                         ? '会话已归档，暂时只读'
-                        : widget.enabled
+                        : (widget.enabled && !quotaBlocked)
                         ? '向 ${d?['agent']} 发送消息…'
                         : d == null
                         ? '选择会话查看进展'
@@ -1717,7 +1780,7 @@ class _CollieShellState extends State<CollieShell> {
                     PopupMenuButton<String>(
                       tooltip: '添加附件',
                       enabled:
-                          widget.enabled &&
+                          (widget.enabled && !quotaBlocked) &&
                           !uploading &&
                           widget.detail?['managed'] != true,
                       icon: glyph('Plus', size: 23),
@@ -1762,8 +1825,12 @@ class _CollieShellState extends State<CollieShell> {
                     Expanded(
                       child: muted(
                         context,
-                        widget.enabled
+                        (widget.enabled && !quotaBlocked)
                             ? (widget.running ? '桌面正在执行' : '发送到电脑上的同一会话')
+                            : quotaBlocked
+                            ? '等待额度恢复'
+                            : !widget.online
+                            ? '等待电脑连接'
                             : '只读预览',
                         size: 10,
                       ),
@@ -1771,7 +1838,7 @@ class _CollieShellState extends State<CollieShell> {
                     IconButton(
                       tooltip: showStop ? '停止当前轮' : '发送',
                       onPressed:
-                          widget.enabled &&
+                          (widget.enabled && (!quotaBlocked || showStop)) &&
                               !uploading &&
                               (showStop
                                   ? (d?['turnId'] != null)
@@ -1825,11 +1892,70 @@ class _CollieShellState extends State<CollieShell> {
       drawerScrimColor: Colors.black.withValues(alpha: .4),
       appBar: AppBar(
         automaticallyImplyLeading: false,
-        title: Text(
-          ['127.0.0.1', 'localhost', '::1'].contains(widget.api.base.host)
-              ? 'G-Collie · USB 调试连接'
-              : 'G-Collie · 私有网络连接',
-          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w400),
+        title: InkWell(
+          onTap: widget.onManageComputers,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.computer_outlined, size: 17),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  widget.computerName ?? widget.api.base.host,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              const Icon(Icons.keyboard_arrow_down, size: 17),
+              const SizedBox(width: 10),
+              SizedBox(
+                width: 66,
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 10,
+                      height: 10,
+                      child: widget.connecting
+                          ? CircularProgressIndicator(
+                              strokeWidth: 1.3,
+                              color: mutedColor(context),
+                              semanticsLabel: '正在连接电脑',
+                            )
+                          : Center(
+                              child: Container(
+                                width: 5,
+                                height: 5,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: widget.online
+                                      ? companionGreen
+                                      : mutedColor(context),
+                                ),
+                              ),
+                            ),
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      widget.connecting
+                          ? '连接中'
+                          : widget.online
+                          ? '已连接'
+                          : '离线',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: mutedColor(context),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
         toolbarHeight: 40,
         actions: [
@@ -1840,7 +1966,7 @@ class _CollieShellState extends State<CollieShell> {
                 widget.onRefresh();
                 if (widget.detail != null) widget.onOpen(widget.detail!['id']);
               } else if (v == '切换电脑') {
-                Navigator.pop(context);
+                widget.onManageComputers?.call();
               } else {
                 settings(v);
               }
@@ -1929,7 +2055,17 @@ class _CollieShellState extends State<CollieShell> {
                 ),
               ),
             ),
-            if (widget.error.isNotEmpty)
+            if (page == 'usage')
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () => setState(() => page = 'chat'),
+                  icon: const Icon(Icons.arrow_back, size: 18),
+                  label: Text(d == null ? '返回会话首页' : '返回会话'),
+                ),
+              ),
+            if (widget.error.isNotEmpty &&
+                !(quotaBlocked && d?['agent'] == 'Codex'))
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 color: Theme.of(context).colorScheme.errorContainer,
@@ -1941,7 +2077,15 @@ class _CollieShellState extends State<CollieShell> {
                         style: const TextStyle(fontSize: 12),
                       ),
                     ),
-                    if (widget.detail?['agent'] == 'Codex' && RegExp(r'额度|usage.limit|rate.limit|quota', caseSensitive: false).hasMatch(widget.error)) TextButton(onPressed: () => setState(() => page = 'usage'), child: const Text('查看额度与重置卡')),
+                    if (widget.detail?['agent'] == 'Codex' &&
+                        RegExp(
+                          r'额度|usage.limit|rate.limit|quota',
+                          caseSensitive: false,
+                        ).hasMatch(widget.error))
+                      TextButton(
+                        onPressed: () => setState(() => page = 'usage'),
+                        child: const Text('查看额度与重置卡'),
+                      ),
                     iconAction('X', '关闭提示', widget.onClearError, size: 16),
                   ],
                 ),
@@ -1979,7 +2123,11 @@ class _CollieShellState extends State<CollieShell> {
                       ],
                     )
                   : page == 'usage'
-                  ? UsagePage(api: widget.api, onOpen: open, readOnly: widget.role == 'view')
+                  ? UsagePage(
+                      api: widget.api,
+                      onOpen: open,
+                      readOnly: widget.role == 'view',
+                    )
                   : d == null
                   ? RefreshIndicator(
                       onRefresh: widget.onRefresh,
@@ -1987,7 +2135,22 @@ class _CollieShellState extends State<CollieShell> {
                     )
                   : conversation(d),
             ),
-            if (page == 'chat') composer(),
+            if (page == 'chat' && d?['agent'] == 'Codex')
+              CodexQuotaNotice(
+                key: ValueKey('${widget.api.base}:quota'),
+                api: widget.api,
+                readOnly: widget.role == 'view',
+                online: widget.online,
+                error:
+                    '${widget.error} ${d?['error'] ?? ''} ${d?['desktopError'] ?? ''}',
+                onBlocked: (value) {
+                  if (mounted && quotaBlocked != value) {
+                    setState(() => quotaBlocked = value);
+                  }
+                },
+                onRefresh: widget.onRefresh,
+              ),
+            if (page == 'chat' && d != null) composer(),
           ],
         ),
       ),
@@ -2138,7 +2301,12 @@ class UsagePage extends StatefulWidget {
   final bool readOnly;
   final CollieApi api;
   final void Function(String) onOpen;
-  const UsagePage({super.key, required this.api, required this.onOpen, this.readOnly = false});
+  const UsagePage({
+    super.key,
+    required this.api,
+    required this.onOpen,
+    this.readOnly = false,
+  });
   @override
   State<UsagePage> createState() => _UsagePageState();
 }
@@ -2279,15 +2447,22 @@ class _UsagePageState extends State<UsagePage> {
                     }),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Theme.of(context).colorScheme.onSurface,
-                      backgroundColor: agent == value ? panelColor(context) : null,
+                      backgroundColor: agent == value
+                          ? panelColor(context)
+                          : null,
                       side: BorderSide(
                         color: agent == value
                             ? Theme.of(context).colorScheme.onSurface
                             : Theme.of(context).dividerColor,
                         width: agent == value ? 1.5 : 1,
                       ),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 16,
+                      ),
                     ),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
@@ -2296,7 +2471,16 @@ class _UsagePageState extends State<UsagePage> {
                         const SizedBox(height: 10),
                         FittedBox(
                           fit: BoxFit.scaleDown,
-                          child: Text(value, maxLines: 1, style: TextStyle(fontSize: 12, fontWeight: agent == value ? FontWeight.w600 : FontWeight.w400)),
+                          child: Text(
+                            value,
+                            maxLines: 1,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: agent == value
+                                  ? FontWeight.w600
+                                  : FontWeight.w400,
+                            ),
+                          ),
                         ),
                       ],
                     ),
@@ -2454,7 +2638,16 @@ class _UsagePageState extends State<UsagePage> {
                   ),
                 ),
             ],
-            ResetCredits(key: ValueKey(account?['accountKey']), account: account, api: widget.api, readOnly: widget.readOnly, onRefresh: () async { final value = await widget.api.call('/usage?refresh=1'); if (mounted) setState(() => data = value); }),
+            ResetCredits(
+              key: ValueKey(account?['accountKey']),
+              account: account,
+              api: widget.api,
+              readOnly: widget.readOnly,
+              onRefresh: () async {
+                final value = await widget.api.call('/usage?refresh=1');
+                if (mounted) setState(() => data = value);
+              },
+            ),
             if ((account?['limits'] as List? ?? []).isEmpty)
               muted(context, account?['limitsError'] ?? '账号未提供可显示的额度窗口'),
           ],

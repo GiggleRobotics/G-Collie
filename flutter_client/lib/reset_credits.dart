@@ -7,6 +7,7 @@ class ResetCredits extends StatefulWidget {
   final Json? account;
   final CollieApi api;
   final bool readOnly;
+  final bool compact;
   final Future<void> Function() onRefresh;
   const ResetCredits({
     super.key,
@@ -14,6 +15,7 @@ class ResetCredits extends StatefulWidget {
     required this.api,
     required this.onRefresh,
     this.readOnly = false,
+    this.compact = false,
   });
   @override
   State<ResetCredits> createState() => _ResetCreditsState();
@@ -106,38 +108,55 @@ class _ResetCreditsState extends State<ResetCredits> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 16),
-        Text(
-          '额度重置卡${summary == null ? '' : ' · ${summary['availableCount']} 张可用'}',
-          style: const TextStyle(fontWeight: FontWeight.w600),
-        ),
-        Text(
-          summary == null ? '当前后端未提供重置卡信息，请刷新或更新 Codex。' : '使用 1 张恢复符合条件的账号额度。',
-        ),
-        if (widget.account?['accountLabel'] != null)
-          Text('账号：${widget.account!['accountLabel']}'),
-        for (final card in summary?['credits'] ?? [])
-          if (card['status'] == 'available')
-            Text(
-              '${card['title'] ?? '额度重置卡'} · ${card['expiresAt'] == null ? '未提供到期时间' : '有效期至 ${DateTime.fromMillisecondsSinceEpoch((card['expiresAt'] as num).toInt() * 1000).toLocal()}'}',
+        if (!widget.compact) ...[
+          const SizedBox(height: 16),
+          Text(
+            '额度重置卡${summary == null ? '' : ' · ${summary['availableCount']} 张可用'}',
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          Text(
+            summary == null
+                ? '当前后端未提供重置卡信息，请刷新或更新 Codex。'
+                : '使用 1 张恢复符合条件的账号额度。',
+          ),
+          if (widget.account?['accountLabel'] != null)
+            Text('账号：${widget.account!['accountLabel']}'),
+          for (final card in summary?['credits'] ?? [])
+            if (card['status'] == 'available')
+              Text(
+                '${card['title'] ?? '额度重置卡'} · ${card['expiresAt'] == null ? '未提供到期时间' : '有效期至 ${DateTime.fromMillisecondsSinceEpoch((card['expiresAt'] as num).toInt() * 1000).toLocal()}'}',
+              ),
+        ],
+        SizedBox(
+          width: widget.compact ? double.infinity : null,
+          child: OutlinedButton(
+            style: widget.compact
+                ? OutlinedButton.styleFrom(
+                    minimumSize: const Size(0, 44),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  )
+                : null,
+            onPressed:
+                busy ||
+                    widget.readOnly ||
+                    widget.account?['accountKey'] == null ||
+                    summary == null ||
+                    (summary['availableCount'] == 0 && pendingKey == null)
+                ? null
+                : reset,
+            child: Text(
+              busy
+                  ? '正在重置…'
+                  : widget.readOnly
+                  ? (widget.compact ? '重置额度' : '只读设备不可使用')
+                  : pendingKey != null
+                  ? '重试原重置操作'
+                  : widget.compact
+                  ? '重置额度'
+                  : '使用重置卡',
             ),
-        OutlinedButton(
-          onPressed:
-              busy ||
-                  widget.readOnly ||
-                  widget.account?['accountKey'] == null ||
-                  summary == null ||
-                  (summary['availableCount'] == 0 && pendingKey == null)
-              ? null
-              : reset,
-          child: Text(
-            busy
-                ? '正在重置…'
-                : widget.readOnly
-                ? '只读设备不可使用'
-                : pendingKey != null
-                ? '重试原重置操作'
-                : '使用重置卡',
           ),
         ),
         if (message.isNotEmpty) Text(message),

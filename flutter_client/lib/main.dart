@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
+import 'package:flutter/services.dart';
+import 'computers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'api.dart';
@@ -91,14 +94,20 @@ class _ConnectionState extends State<ConnectionPage> {
       code = TextEditingController(),
       name = TextEditingController();
   bool busy = true;
+  bool restoring = true;
   String? error;
   CollieApi? api;
   String? pendingSession;
+  String? switchTarget;
+  bool addingComputer = false;
+  bool rePairing = false;
+  bool workspaceOpen = false;
+  final computers = ComputerStore(storage);
   @override
   void initState() {
     super.initState();
     NativeBridge.onNetworkReady = () {
-      if (mounted && address.text.isNotEmpty) {
+      if (mounted && !workspaceOpen && address.text.isNotEmpty) {
         NativeBridge.onLink?.call(address.text);
       }
     };
@@ -117,6 +126,12 @@ class _ConnectionState extends State<ConnectionPage> {
   }
 
   Future<void> restore() async {
+    if (mounted) {
+      setState(() {
+        restoring = true;
+        busy = true;
+      });
+    }
     try {
       final initial = await NativeBridge.invoke<String>('initialLink');
       if (initial != null) {
@@ -131,25 +146,60 @@ class _ConnectionState extends State<ConnectionPage> {
       final saved = await storage.read(key: 'server');
       if (saved != null) {
         address.text = saved;
-        final client = await makeApi(
-          saved,
-          await storage.read(key: 'cookie:$saved') ?? '',
-        );
-        final result = await client.call('/auth/status');
-        if (result['paired'] == true) {
-          await enter(client, result['device']['role']);
+        final rows = await computers.read();
+        final known = rows.where((c) => c['address'] == saved).firstOrNull;
+        CollieApi? client;
+        final savedCookie = await storage.read(key: 'cookie:$saved');
+        if (savedCookie != null && savedCookie.isNotEmpty) {
+          client = CollieApi(
+            serverUri(saved),
+            cookie: savedCookie,
+            saveCookie: (c) => storage.write(key: 'cookie:$saved', value: c),
+          );
+          await enter(client, known?['role'] ?? 'view', offline: true);
           return;
         }
-        client.close();
+        try {
+          client = await makeApi(
+            saved,
+            await storage.read(key: 'cookie:$saved') ?? '',
+          );
+          final result = await client.call('/auth/status');
+          if (result['paired'] == true) {
+            await enter(client, result['device']['role']);
+            return;
+          }
+          client.close();
+          error = '配对已失效，请在电脑端获取新的配对码。';
+          rePairing = true;
+        } catch (e) {
+          final credential = await storage.read(key: 'cookie:$saved');
+          if (e is! ApiException || e.status != 401) {
+            if (credential != null && credential.isNotEmpty) {
+              client ??=
+                  api ??
+                  CollieApi(
+                    serverUri(saved),
+                    cookie: credential,
+                    saveCookie: (c) =>
+                        storage.write(key: 'cookie:$saved', value: c),
+                  );
+              await enter(client, known?['role'] ?? 'view', offline: true);
+              return;
+            }
+          }
+          client?.close();
+          rethrow;
+        }
       }
     } catch (e) {
       if (mounted) setState(() => error = '$e');
     }
     if (mounted) {
-      setState(() => busy = false);
-      if (address.text.isEmpty) {
-        WidgetsBinding.instance.addPostFrameCallback((_) => chooseAddress());
-      }
+      setState(() {
+        busy = false;
+        restoring = false;
+      });
     }
   }
 
@@ -183,7 +233,12 @@ class _ConnectionState extends State<ConnectionPage> {
     } catch (e) {
       if (mounted) setState(() => error = '$e');
     } finally {
-      if (mounted) setState(() => busy = false);
+      if (mounted) {
+        setState(() {
+          busy = false;
+          restoring = false;
+        });
+      }
     }
   }
 
@@ -329,28 +384,197 @@ class _ConnectionState extends State<ConnectionPage> {
     }
   }
 
-  Future<void> enter(CollieApi client, String role) async {
+  Future<void> enter(
+    CollieApi client,
+    String role, {
+    bool offline = false,
+  }) async {
     if (!mounted) return;
-    client = await preferRemote(client);
+    if (!offline) client = await preferRemote(client);
     api = client;
     if (!mounted) {
       client.close();
       return;
     }
-    setState(() => busy = false);
+    await computers.remember(client.base, role);
+    final stored = await computers.read();
+    String? computerName = stored
+        .where((c) => c['address'] == '${client.base}')
+        .firstOrNull?['name'];
+    if (!offline) {
+      try {
+        final network = await client.call('/network');
+        computerName = network['computerName'] as String?;
+        await computers.remember(client.base, role, name: computerName);
+      } catch (_) {}
+    }
+    if (!mounted) return;
+    setState(() {
+      busy = false;
+      restoring = false;
+      addingComputer = false;
+      rePairing = false;
+    });
+    workspaceOpen = true;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) =>
-            Workspace(api: client, role: role, initialSession: pendingSession),
+        builder: (_) => Workspace(
+          api: client,
+          role: role,
+          initialSession: pendingSession,
+          computerName: computerName,
+          onManageComputers: manageComputers,
+          onPairingInvalid: () {
+            error = '配对已失效，请在电脑端获取新的配对码。';
+            rePairing = true;
+          },
+        ),
       ),
     );
+    workspaceOpen = false;
     pendingSession = null;
     client.close();
+    final target = switchTarget;
+    switchTarget = null;
+    if (mounted && target != null) {
+      if (target == '__add__') {
+        setState(() {
+          addingComputer = true;
+          address.clear();
+          code.clear();
+          error = null;
+        });
+      } else {
+        address.text = target;
+        await storage.write(key: 'server', value: target);
+        await restore();
+      }
+      return;
+    }
     if (mounted) {
       setState(() {
         busy = false;
         code.clear();
       });
+    }
+  }
+
+  Future<void> manageComputers() async {
+    final rows = await computers.read();
+    if (!mounted) return;
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      useSafeArea: true,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      '电脑与连接',
+                      style: TextStyle(
+                        fontSize: 21,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '关闭电脑管理',
+                    onPressed: () => Navigator.pop(ctx),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+              const Text(
+                '切换不会停止其他电脑上的任务。',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              const SizedBox(height: 16),
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    children: [
+                      for (final row in rows)
+                        ListTile(
+                          leading: const Icon(Icons.computer_outlined),
+                          title: Text(
+                            row['name'] ?? Uri.parse(row['address']).host,
+                          ),
+                          subtitle: Text(
+                            row['address'] == address.text ? '当前电脑' : '已配对',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          trailing: row['address'] == address.text
+                              ? const Icon(Icons.check, size: 18)
+                              : const Icon(Icons.chevron_right),
+                          onTap: () => Navigator.pop(ctx, row['address']),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              if (workspaceOpen && api != null)
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, '__settings__'),
+                  child: const Text('连接设置'),
+                ),
+              if (workspaceOpen)
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, '__retry__'),
+                  child: const Text('重试连接当前电脑'),
+                ),
+              OutlinedButton.icon(
+                onPressed: () => Navigator.pop(ctx, '__add__'),
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('添加电脑'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted || selected == null) return;
+    if (selected == '__settings__' && api != null) {
+      final role =
+          rows
+              .where((row) => row['address'] == address.text)
+              .firstOrNull?['role'] ??
+          'view';
+      await collieSheet<void>(
+        context,
+        '连接设置',
+        (ctx) => SettingsBody(api: api!, role: role, title: '电脑与连接'),
+      );
+      return;
+    }
+    if (selected == '__retry__') {
+      try {
+        if (api != null) await NativeBridge.connect(api!);
+      } catch (_) {}
+      return;
+    }
+    if (selected == address.text && workspaceOpen) return;
+    if (workspaceOpen) {
+      switchTarget = selected;
+      Navigator.pop(context);
+    } else if (selected == '__add__') {
+      setState(() {
+        addingComputer = true;
+        address.clear();
+        code.clear();
+        error = null;
+      });
+    } else {
+      await storage.write(key: 'server', value: selected);
+      await restore();
     }
   }
 
@@ -391,133 +615,205 @@ class _ConnectionState extends State<ConnectionPage> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      automaticallyImplyLeading: false,
-      toolbarHeight: 40,
-      title: const Text(
-        'G-Collie',
-        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w400),
-      ),
-      actions: [
-        PopupMenuButton<String>(
-          onSelected: (v) {
-            if (v == '切换电脑') {
-              chooseAddress();
-            } else {
-              showDialog<void>(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  title: const Text('内置远程连接'),
-                  content: const SizedBox(width: 400, child: NetworkPane()),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      child: const Text('关闭'),
-                    ),
-                  ],
-                ),
-              );
-            }
-          },
-          itemBuilder: (_) => [
-            '内置网络',
-            '切换电脑',
-          ].map((v) => PopupMenuItem(value: v, child: Text(v))).toList(),
-        ),
-      ],
-    ),
-    body: SafeArea(
-      child: SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(
-          24,
-          MediaQuery.sizeOf(context).height * .1,
-          24,
-          24,
-        ),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 440),
+  Widget build(BuildContext context) => restoring
+      ? const Scaffold(
+          body: Center(
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
               children: [
-                const Text(
+                Text(
                   'G-Collie',
                   style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
                 ),
-                const SizedBox(height: 38),
-                const Text(
-                  '配对你的电脑',
-                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.w500),
+                SizedBox(height: 20),
+                SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
                 ),
-                const SizedBox(height: 12),
-                muted(context, '在已连接的电脑打开“手机与配对”，扫码或输入短期配对码。', size: 13),
-                const SizedBox(height: 18),
-                muted(context, '设备名称', size: 13),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: name,
-                  enabled: !busy,
-                  maxLength: 80,
-                  decoration: InputDecoration(
-                    hintText: '例如：我的手机',
-                    counterText: '',
-                    filled: true,
-                    fillColor: panelColor(context),
-                  ),
-                ),
-                const SizedBox(height: 18),
-                muted(context, '配对码', size: 13),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: code,
-                  enabled: !busy,
-                  keyboardType: TextInputType.number,
-                  onChanged: (_) => setState(() {}),
-                  decoration: InputDecoration(
-                    hintText: '6 位配对码',
-                    filled: true,
-                    fillColor: panelColor(context),
-                  ),
-                ),
-                const SizedBox(height: 15),
-                FilledButton(
-                  onPressed: busy || code.text.trim().isEmpty ? null : pair,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: ink,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(24),
-                    ),
-                  ),
-                  child: Text(busy ? '正在连接…' : '配对设备'),
-                ),
-                if (error != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 16),
-                    child: Text(
-                      error!,
-                      style: const TextStyle(color: Color(0xffb54c3b)),
-                    ),
-                  ),
               ],
             ),
           ),
-        ),
-      ),
-    ),
-  );
+        )
+      : Scaffold(
+          appBar: AppBar(
+            automaticallyImplyLeading: false,
+            toolbarHeight: 40,
+            title: const Text(
+              'G-Collie',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w400),
+            ),
+            actions: [
+              PopupMenuButton<String>(
+                onSelected: (v) {
+                  if (v == '切换电脑') {
+                    manageComputers();
+                  } else {
+                    showDialog<void>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: const Text('内置远程连接'),
+                        content: const SizedBox(
+                          width: 400,
+                          child: NetworkPane(),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            child: const Text('关闭'),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+                },
+                itemBuilder: (_) => [
+                  '内置网络',
+                  '切换电脑',
+                ].map((v) => PopupMenuItem(value: v, child: Text(v))).toList(),
+              ),
+            ],
+          ),
+          body: SafeArea(
+            child: SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(24, 40, 24, 24),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 440),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        addingComputer
+                            ? '添加一台电脑'
+                            : rePairing
+                            ? '重新配对电脑'
+                            : '连接你的第一台电脑',
+                        style: TextStyle(
+                          fontSize: 26,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      muted(
+                        context,
+                        '在要连接的电脑上打开 G-Collie，进入“手机与配对”，获取电脑地址和 6 位配对码。',
+                        size: 13,
+                      ),
+                      const SizedBox(height: 18),
+                      TextField(
+                        controller: address,
+                        enabled: !busy,
+                        keyboardType: TextInputType.url,
+                        autocorrect: false,
+                        onChanged: (_) => setState(() {}),
+                        decoration: const InputDecoration(
+                          labelText: '电脑地址',
+                          hintText: '例如：http://100.x.x.x:4310',
+                          helperText: '填写电脑端显示的完整地址',
+                          helperMaxLines: 2,
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      muted(context, '配对码', size: 13),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: code,
+                        enabled: !busy,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                          LengthLimitingTextInputFormatter(6),
+                        ],
+                        onChanged: (_) => setState(() {}),
+                        decoration: InputDecoration(
+                          hintText: '6 位配对码',
+                          filled: true,
+                          fillColor: panelColor(context),
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      muted(context, '本手机名称（选填）', size: 13),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: name,
+                        enabled: !busy,
+                        maxLength: 80,
+                        decoration: InputDecoration(
+                          hintText: '例如：我的手机',
+                          counterText: '',
+                          filled: true,
+                          fillColor: panelColor(context),
+                        ),
+                      ),
+                      if (addingComputer)
+                        TextButton(
+                          onPressed: busy
+                              ? null
+                              : () async {
+                                  setState(() => addingComputer = false);
+                                  await restore();
+                                },
+                          child: const Text('取消并返回原电脑'),
+                        ),
+                      const SizedBox(height: 15),
+                      FilledButton(
+                        onPressed:
+                            busy ||
+                                address.text.trim().isEmpty ||
+                                code.text.trim().length != 6
+                            ? null
+                            : pair,
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(24),
+                          ),
+                        ),
+                        child: Text(busy ? '正在配对…' : '配对并连接'),
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        '配对成功后进入会话首页。以后打开 App 会自动连接上次使用的电脑。',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 12,
+                          height: 1.7,
+                          color: Colors.grey,
+                        ),
+                      ),
+                      if (error != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 16),
+                          child: Text(
+                            error!,
+                            style: const TextStyle(color: Color(0xffb54c3b)),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
 }
 
 class Workspace extends StatefulWidget {
   final CollieApi api;
   final String role;
   final String? initialSession;
+  final String? computerName;
+  final VoidCallback? onManageComputers;
+  final VoidCallback? onPairingInvalid;
   const Workspace({
     super.key,
     required this.api,
     required this.role,
     this.initialSession,
+    this.computerName,
+    this.onManageComputers,
+    this.onPairingInvalid,
   });
   @override
   State<Workspace> createState() => _WorkspaceState();
@@ -535,7 +831,59 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       polling = false,
       active = true,
       leaving = false;
+  late String effectiveRole = widget.role;
+  late String? connectionName = widget.computerName;
+  bool nameRequested = false;
   int generation = 0, ticks = 0;
+  bool refreshingConnection = false;
+  final Map<String, dynamic> cachedDetails = {};
+  Future<void> cacheWrite = Future.value();
+  String? lastCache;
+  String get cacheKey => 'workspace-cache:${widget.api.base}';
+
+  Future<void> restoreWorkspace() async {
+    try {
+      final raw = await storage.read(key: cacheKey);
+      if (raw != null && mounted && sessions.isEmpty && !online) {
+        final saved = jsonDecode(raw);
+        cachedDetails.addAll(Map<String, dynamic>.from(saved['details'] ?? {}));
+        setState(() {
+          sessions = saved['sessions'] ?? [];
+          projects = saved['projects'] ?? [];
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> saveWorkspace() {
+    if (leaving || !mounted) return Future.value();
+    final snapshot = jsonEncode({
+      'sessions': sessions,
+      'projects': projects,
+      'details': cachedDetails,
+    });
+    if (snapshot == lastCache) return cacheWrite;
+    lastCache = snapshot;
+    cacheWrite = cacheWrite
+        .then((_) async {
+          if (!leaving && mounted) {
+            await storage.write(key: cacheKey, value: snapshot);
+          }
+        })
+        .catchError((_) {
+          lastCache = null;
+        });
+    return cacheWrite;
+  }
+
+  void rememberDetail(Json value) {
+    cachedDetails[value['id']] = value;
+    while (cachedDetails.length > 10) {
+      cachedDetails.remove(cachedDetails.keys.first);
+    }
+    unawaited(saveWorkspace());
+  }
+
   Timer? timer;
   final answers = <String, String>{};
   final answerControllers = <String, TextEditingController>{};
@@ -543,6 +891,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    restoreWorkspace();
     load();
     if (widget.initialSession != null) open(widget.initialSession!);
     NativeBridge.invoke<bool>('notificationEnabled')
@@ -568,16 +917,38 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     }
   }
 
+  void leaveWorkspace() {
+    if (!mounted) return;
+    final route = ModalRoute.of(context);
+    final navigator = Navigator.of(context);
+    navigator.popUntil((candidate) => candidate == route || candidate.isFirst);
+    if (route?.isCurrent == true && route?.isFirst == false) navigator.pop();
+  }
+
   void failure(Object e) {
     if (!mounted) return;
     if (e is ApiException && e.status == 401) {
       if (!leaving) {
         leaving = true;
-        Navigator.pop(context);
+        widget.onPairingInvalid?.call();
+        unawaited(
+          storage
+              .delete(key: 'cookie:${widget.api.base}')
+              .then((_) {
+                if (mounted) leaveWorkspace();
+              })
+              .catchError((_) {
+                if (mounted) leaveWorkspace();
+              }),
+        );
       }
       return;
     }
     if (leaving) return;
+    if (e is ApiException && e.status >= 400 && e.status < 500) {
+      setState(() => error = '$e');
+      return;
+    }
     setState(() {
       error = '$e';
       online = false;
@@ -593,7 +964,25 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   }
 
   Future<void> load() async {
+    if (refreshingConnection || leaving) return;
+    if (mounted) setState(() => refreshingConnection = true);
     try {
+      if (!online && NativeBridge.embedded(widget.api.base)) {
+        await NativeBridge.connect(widget.api);
+      }
+      if (!online) {
+        final auth = await widget.api.call('/auth/status');
+        if (auth['paired'] == false) throw ApiException('配对已失效，请重新配对', 401);
+        if (auth['paired'] == true) {
+          final role = auth['device']?['role'];
+          effectiveRole = ['owner', 'control', 'view'].contains(role)
+              ? role
+              : 'view';
+          await ComputerStore(
+            storage,
+          ).remember(widget.api.base, effectiveRole, select: false);
+        }
+      }
       final data = await widget.api.call('/local');
       if (mounted) {
         setState(() {
@@ -604,8 +993,32 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
           error = '';
         });
       }
+      if (!nameRequested) {
+        nameRequested = true;
+        unawaited(
+          widget.api
+              .call('/network')
+              .then((network) async {
+                final name = network['computerName'];
+                if (name is String && name.trim().isNotEmpty) {
+                  if (!mounted || leaving) return;
+                  if (mounted) setState(() => connectionName = name);
+                  await ComputerStore(storage).remember(
+                    widget.api.base,
+                    effectiveRole,
+                    name: name,
+                    select: false,
+                  );
+                }
+              })
+              .catchError((_) {}),
+        );
+      }
+      unawaited(saveWorkspace());
     } catch (e) {
       failure(e);
+    } finally {
+      if (mounted) setState(() => refreshingConnection = false);
     }
   }
 
@@ -633,7 +1046,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         detail = d;
         online = active;
       });
-      if (widget.role != 'view' &&
+      if (effectiveRole != 'view' &&
           d['managed'] != true &&
           d['desktopLive'] != true &&
           d['archived'] != true) {
@@ -644,10 +1057,25 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       }
       if (mounted && token == generation) {
         setState(() => detail = d);
+        rememberDetail(d);
         bottom();
       }
     } catch (e) {
-      if (mounted && token == generation) failure(e);
+      if (mounted && token == generation) {
+        final cached = cachedDetails[id];
+        if (cached is Map) {
+          setState(
+            () => detail = {
+              ...Map<String, dynamic>.from(cached),
+              'readOnly': true,
+              'desktopControl': false,
+              'desktopLive': false,
+              'status': 'unknown',
+            },
+          );
+        }
+        failure(e);
+      }
     } finally {
       if (mounted && token == generation) setState(() => loading = false);
     }
@@ -664,7 +1092,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     final token = generation;
     final current = detail;
     try {
-      if (++ticks % 8 == 0) await load();
+      if (!online || ++ticks % 8 == 0) await load();
       if (current != null && current['draft'] != true) {
         final d = await widget.api.call(
           '/local/${Uri.encodeComponent(current['id'])}',
@@ -679,6 +1107,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
             online = active;
             error = '';
           });
+          rememberDetail(d);
           if (follow) bottom();
         }
       }
@@ -695,7 +1124,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         busy ||
         loading ||
         !active ||
-        !canControl(d, widget.role, online)) {
+        !canControl(d, effectiveRole, online)) {
       return;
     }
     final token = generation;
@@ -785,7 +1214,9 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       failure(e);
       return;
     }
-    await storage.delete(key: 'cookie:${widget.api.base}');
+    leaving = true;
+    await cacheWrite;
+    await ComputerStore(storage).forget(widget.api.base);
     if (mounted) Navigator.pop(context);
   }
 
@@ -897,8 +1328,8 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         !loading &&
         active &&
         (d['draft'] == true
-            ? online && widget.role != 'view'
-            : canControl(d, widget.role, online));
+            ? online && effectiveRole != 'view'
+            : canControl(d, effectiveRole, online));
     void home() {
       setState(() {
         generation++;
@@ -910,16 +1341,23 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     }
 
     return PopScope(
-      canPop: d == null && !busy,
+      canPop: false,
       onPopInvokedWithResult: (didPop, result) {
+        if (didPop) {
+          leaving = true;
+          generation++;
+        }
         if (!didPop && !busy && d != null) home();
       },
       child: CollieShell(
         api: widget.api,
+        connecting: refreshingConnection && !online,
+        computerName: connectionName,
+        onManageComputers: widget.onManageComputers,
         initialTheme: appTheme.value,
         initialLarge: appLarge.value,
-        role: widget.role,
-        error: error,
+        role: effectiveRole,
+        error: online ? error : '',
         online: online,
         loading: loading,
         busy: busy,

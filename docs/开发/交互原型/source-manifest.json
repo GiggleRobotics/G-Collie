@@ -1,20 +1,26 @@
 {
   "source": "flutter_client/lib",
-  "git_commit": "c039fb52aef956e9dabb8a6e6dfd428d9e1e5436",
+  "git_commit": "a915aed2c2f2419c0e8848089316f2a054aa844a",
   "pubspec_sha256": "b395e8b7716ebfbdd682fe8fcf1e6293807ff70c9b8124971a45e1820d7936c4",
   "unchanged_widget_sources_sha256": {
-    "main.dart": "7548887c1da9045db7985d56d41e6eb41d70ca1de6954e5a1756a092bccf8fd7",
+    "computers.dart": "bfd425011adcf32351e4ae1df7a164239ea284ef3ec62c80ceb79073329f000b",
+    "main.dart": "21dda88c497e39605e8f767301a2c63ca37ee752316cf2102201c25545afea8c",
     "preview.dart": "447ce9bfd7a712b2f0c9072462a377f43969cefcdd6f780b0a1623f118799925",
     "process_record.dart": "e246de3c3124c48c0e69d241fbdf9320c193b8e93c28891ebba4959dd2c818c4",
     "project_picker.dart": "3e71b0ed2454a574bd682667293a54ef095e4d73605e882d54854346aa5e55a9",
-    "reset_credits.dart": "0c69c925b2d5d765c6f70384b59e047e5e8582831379e65f8d40cc834c0e56ca",
+    "quota_notice.dart": "47d43145be4b5e78326e47c23d564a0ec1712c2e59f23953d24842b7a33cf44b",
+    "reset_credits.dart": "64f0321c05d7e905053df3e1d7638e44f1afeb4f896fe3ccfb58241050fced34",
     "resources.dart": "83cfc44668dff0614d27862c460af51b574c0a6d5738d0377d2aad9db32e0948",
-    "ui.dart": "a2b753ad1c9c6cbc877e1f96c0cbea2fc05c226d8b708b35aa5594cbcb5132a9"
+    "upgrade.dart": "6a814c4d56fb6c536435069453484dabf197f2ec9671be2ff176d886b5f25a7c"
   },
   "adapters": [
     "api.dart",
     "native.dart",
-    "preview_main.dart"
+    "preview_main.dart",
+    "ui.dart",
+    "preview_computers.dart",
+    "preview_pairing.dart"
   ],
+  "prototype_ui_note": "Prototype-only UI changes include session filters, quota notices, home composer visibility and multi-computer pairing/selection. Production UI is unchanged.",
   "note": "Shared widget source identity; Android system UI still requires device verification."
 }
