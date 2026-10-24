@@ -44,3 +44,10 @@ test('forced account refresh waits for stale in-flight request and reads again',
  const refreshed=service.read(true);release();await account;
  assert.equal((await refreshed).codexAccount.resetCredits.availableCount,2);
 });
+test('selected card is forwarded and an uncertain attempt cannot switch cards',async()=>{
+ const calls:any[]=[];const service=new ResetService(async()=>({accountKey:'account-a'}),async p=>{calls.push(p);throw Error('simulated timeout')},()=>{});
+ await assert.rejects(service.reset({...body,creditId:'card-two'}),/timeout/);
+ await assert.rejects(service.reset({...body,creditId:'card-one'}),/不能更换/);
+ await assert.rejects(service.reset({...body,creditId:'card-two'}),/timeout/);
+ assert.equal(calls.length,2);assert.equal(calls[0].creditId,'card-two');assert.deepEqual(calls[0],calls[1]);
+});

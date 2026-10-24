@@ -2,7 +2,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'api.dart';
 import 'reset_credits.dart';
-import 'upgrade.dart';
 
 List<Json> codexWindows(Json? account) {
   final result = <Json>[];
@@ -36,6 +35,7 @@ class CodexQuotaNotice extends StatefulWidget {
   final CollieApi api;
   final bool readOnly, online;
   final String error;
+  final VoidCallback? onUsage;
   final ValueChanged<bool> onBlocked;
   final Future<void> Function() onRefresh;
   const CodexQuotaNotice({
@@ -44,6 +44,7 @@ class CodexQuotaNotice extends StatefulWidget {
     required this.readOnly,
     required this.online,
     required this.error,
+    this.onUsage,
     required this.onBlocked,
     required this.onRefresh,
   });
@@ -189,6 +190,16 @@ class _CodexQuotaNoticeState extends State<CodexQuotaNotice> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(0, 44),
+                  ),
+                  onPressed: widget.onUsage,
+                  child: const Text('用量统计'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
                 child: ResetCredits(
                   key: ValueKey(account?['accountKey']),
                   compact: true,
@@ -199,25 +210,6 @@ class _CodexQuotaNoticeState extends State<CodexQuotaNotice> {
                     await load(force: true);
                     await widget.onRefresh();
                   },
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: FilledButton(
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size(0, 44),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  onPressed: () async {
-                    await Navigator.push<void>(
-                      context,
-                      MaterialPageRoute(builder: (_) => const UpgradePage()),
-                    );
-                    if (mounted) await load(force: true);
-                  },
-                  child: const Text('升级', style: TextStyle(fontSize: 13)),
                 ),
               ),
             ],

@@ -1,4 +1,4 @@
-import 'reset_credits.dart';
+import 'preview_usage_limits.dart';
 import 'preview_computers.dart';
 
 import 'dart:convert';
@@ -202,37 +202,133 @@ class _CollieShellState extends State<CollieShell> {
       !previewQuotaReset;
 
   Future<void> resetPreviewQuota() async {
+    final available = [
+      for (final id in [0, 1])
+        if (!widget.api.previewUsedResetCards.contains(id)) id,
+    ];
+    int? selected = available.firstOrNull;
     await collieSheet<void>(
       context,
-      '重置 5 小时额度',
-      (ctx) => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text(
-            '使用 1 次重置机会，恢复 Codex 当前 5 小时窗口的可用额度。',
-            style: TextStyle(fontSize: 14, height: 1.6),
-          ),
-          const SizedBox(height: 12),
-          muted(ctx, '剩余 ${widget.api.credits} 次 · 本操作仅演示，不影响真实账户'),
-          const SizedBox(height: 20),
-          FilledButton(
-            onPressed: widget.api.credits > 0
-                ? () {
-                    widget.api.credits--;
-                    setState(() => previewQuotaReset = true);
-                    Navigator.pop(ctx);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('演示：额度已重置，可以继续发送')),
-                    );
-                  }
-                : null,
-            child: const Text('确认使用 1 次重置机会'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('暂不重置'),
-          ),
-        ],
+      '使用限额重置',
+      (ctx) => StatefulBuilder(
+        builder: (ctx, change) => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              '选择一张重置卡，恢复 Codex 的使用限额。',
+              style: TextStyle(fontSize: 14, height: 1.6),
+            ),
+            const SizedBox(height: 8),
+            muted(ctx, '可用 ${widget.api.credits} 张 · 默认选择最早到期的一张', size: 12),
+            const SizedBox(height: 16),
+            for (final id in [0, 1])
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: InkWell(
+                  onTap: widget.api.previewUsedResetCards.contains(id)
+                      ? null
+                      : () => change(() => selected = id),
+                  borderRadius: BorderRadius.circular(16),
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: selected == id ? panelColor(ctx) : null,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: selected == id
+                            ? Theme.of(ctx).colorScheme.onSurface
+                            : Theme.of(ctx).dividerColor.withValues(alpha: .2),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Expanded(
+                                    child: Text(
+                                      '完全重置',
+                                      style: TextStyle(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                  muted(
+                                    ctx,
+                                    widget.api.previewUsedResetCards.contains(
+                                          id,
+                                        )
+                                        ? '已使用'
+                                        : id == 0
+                                        ? '最早到期'
+                                        : '可用',
+                                    size: 11,
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              const Text(
+                                '重置范围：每周 + 5 小时',
+                                style: TextStyle(fontSize: 13),
+                              ),
+                              const SizedBox(height: 6),
+                              muted(
+                                ctx,
+                                id == 0
+                                    ? '到期时间：10月30日 08:31'
+                                    : '到期时间：11月7日 06:50',
+                                size: 12,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Icon(
+                          widget.api.previewUsedResetCards.contains(id)
+                              ? Icons.check_circle_outline
+                              : selected == id
+                              ? Icons.radio_button_checked
+                              : Icons.radio_button_unchecked,
+                          size: 20,
+                          color: mutedColor(ctx),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            muted(
+              ctx,
+              '使用后剩余 ${(widget.api.credits - 1).clamp(0, 99)} 次 · 本地时间 GMT+08:00',
+              size: 12,
+            ),
+            const SizedBox(height: 8),
+            muted(ctx, '全部卡片和时间均为演示数据，不影响真实账户。', size: 11),
+            const SizedBox(height: 20),
+            FilledButton(
+              onPressed: selected == null || widget.api.credits <= 0
+                  ? null
+                  : () {
+                      widget.api.previewUsedResetCards.add(selected!);
+                      widget.api.credits--;
+                      setState(() => previewQuotaReset = true);
+                      Navigator.pop(ctx);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('演示：已使用所选重置卡，可以继续发送')),
+                      );
+                    },
+              child: const Text('确认使用所选重置卡'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('暂不重置'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -302,8 +398,8 @@ class _CollieShellState extends State<CollieShell> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                onPressed: widget.api.credits > 0 ? resetPreviewQuota : null,
-                child: const Text('重置额度', style: TextStyle(fontSize: 13)),
+                onPressed: () => setState(() => page = 'usage'),
+                child: const Text('用量统计', style: TextStyle(fontSize: 13)),
               ),
             ),
             const SizedBox(width: 12),
@@ -316,38 +412,8 @@ class _CollieShellState extends State<CollieShell> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                onPressed: () => collieSheet<void>(
-                  context,
-                  '升级 Codex',
-                  (ctx) => Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const Text(
-                        '在 App 内打开官方升级页面',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      const Text(
-                        '正式版将在 App 内的网页视图中打开 OpenAI 官方升级页面，不拉起外部浏览器。请登录与电脑端 Codex 相同的账号。',
-                        style: TextStyle(fontSize: 14, height: 1.6),
-                      ),
-                      const SizedBox(height: 12),
-                      muted(
-                        ctx,
-                        '当前仅演示入口，未加载真实升级网页，不会产生费用。登录及支付能否在内嵌页面完成，需以官方支持和真机验证为准。',
-                      ),
-                      const SizedBox(height: 20),
-                      FilledButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        child: const Text('知道了'),
-                      ),
-                    ],
-                  ),
-                ),
-                child: const Text('升级', style: TextStyle(fontSize: 13)),
+                onPressed: widget.api.credits > 0 ? resetPreviewQuota : null,
+                child: const Text('重置额度', style: TextStyle(fontSize: 13)),
               ),
             ),
           ],
@@ -1124,120 +1190,400 @@ class _CollieShellState extends State<CollieShell> {
     );
   }
 
-  Widget welcome() => ListView(
-    padding: const EdgeInsets.fromLTRB(22, 24, 22, 25),
-    children: [
-      Image.asset(
-        'assets/collie-companion-v2.png',
-        width: 205,
-        height: 140,
-        fit: BoxFit.contain,
+  final Map<String, String> projectLabels = {};
+  String projectLabel(dynamic p) => projectLabels[p['path']] ?? p['name'];
+
+  Future<void> addProjectFromList() async {
+    final result = await showModalBottomSheet<Json>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (_) => NewProjectSheet(api: widget.api),
+    );
+    if (result != null && mounted) await widget.onRefresh();
+  }
+
+  Future<void> renameProject(dynamic p) async {
+    final field = TextEditingController(text: projectLabel(p));
+    final value = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('修改显示名称'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              '仅在 G-Collie 中生效，不修改电脑文件夹或桌面官方应用中的项目名称。',
+              style: TextStyle(fontSize: 13, height: 1.6),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: field,
+              maxLength: 60,
+              autofocus: true,
+              decoration: const InputDecoration(labelText: '显示名称'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, field.text.trim()),
+            child: const Text('保存'),
+          ),
+        ],
       ),
-      const SizedBox(height: 17),
-      const Text(
-        '今天想继续哪项工作？',
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          fontSize: 23,
-          fontWeight: FontWeight.w500,
-          height: 1.5,
+    );
+    if (value != null && value.isNotEmpty && mounted)
+      setState(() => projectLabels[p['path']] = value);
+    Future<void>.delayed(const Duration(seconds: 1), field.dispose);
+  }
+
+  Future<void> projectDetails(dynamic p) => collieSheet<void>(
+    context,
+    '项目详情',
+    (ctx) => Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          projectLabel(p),
+          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 20),
+        muted(ctx, '所属电脑', size: 12),
+        const SizedBox(height: 6),
+        Text(previewComputers.current['name']),
+        const SizedBox(height: 20),
+        muted(ctx, '工作目录', size: 12),
+        const SizedBox(height: 6),
+        SelectableText(p['path'], style: const TextStyle(fontSize: 13)),
+        const SizedBox(height: 16),
+        muted(ctx, '显示名称仅影响 G-Collie；会话仍使用此目录。原型改名仅保留在当前演示中。', size: 12),
+        const SizedBox(height: 20),
+        OutlinedButton(
+          onPressed: () {
+            Navigator.pop(ctx);
+            renameProject(p);
+          },
+          child: const Text('修改显示名称'),
+        ),
+      ],
+    ),
+  );
+
+  Widget projectsPage() => ListView(
+    padding: const EdgeInsets.all(22),
+    children: [
+      Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          onPressed: home,
+          icon: const Icon(Icons.arrow_back, size: 18),
+          label: const Text('返回会话首页'),
         ),
       ),
-      const SizedBox(height: 12),
-      Center(child: muted(context, '工作在电脑，掌控在手边。', size: 13)),
-      const SizedBox(height: 26),
+      const SizedBox(height: 8),
       Row(
         children: [
-          for (final a in ['Codex', 'Hermes', 'Claude Code', 'projects'])
-            Expanded(
+          const Expanded(
+            child: Text(
+              '项目',
+              style: TextStyle(fontSize: 25, fontWeight: FontWeight.w600),
+            ),
+          ),
+          TextButton.icon(
+            onPressed: widget.role == 'view' ? null : addProjectFromList,
+            icon: const Icon(Icons.add, size: 18),
+            label: const Text('新建项目'),
+          ),
+        ],
+      ),
+      const SizedBox(height: 8),
+      muted(
+        context,
+        '${widget.projects.length} 个项目 · ${previewComputers.current['name']}',
+        size: 12,
+      ),
+      const SizedBox(height: 22),
+      if (widget.projects.isEmpty)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 40),
+          child: Column(
+            children: [
+              glyph('Folder', size: 32),
+              const SizedBox(height: 16),
+              const Text('还没有项目'),
+              const SizedBox(height: 8),
+              muted(context, '关联电脑上的目录，集中查看项目会话。', size: 12),
+            ],
+          ),
+        ),
+      for (final p in widget.projects)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 14),
+          child: Material(
+            color: panelColor(context),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+              side: BorderSide(
+                color: Theme.of(context).dividerColor.withValues(alpha: .15),
+              ),
+            ),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(18),
+              onTap: () => projectSessions(p),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 3),
-                child: InkWell(
-                  onTap: () {
-                    if (a == 'projects') {
-                      setState(() => page = 'projects');
-                    } else {
-                      setState(() => agent = a);
-                      scaffold.currentState?.openDrawer();
-                    }
-                  },
-                  borderRadius: BorderRadius.circular(17),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 13,
-                    ),
-                    decoration: BoxDecoration(
-                      color: panelColor(context),
-                      border: Border.all(color: const Color(0xffe5e5e5)),
-                      borderRadius: BorderRadius.circular(17),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        a == 'projects'
-                            ? glyph('Folder', size: 18)
-                            : agentLogo(a, size: 19),
-                        const SizedBox(width: 6),
-                        Flexible(
-                          child: Text(
-                            a == 'projects' ? '浏览项目' : '$a 会话',
-                            maxLines: 1,
-                            style: const TextStyle(fontSize: 11),
+                padding: const EdgeInsets.fromLTRB(16, 18, 8, 18),
+                child: Row(
+                  children: [
+                    glyph('Folder', size: 26),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            projectLabel(p),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
+                          const SizedBox(height: 7),
+                          muted(
+                            context,
+                            '${widget.sessions.where((s) => s['projectPath'] == p['path']).length} 个会话',
+                            size: 12,
+                          ),
+                        ],
+                      ),
+                    ),
+                    PopupMenuButton<String>(
+                      tooltip: '项目操作',
+                      onSelected: (value) {
+                        if (value == 'details') {
+                          projectDetails(p);
+                        } else {
+                          renameProject(p);
+                        }
+                      },
+                      itemBuilder: (_) => [
+                        const PopupMenuItem(
+                          value: 'details',
+                          child: Text('项目详情'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'rename',
+                          child: Text('修改显示名称'),
                         ),
                       ],
                     ),
-                  ),
+                  ],
                 ),
               ),
-            ),
-        ],
-      ),
-      const SizedBox(height: 38),
-      muted(context, '最近会话', size: 13),
-      const SizedBox(height: 10),
-      for (final s in widget.sessions.take(5))
-        InkWell(
-          onTap: () => open(s['id']),
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 2),
-            decoration: BoxDecoration(
-              border: Border(
-                bottom: BorderSide(
-                  color: Theme.of(context).dividerColor.withValues(alpha: .15),
-                ),
-              ),
-            ),
-            child: Row(
-              children: [
-                agentLogo(s['agent'], size: 24),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${s['managed'] == true ? '[独立测试] ' : ''}${s['title']}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 13),
-                      ),
-                      const SizedBox(height: 6),
-                      muted(
-                        context,
-                        '${s['agent']} · ${s['project'] ?? '无项目'}',
-                        size: 11,
-                      ),
-                    ],
-                  ),
-                ),
-                glyph('ChevronRight', size: 17, color: mutedColor(context)),
-              ],
             ),
           ),
         ),
     ],
+  );
+
+  Future<void> projectSessions(dynamic p) =>
+      collieSheet<void>(context, projectLabel(p), (ctx) {
+        final rows = widget.sessions
+            .where((s) => s['projectPath'] == p['path'])
+            .toList();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(child: muted(ctx, '${rows.length} 个会话', size: 12)),
+                TextButton(
+                  onPressed: () => projectDetails(p),
+                  child: const Text('项目详情'),
+                ),
+              ],
+            ),
+            if (rows.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 30),
+                child: Text('这个项目还没有会话', textAlign: TextAlign.center),
+              ),
+            for (final session in rows)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: agentLogo(session['agent'], size: 24),
+                title: Text(
+                  session['title'],
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 14),
+                ),
+                subtitle: Text(
+                  session['agent'],
+                  style: const TextStyle(fontSize: 12),
+                ),
+                trailing: const Icon(Icons.chevron_right, size: 18),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  setState(() => page = 'chat');
+                  open(session['id']);
+                },
+              ),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: widget.role == 'view'
+                  ? null
+                  : () {
+                      Navigator.pop(ctx);
+                      setState(() => page = 'chat');
+                      widget.onCreate();
+                      widget.onOpen('draft-project:${p['path']}');
+                    },
+              child: const Text('新建会话'),
+            ),
+          ],
+        );
+      });
+
+  Widget welcome() => Padding(
+    padding: const EdgeInsets.fromLTRB(22, 24, 22, 0),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Image.asset(
+          'assets/collie-companion-v2.png',
+          width: 205,
+          height: 140,
+          fit: BoxFit.contain,
+        ),
+        const SizedBox(height: 17),
+        const Text(
+          '今天想继续哪项工作？',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 23,
+            fontWeight: FontWeight.w500,
+            height: 1.5,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Center(child: muted(context, '工作在电脑，掌控在手边。', size: 13)),
+        const SizedBox(height: 26),
+        Row(
+          children: [
+            for (final a in ['Codex', 'Hermes', 'Claude Code'])
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 3),
+                  child: InkWell(
+                    onTap: () {
+                      setState(() => agent = a);
+                      scaffold.currentState?.openDrawer();
+                    },
+                    borderRadius: BorderRadius.circular(17),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 13,
+                      ),
+                      decoration: BoxDecoration(
+                        color: panelColor(context),
+                        border: Border.all(color: const Color(0xffe5e5e5)),
+                        borderRadius: BorderRadius.circular(17),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          agentLogo(a, size: 19),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              '$a 会话',
+                              maxLines: 1,
+                              style: const TextStyle(fontSize: 11),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 38),
+        muted(context, '最近会话', size: 13),
+        const SizedBox(height: 10),
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: widget.onRefresh,
+            child: ListView(
+              key: const PageStorageKey('home-recent-sessions'),
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.only(bottom: 25),
+              children: [
+                for (final s in widget.sessions)
+                  InkWell(
+                    onTap: () => open(s['id']),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 15,
+                        horizontal: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        border: Border(
+                          bottom: BorderSide(
+                            color: Theme.of(context).dividerColor
+                                .withValues(alpha: .15),
+                          ),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          agentLogo(s['agent'], size: 24),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '${s['managed'] == true ? '[独立测试] ' : ''}${s['title']}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 13),
+                                ),
+                                const SizedBox(height: 6),
+                                muted(
+                                  context,
+                                  '${s['agent']} · ${s['project'] ?? '无项目'}',
+                                  size: 11,
+                                ),
+                              ],
+                            ),
+                          ),
+                          glyph(
+                            'ChevronRight',
+                            size: 17,
+                            color: mutedColor(context),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    ),
   );
   Widget markdown(String text, {bool compact = false}) => MarkdownBody(
     data: text,
@@ -2100,18 +2446,18 @@ class _CollieShellState extends State<CollieShell> {
                         child: previewComputers.connecting
                             ? CircularProgressIndicator(
                                 strokeWidth: 1.3,
-                                color: mutedColor(context),
+                                color: const Color(0xffb88a00),
                                 semanticsLabel: '正在连接电脑',
                               )
                             : Center(
                                 child: Container(
-                                  width: 5,
-                                  height: 5,
+                                  width: 6,
+                                  height: 6,
                                   decoration: BoxDecoration(
                                     shape: BoxShape.circle,
                                     color: widget.api.previewOffline
-                                        ? mutedColor(context)
-                                        : companionGreen,
+                                        ? const Color(0xffef4444)
+                                        : const Color(0xff00d600),
                                   ),
                                 ),
                               ),
@@ -2121,12 +2467,9 @@ class _CollieShellState extends State<CollieShell> {
                         previewComputers.connecting
                             ? '连接中'
                             : widget.api.previewOffline
-                            ? '离线'
+                            ? '未连接'
                             : '已连接',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: mutedColor(context),
-                        ),
+                        style: const TextStyle(fontSize: 11),
                       ),
                     ],
                   ),
@@ -2169,12 +2512,19 @@ class _CollieShellState extends State<CollieShell> {
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 child: Row(
                   children: [
-                    iconAction(
-                      'Menu',
-                      '打开会话列表',
-                      () => scaffold.currentState?.openDrawer(),
-                      size: 23,
-                    ),
+                    if (d != null && page == 'chat')
+                      IconButton(
+                        tooltip: '返回会话首页',
+                        onPressed: home,
+                        icon: const Icon(Icons.arrow_back, size: 23),
+                      )
+                    else
+                      iconAction(
+                        'Menu',
+                        '打开会话列表',
+                        () => scaffold.currentState?.openDrawer(),
+                        size: 23,
+                      ),
                     const SizedBox(width: 5),
                     Expanded(
                       child: d != null && page == 'chat'
@@ -2271,35 +2621,7 @@ class _CollieShellState extends State<CollieShell> {
             if (widget.loading) const LinearProgressIndicator(minHeight: 1),
             Expanded(
               child: page == 'projects'
-                  ? ListView(
-                      padding: const EdgeInsets.all(24),
-                      children: [
-                        const Text('项目', style: TextStyle(fontSize: 25)),
-                        muted(
-                          context,
-                          '已关联的项目 · ${widget.projects.length} 个目录',
-                        ),
-                        for (final p in widget.projects)
-                          ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            leading: glyph('Folder'),
-                            title: Text(p['name']),
-                            subtitle: Text(
-                              p['path'],
-                              style: const TextStyle(fontSize: 11),
-                            ),
-                            trailing: glyph('ChevronRight', size: 17),
-                            onTap: () {
-                              setState(() {
-                                project = p['path'];
-                                agent = 'all';
-                                query = '';
-                              });
-                              scaffold.currentState?.openDrawer();
-                            },
-                          ),
-                      ],
-                    )
+                  ? projectsPage()
                   : page == 'usage'
                   ? UsagePage(
                       api: widget.api,
@@ -2307,10 +2629,7 @@ class _CollieShellState extends State<CollieShell> {
                       readOnly: widget.role == 'view',
                     )
                   : d == null
-                  ? RefreshIndicator(
-                      onRefresh: widget.onRefresh,
-                      child: welcome(),
-                    )
+                  ? welcome()
                   : conversation(d),
             ),
             if (page == 'chat' && quotaBlocked) quotaNotice(),
@@ -2762,49 +3081,8 @@ class _UsagePageState extends State<UsagePage> {
             ),
             muted(context, 'DeepSeek 余额、套餐额度暂未接入，不套用 Codex 的 5 小时/每周额度。'),
           ],
-          if (agent == 'Codex') ...[
-            const Text(
-              'Codex 账号额度',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
-            ),
-            muted(context, '账号共享额度 · 与本机 Token 总计独立'),
-            for (final b in account?['limits'] ?? []) ...[
-              const SizedBox(height: 16),
-              Text('${b['name']}${b['plan'] == null ? '' : ' · ${b['plan']}'}'),
-              for (final w in b['windows'] ?? [])
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Text(
-                        '${w['windowMinutes'] == 300
-                            ? '5 小时'
-                            : w['windowMinutes'] == 10080
-                            ? '每周'
-                            : '额度窗口'} · 已用 ${w['usedPercent']}%',
-                      ),
-                      const SizedBox(height: 8),
-                      LinearProgressIndicator(
-                        value: ((w['usedPercent'] as num? ?? 0) / 100).clamp(
-                          0,
-                          1,
-                        ),
-                        color: const Color(0xff666666),
-                        backgroundColor: panelColor(context),
-                      ),
-                      const SizedBox(height: 8),
-                      muted(
-                        context,
-                        '剩余 ${(100 - (w['usedPercent'] as num? ?? 0)).clamp(0, 100)}% · 自动恢复：${w['resetsAt'] is num ? DateTime.fromMillisecondsSinceEpoch((w['resetsAt'] as num).toInt() * 1000).toLocal() : '未知'}',
-                      ),
-                    ],
-                  ),
-                ),
-            ],
-            ResetCredits(
-              key: ValueKey(account?['accountKey']),
-              account: account,
+          if (agent == 'Codex')
+            PreviewUsageLimits(
               api: widget.api,
               readOnly: widget.readOnly,
               onRefresh: () async {
@@ -2812,9 +3090,6 @@ class _UsagePageState extends State<UsagePage> {
                 if (mounted) setState(() => data = value);
               },
             ),
-            if ((account?['limits'] as List? ?? []).isEmpty)
-              muted(context, account?['limitsError'] ?? '账号未提供可显示的额度窗口'),
-          ],
           const SizedBox(height: 24),
           tabs(
             accountScope

@@ -1,6 +1,6 @@
 {
   "source": "flutter_client/lib",
-  "git_commit": "a915aed2c2f2419c0e8848089316f2a054aa844a",
+  "git_commit": "4c784d5f85a062a9a33a2187096b06dd526f47c9",
   "pubspec_sha256": "b395e8b7716ebfbdd682fe8fcf1e6293807ff70c9b8124971a45e1820d7936c4",
   "unchanged_widget_sources_sha256": {
     "computers.dart": "bfd425011adcf32351e4ae1df7a164239ea284ef3ec62c80ceb79073329f000b",
@@ -19,7 +19,8 @@
     "preview_main.dart",
     "ui.dart",
     "preview_computers.dart",
-    "preview_pairing.dart"
+    "preview_pairing.dart",
+    "preview_usage_limits.dart"
   ],
   "prototype_ui_note": "Prototype-only UI changes include session filters, quota notices, home composer visibility and multi-computer pairing/selection. Production UI is unchanged.",
   "note": "Shared widget source identity; Android system UI still requires device verification."

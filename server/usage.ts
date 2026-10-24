@@ -1,18 +1,22 @@
+import{readFileSync,writeFileSync,renameSync}from'node:fs';
 import{execFile}from'node:child_process';import{promisify}from'node:util';import{join}from'node:path';
 const exec=promisify(execFile);
 export function normalizeLimits(raw:any){
  const source=raw?.rateLimitsByLimitId&&Object.keys(raw.rateLimitsByLimitId).length?Object.values(raw.rateLimitsByLimitId):raw?.rateLimits?[raw.rateLimits]:[];
  return source.map((bucket:any)=>({id:bucket.limitId||'codex',name:bucket.limitName||bucket.limitId||'Codex',plan:bucket.planType||null,windows:['primary','secondary'].flatMap(k=>{const w=bucket[k];return w&&typeof w.usedPercent==='number'?[{usedPercent:w.usedPercent,windowMinutes:w.windowDurationMins??null,resetsAt:w.resetsAt??null}]:[]})}));
 }
-export function resetSummary(raw:any){const value=raw?.rateLimitResetCredits;if(!value||!Number.isInteger(value.availableCount)||value.availableCount<0)return null;return {availableCount:value.availableCount,credits:Array.isArray(value.credits)?value.credits.map((c:any)=>({id:c.id,status:c.status,title:c.title,description:c.description,expiresAt:c.expiresAt})):null}}
+export function resetSummary(raw:any){const value=raw?.rateLimitResetCredits;if(!value||!Number.isInteger(value.availableCount)||value.availableCount<0)return null;return {availableCount:value.availableCount,credits:Array.isArray(value.credits)?value.credits.map((c:any)=>({id:c.id,resetType:c.resetType,grantedAt:c.grantedAt,status:c.status,title:c.title,description:c.description,expiresAt:c.expiresAt})):null}}
 export class ResetService{
  private pending?:{key:string;promise:Promise<any>};
- constructor(private limits:()=>Promise<any>,private consume:(p:{idempotencyKey:string})=>Promise<any>,private invalidate:()=>void){}
+ private attempts:Record<string,string>={};
+ constructor(private limits:()=>Promise<any>,private consume:(p:{idempotencyKey:string;creditId?:string})=>Promise<any>,private invalidate:()=>void,private ledgerPath?:string){if(ledgerPath){try{this.attempts=JSON.parse(readFileSync(ledgerPath,'utf8'))}catch(e:any){if(e.code!=='ENOENT')throw e}}}
  async reset(body:any){
   if(typeof body?.idempotencyKey!=='string'||! /^[a-zA-Z0-9_-]{16,100}$/.test(body.idempotencyKey)||typeof body.accountKey!=='string'||!body.accountKey||body.accountKey.length>500)throw Error('无效重置请求，请刷新账号额度');
-  const key=JSON.stringify([body.accountKey,body.idempotencyKey]);
+  if(body.creditId!==undefined&&(typeof body.creditId!=='string'||!body.creditId.trim()||body.creditId.length>500))throw Error('无效重置卡');
+  const key=JSON.stringify([body.accountKey,body.idempotencyKey,body.creditId??null]);
+  const attempt=JSON.stringify([body.accountKey,body.idempotencyKey]);const card=JSON.stringify(body.creditId??null);if(this.attempts[attempt]!==undefined&&this.attempts[attempt]!==card)throw Error('原重置操作不能更换卡片');if(this.attempts[attempt]===undefined){this.attempts[attempt]=card;if(this.ledgerPath){writeFileSync(this.ledgerPath+'.tmp',JSON.stringify(this.attempts),{mode:0o600});renameSync(this.ledgerPath+'.tmp',this.ledgerPath)}}
   if(this.pending){if(this.pending.key===key)return this.pending.promise;throw Error('正在处理另一次重置，请稍候刷新')}
-  const promise=(async()=>{const snapshot=await this.limits();if(snapshot.accountKey!==body.accountKey)throw Error('Codex 账号已变化，请刷新后重新确认');try{const result=await this.consume({idempotencyKey:body.idempotencyKey});if(!['reset','alreadyRedeemed','nothingToReset','noCredit'].includes(result?.outcome))throw Error('重置结果未知，请使用原操作重试');return result}finally{this.invalidate()}})();
+  const promise=(async()=>{const snapshot=await this.limits();if(snapshot.accountKey!==body.accountKey)throw Error('Codex 账号已变化，请刷新后重新确认');try{const result=await this.consume({idempotencyKey:body.idempotencyKey,...(body.creditId?{creditId:body.creditId}:{})});if(!['reset','alreadyRedeemed','nothingToReset','noCredit'].includes(result?.outcome))throw Error('重置结果未知，请使用原操作重试');return result}finally{this.invalidate()}})();
   this.pending={key,promise};try{return await promise}finally{this.pending=undefined}
  }
 }

@@ -143,7 +143,7 @@ let mutation=Promise.resolve();
 app.post('/api/tasks/:id/actions',(req,res)=>{mutation=mutation.then(async()=>{try{const {requestId,action,text,approvalId}=req.body;if(typeof requestId!=='string'||requestId.length>100)throw Error('缺少操作编号');const key=`${req.params.id}:${requestId}`;if(seen.has(key)){res.json({ok:true,duplicate:true});return}const task=tasks.find(t=>t.id===req.params.id);if(!task){res.status(404).json({error:'任务不存在'});return}applyAction(task,action,text,approvalId);await persist();seen.set(key,Date.now());if(seen.size>5000)seen.delete(seen.keys().next().value!);broadcast();res.json({ok:true})}catch(e){res.status(409).json({error:(e as Error).message})}})});
 app.post('/api/demo/reset',(_req,res)=>{mutation=mutation.then(async()=>{tasks=seeds();await persist();broadcast();res.json({ok:true})})});
 const usage=new UsageService(dir,()=>codex.usageLimits().catch(()=>desktopCreator.usageLimits()),()=>codex.accountUsage());
-const resets=new ResetService(()=>codex.usageLimits(),p=>codex.consumeReset(p),()=>usage.invalidateAccount());
+const resets=new ResetService(()=>codex.usageLimits(),p=>codex.consumeReset(p),()=>usage.invalidateAccount(),join(dir,'reset-attempt-cards.json'));
 app.post('/api/usage/codex/reset',async(req,res)=>{try{res.json(await resets.reset(req.body))}catch(e){res.status(409).json({error:(e as Error).message})}});
 app.get('/api/usage/limits',async(req,res)=>{res.set('Cache-Control','no-store');try{res.json(await usage.readAccount(req.query.refresh==='1'))}catch{res.status(503).json({error:'账号额度暂时不可用'})}});
 app.get('/api/usage',async(req,res)=>{res.set('Cache-Control','no-store');try{res.json(await usage.read(req.query.refresh==='1'))}catch{res.status(503).json({error:'用量索引暂时不可用，请稍后刷新'})}});

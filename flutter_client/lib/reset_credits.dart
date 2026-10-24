@@ -8,6 +8,7 @@ class ResetCredits extends StatefulWidget {
   final CollieApi api;
   final bool readOnly;
   final bool compact;
+  final String? creditId;
   final Future<void> Function() onRefresh;
   const ResetCredits({
     super.key,
@@ -16,6 +17,7 @@ class ResetCredits extends StatefulWidget {
     required this.onRefresh,
     this.readOnly = false,
     this.compact = false,
+    this.creditId,
   });
   @override
   State<ResetCredits> createState() => _ResetCreditsState();
@@ -26,6 +28,8 @@ class _ResetCreditsState extends State<ResetCredits> {
   bool busy = false;
   String message = '';
   String? pendingKey;
+  String? pendingCreditId;
+  bool restored = false;
   String get storageKey =>
       'gcollie-reset-${base64Url.encode(utf8.encode('${widget.api.base}:${widget.account?['accountKey']}'))}';
   @override
@@ -37,33 +41,154 @@ class _ResetCreditsState extends State<ResetCredits> {
   Future<void> restore() async {
     try {
       final key = await storage.read(key: storageKey);
-      if (mounted) setState(() => pendingKey = key);
+      if (mounted) {
+        setState(() {
+          if (key != null && key.startsWith('{')) {
+            final value = jsonDecode(key);
+            pendingKey = value['key'];
+            pendingCreditId = value['creditId'];
+          } else {
+            pendingKey = key;
+          }
+          restored = true;
+        });
+      }
     } catch (_) {
-      if (mounted) setState(() => message = '无法读取重置记录，请检查设备存储');
+      if (mounted) {
+        setState(() {
+          message = '无法读取重置记录，请检查设备存储';
+          restored = false;
+        });
+      }
     }
   }
 
   Future<void> reset() async {
     if (busy) return;
+    await restore();
+    if (!mounted || !restored) return;
     setState(() => busy = true);
     final account = widget.account!;
-    final confirmed = await showDialog<bool>(
+    final cards =
+        ((account['resetCredits']?['credits'] as List?) ?? [])
+            .where((c) => c['status'] == 'available' && c['id'] is String)
+            .toList()
+          ..sort(
+            (a, b) => ((a['expiresAt'] as num?) ?? double.infinity).compareTo(
+              (b['expiresAt'] as num?) ?? double.infinity,
+            ),
+          );
+    String? selected = pendingKey != null
+        ? pendingCreditId
+        : widget.creditId ?? (cards.isEmpty ? null : cards.first['id']);
+    final confirmed = await showModalBottomSheet<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('使用 1 张重置卡？'),
-        content: Text(
-          '账号：${account['accountLabel'] ?? account['accountKey']}\n\n服务端将选择下一张可用卡。卡片使用后将被消耗；恢复范围和下次恢复时间以服务端结果为准。',
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, change) => SafeArea(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              24,
+              0,
+              24,
+              24 + MediaQuery.viewInsetsOf(ctx).bottom,
+            ),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.sizeOf(ctx).height * .78,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            '使用限额重置',
+                            style: TextStyle(
+                              fontSize: 21,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          tooltip: '关闭',
+                          onPressed: () => Navigator.pop(ctx, false),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
+                    Text(
+                      '账号：${account['accountLabel'] ?? account['accountKey']}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    const SizedBox(height: 12),
+                    if (pendingKey != null)
+                      const Text(
+                        '上次操作结果尚未确认。重试将沿用原卡片和操作编号，不能更换卡片。',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                    for (final card in cards)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 12),
+                        child: ListTile(
+                          leading: Icon(
+                            selected == card['id']
+                                ? Icons.radio_button_checked
+                                : Icons.radio_button_unchecked,
+                          ),
+                          onTap: pendingKey != null
+                              ? null
+                              : () => change(() => selected = card['id']),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            side: BorderSide(
+                              color: Theme.of(
+                                ctx,
+                              ).dividerColor.withValues(alpha: .2),
+                            ),
+                          ),
+                          title: Text(
+                            card['title'] ?? '使用限额重置',
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          subtitle: Text(
+                            '${card['description'] ?? (card['resetType'] == 'codexRateLimits' ? '每周 + 5 小时' : '范围以上游信息为准')}\n${card['expiresAt'] is num ? '到期：${DateTime.fromMillisecondsSinceEpoch((card['expiresAt'] as num).toInt() * 1000).toLocal()}' : '未提供到期时间'}',
+                            style: const TextStyle(fontSize: 12, height: 1.6),
+                          ),
+                        ),
+                      ),
+                    if (cards.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 16),
+                        child: Text(
+                          '未取得卡片明细，将由 Codex 选择下一张可用卡。',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    const SizedBox(height: 16),
+                    Text(
+                      '可用 ${account['resetCredits']?['availableCount'] ?? '未知'} 次 · 使用后会消耗一张卡，具体结果以 Codex 返回为准。',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    const SizedBox(height: 20),
+                    FilledButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: Text(pendingKey != null ? '重试原重置操作' : '确认使用所选重置卡'),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: const Text('取消'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('使用 1 张并重置'),
-          ),
-        ],
       ),
     );
     if (!mounted) return;
@@ -72,12 +197,17 @@ class _ResetCreditsState extends State<ResetCredits> {
       return;
     }
     try {
-      final key = await storage.read(key: storageKey) ?? requestId();
-      await storage.write(key: storageKey, value: key);
+      final key = pendingKey ?? requestId();
+      await storage.write(
+        key: storageKey,
+        value: jsonEncode({'key': key, 'creditId': selected}),
+      );
+      pendingCreditId = selected;
       pendingKey = key;
       final result = await widget.api.call('/usage/codex/reset', {
         'accountKey': account['accountKey'],
         'idempotencyKey': key,
+        if (selected != null) 'creditId': selected,
       });
       const messages = {
         'reset': '额度已重置',
@@ -89,6 +219,7 @@ class _ResetCreditsState extends State<ResetCredits> {
       if (text == null) throw ApiException('重置结果未知，请重试原操作');
       await storage.delete(key: storageKey);
       pendingKey = null;
+      pendingCreditId = null;
       if (mounted) setState(() => message = text);
       try {
         await widget.onRefresh();
@@ -133,13 +264,16 @@ class _ResetCreditsState extends State<ResetCredits> {
             style: widget.compact
                 ? OutlinedButton.styleFrom(
                     minimumSize: const Size(0, 44),
+                    backgroundColor: Theme.of(context).colorScheme.primary,
+                    foregroundColor: Theme.of(context).colorScheme.onPrimary,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
                   )
                 : null,
             onPressed:
-                busy ||
+                !restored ||
+                    busy ||
                     widget.readOnly ||
                     widget.account?['accountKey'] == null ||
                     summary == null ||

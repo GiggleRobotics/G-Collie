@@ -72,6 +72,7 @@ class CollieApi {
   ];
   final Map<String, Json> sessions = {};
   int credits = 2;
+  final Set<int> previewUsedResetCards = {};
   final Set<String> resetIds = {};
   CollieApi(
     this.base, {

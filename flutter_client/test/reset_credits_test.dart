@@ -51,14 +51,14 @@ void main() {
       expect(api.calls, isEmpty);
       await tester.tap(find.text('使用重置卡'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('使用 1 张并重置'));
+      await tester.tap(find.text('确认使用所选重置卡'));
       await tester.pumpAndSettle();
       expect(api.calls, hasLength(1));
       expect(find.textContaining('timeout'), findsOneWidget);
       api.fail = false;
       await tester.tap(find.text('重试原重置操作'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('使用 1 张并重置'));
+      await tester.tap(find.text('重试原重置操作').last);
       await tester.pumpAndSettle();
       expect(api.calls, hasLength(2));
       expect(api.calls[0]['idempotencyKey'], api.calls[1]['idempotencyKey']);
@@ -67,6 +67,61 @@ void main() {
       expect(await const FlutterSecureStorage().readAll(), isEmpty);
     },
   );
+  testWidgets('selected second card remains bound on uncertain retry', (
+    tester,
+  ) async {
+    final api = ResetApi();
+    addTearDown(api.close);
+    final withCards = {
+      ...account,
+      'resetCredits': {
+        'availableCount': 2,
+        'credits': [
+          {
+            'id': 'one',
+            'status': 'available',
+            'title': '第一张',
+            'expiresAt': 2000000000,
+          },
+          {
+            'id': 'two',
+            'status': 'available',
+            'title': '第二张',
+            'expiresAt': 2100000000,
+          },
+        ],
+      },
+    };
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ResetCredits(
+            account: withCards,
+            api: api,
+            onRefresh: () async {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('使用重置卡'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('第二张'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('确认使用所选重置卡'));
+    await tester.tap(find.text('确认使用所选重置卡'));
+    await tester.pumpAndSettle();
+    expect(api.calls.single['creditId'], 'two');
+    await tester.tap(find.text('重试原重置操作'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('重试原重置操作').last);
+    await tester.tap(find.text('重试原重置操作').last);
+    await tester.pumpAndSettle();
+    expect(api.calls.length, 2);
+    expect(api.calls.last['creditId'], 'two');
+    expect(api.calls.last['idempotencyKey'], api.calls.first['idempotencyKey']);
+    await tester.pumpWidget(const SizedBox());
+  });
   testWidgets('read-only and unknown card count cannot consume', (
     tester,
   ) async {
