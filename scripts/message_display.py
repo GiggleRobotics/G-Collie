@@ -7,6 +7,13 @@ from urllib.parse import quote
 
 def display_text(text, role='user', has_media=False):
     if role == 'user':
+        # Unwrap only a leading browser snapshot paired with the app request marker.
+        browser = re.match(
+            r'\A\s*<in-app-browser-context\b[^>]*>.*?</in-app-browser-context>'
+            r'\s*## My request:\s*\n(?P<body>.*)\Z', text, re.S,
+        )
+        if browser:
+            text = browser['body']
         reply = re.fullmatch(r'\s*<send_user_message_question_reply>\s*(.*?)\s*</send_user_message_question_reply>\s*', text, re.S)
         if reply:
             try:
@@ -28,6 +35,8 @@ def display_text(text, role='user', has_media=False):
                     return ''
             except (ValueError, TypeError):
                 pass
+        if text.lstrip().startswith('# Files mentioned by the user:'):
+            text = re.sub(r'<in-app-browser-context\b[^>]*>.*?</in-app-browser-context>\s*(?=## My request:)', '', text, flags=re.S)
         # Only unwrap the complete known envelope. A user's ordinary headings
         # with the same words must not be removed.
         envelope = re.match(

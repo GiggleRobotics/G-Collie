@@ -116,7 +116,7 @@ Future<void> showPreviewComputers(
               '选择要查看的电脑，切换不会停止其他电脑上的任务。',
               style: TextStyle(fontSize: 12, height: 1.6, color: Colors.grey),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
             Flexible(
               child: SingleChildScrollView(
                 child: Column(
@@ -130,7 +130,7 @@ Future<void> showPreviewComputers(
                             borderRadius: BorderRadius.circular(16),
                             side: BorderSide(
                               color: c['id'] == previewComputers.selected
-                                  ? const Color(0xff315c49)
+                                  ? Theme.of(ctx).colorScheme.onSurface
                                   : Theme.of(ctx).dividerColor
                                         .withValues(alpha: .2),
                             ),

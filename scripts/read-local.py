@@ -86,7 +86,7 @@ else:
        if isinstance(part,dict) and part.get('type') in ['image','input_image','output_image','local_image','localImage']:
         value=part.get('image_url') or part.get('url') or part.get('path');value=value.get('url') if isinstance(value,dict) else value
         if isinstance(value,str) and len(value)<8*1024*1024:media.append(value)
-      text=re.sub(r'<(environment_context|external_codex_apps_open_page|in-app-browser-context)\b[^>]*>.*?</\1>', '', text, flags=re.S).strip()
+      text=re.sub(r'<(environment_context|external_codex_apps_open_page)\b[^>]*>.*?</\1>', '', text, flags=re.S).strip()
      elif t in ['function_call','custom_tool_call']:role='tool';text='调用 '+str(p.get('name','tool'))
      elif t in ['function_call_output','custom_tool_call_output']:role='tool';text=clean(p.get('output'))
     if kind=='token_usage_record':

@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 import 'dart:math';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 typedef Json = Map<String, dynamic>;
 
@@ -54,6 +56,37 @@ bool isActive(Json d) =>
     ['running', 'starting', 'waiting'].contains(d['status']);
 
 class CollieApi {
+  static Future<void> _diagnosticWrite = Future.value();
+  Future<void> recordFailure(
+    String path,
+    String reason, [
+    String? correlation,
+  ]) async {
+    final route = path
+        .split('?')
+        .first
+        .replaceAll(RegExp(r'[a-f0-9-]{16,}'), ':id');
+    _diagnosticWrite = _diagnosticWrite.catchError((_) {}).then((_) async {
+      const store = FlutterSecureStorage();
+      final raw = await store.read(key: 'diagnostic-failures');
+      final rows = raw == null ? <dynamic>[] : jsonDecode(raw) as List;
+      rows.add({
+        'time': DateTime.now().toIso8601String(),
+        'route': route,
+        'category': reason,
+        'requestId': correlation,
+        'computer': base.host,
+      });
+      await store.write(
+        key: 'diagnostic-failures',
+        value: jsonEncode(
+          rows.skip(rows.length > 100 ? rows.length - 100 : 0).toList(),
+        ),
+      );
+    });
+    await _diagnosticWrite;
+  }
+
   final Uri base;
   final HttpClient _client = HttpClient()
     ..connectionTimeout = const Duration(seconds: 10);
@@ -201,22 +234,42 @@ class CollieApi {
   }
 
   Future<dynamic> call(String path, [Json? body]) async {
+    final correlation = requestId();
     try {
-      return await _call(path, body).timeout(const Duration(seconds: 35));
-    } on ApiException {
+      return await _call(
+        path,
+        body,
+        correlation,
+      ).timeout(const Duration(seconds: 35));
+    } on ApiException catch (e) {
+      unawaited(
+        recordFailure(
+          path,
+          e.status == 0 ? 'transport-or-invalid-response' : 'http-${e.status}',
+          correlation,
+        ).catchError((_) {}),
+      );
       rethrow;
     } catch (_) {
+      unawaited(
+        recordFailure(
+          path,
+          'transport-timeout',
+          correlation,
+        ).catchError((_) {}),
+      );
       throw ApiException(
         body == null ? '电脑连接中断，任务状态未知' : '请求结果未知，请刷新确认；不会自动重发',
       );
     }
   }
 
-  Future<dynamic> _call(String path, Json? body) async {
+  Future<dynamic> _call(String path, Json? body, String correlation) async {
     final request = await _client.openUrl(
       body == null ? 'GET' : 'POST',
       endpoint.resolve('/api$path'),
     );
+    request.headers.set('x-gcollie-request-id', correlation);
     request.followRedirects = false;
     request.headers.set(HttpHeaders.acceptHeader, 'application/json');
     if (requestCookie.isNotEmpty) {

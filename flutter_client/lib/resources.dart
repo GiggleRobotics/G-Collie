@@ -1,8 +1,10 @@
+import 'downloads.dart';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'api.dart';
 import 'preview.dart';
+import 'native.dart';
 
 class SessionResources {
   final CollieApi api;
@@ -34,6 +36,42 @@ class SessionResources {
     }
   }
 
+  Future<void> download(BuildContext context, String ref) async {
+    try {
+      final file = await find(ref);
+      if (file == null) throw ApiException('此链接不是当前会话可下载的文件');
+      final result = await api.call('$root/${file['id']}/preview', {});
+      final url = await api.browserPreview(result['path'] as String);
+      await NativeBridge.invoke<void>('downloadFile', {
+        'url': url.resolve('./content?download=1').toString(),
+        'name': file['name'] as String,
+        'previewRequest': '$root/${file['id']}/preview',
+        'computer': '${api.base}',
+      });
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('已开始下载'),
+            action: SnackBarAction(
+              label: '查看',
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => DownloadsPage(api: api),
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('下载未成功：$e')));
+      }
+    }
+  }
+
   Future<void> open(BuildContext context, String ref) async {
     try {
       final uri = Uri.tryParse(ref);
@@ -52,6 +90,8 @@ class SessionResources {
         MaterialPageRoute<void>(
           builder: (_) => FilePreviewPage(
             name: file['name'] as String,
+            sourceApi: api,
+            previewRequest: '$root/${file['id']}/preview',
             url: url.replace(queryParameters: {'embedded': '1'}),
             image: file['image'] == true ? image(ref) : null,
           ),

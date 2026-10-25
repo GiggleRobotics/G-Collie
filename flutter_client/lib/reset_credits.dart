@@ -236,6 +236,20 @@ class _ResetCreditsState extends State<ResetCredits> {
   @override
   Widget build(BuildContext context) {
     final summary = widget.account?['resetCredits'];
+    final disabledReason = !restored
+        ? '正在读取重置记录；若长时间未恢复，请重新进入此页面'
+        : busy
+        ? '正在处理重置，请稍候'
+        : widget.readOnly
+        ? '当前设备或卡片不可执行重置'
+        : widget.account?['accountKey'] == null
+        ? (widget.account?['resetUnavailableReason'] as String? ??
+              '账号标识暂时不可读，请刷新后重试')
+        : summary == null
+        ? '重置卡信息暂时不可读，请刷新后重试'
+        : summary['availableCount'] == 0 && pendingKey == null
+        ? '暂无可用重置卡'
+        : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -266,20 +280,18 @@ class _ResetCreditsState extends State<ResetCredits> {
                     minimumSize: const Size(0, 44),
                     backgroundColor: Theme.of(context).colorScheme.primary,
                     foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                    disabledBackgroundColor: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withValues(alpha: .12),
+                    disabledForegroundColor: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withValues(alpha: .6),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
                   )
                 : null,
-            onPressed:
-                !restored ||
-                    busy ||
-                    widget.readOnly ||
-                    widget.account?['accountKey'] == null ||
-                    summary == null ||
-                    (summary['availableCount'] == 0 && pendingKey == null)
-                ? null
-                : reset,
+            onPressed: disabledReason == null ? reset : null,
             child: Text(
               busy
                   ? '正在重置…'
@@ -293,6 +305,8 @@ class _ResetCreditsState extends State<ResetCredits> {
             ),
           ),
         ),
+        if (disabledReason != null)
+          Text(disabledReason, style: const TextStyle(fontSize: 12)),
         if (message.isNotEmpty) Text(message),
       ],
     );

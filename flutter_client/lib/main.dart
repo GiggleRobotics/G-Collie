@@ -1,3 +1,4 @@
+import 'profile.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/services.dart';
@@ -8,7 +9,12 @@ import 'api.dart';
 import 'ui.dart';
 import 'native.dart';
 
-void main() => runApp(const CollieApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await restoreProfile();
+  runApp(const CollieApp());
+}
+
 const storage = FlutterSecureStorage(
   aOptions: AndroidOptions(encryptedSharedPreferences: true),
 );
@@ -24,10 +30,31 @@ class CollieApp extends StatelessWidget {
     return ThemeData(
       useMaterial3: true,
       brightness: brightness,
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: companionGreen,
-        brightness: brightness,
-        surface: dark ? const Color(0xff212121) : Colors.white,
+      colorScheme:
+          ColorScheme.fromSeed(
+            seedColor: companionGreen,
+            brightness: brightness,
+            surface: dark ? const Color(0xff212121) : Colors.white,
+          ).copyWith(
+            primary: dark ? Colors.white : ink,
+            onPrimary: dark ? ink : Colors.white,
+            secondary: dark ? Colors.white : ink,
+            surfaceTint: Colors.transparent,
+          ),
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: dark ? const Color(0xff212121) : Colors.white,
+        surfaceTintColor: Colors.transparent,
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: dark ? Colors.white : ink,
+          foregroundColor: dark ? ink : Colors.white,
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: dark ? Colors.white : ink,
+        ),
       ),
       scaffoldBackgroundColor: dark ? const Color(0xff212121) : Colors.white,
       appBarTheme: AppBarTheme(
@@ -415,6 +442,13 @@ class _ConnectionState extends State<ConnectionPage> {
       addingComputer = false;
       rePairing = false;
     });
+    if (!offline &&
+        await profileStorage.read(key: 'profile-onboarding-done') == null &&
+        mounted) {
+      await editPreviewWorkspace(context, first: true);
+      await profileStorage.write(key: 'profile-onboarding-done', value: 'yes');
+    }
+    if (!mounted) return;
     workspaceOpen = true;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(

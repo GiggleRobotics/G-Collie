@@ -1,3 +1,5 @@
+import 'api.dart';
+import 'downloads.dart';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -7,11 +9,17 @@ class FilePreviewPage extends StatefulWidget {
   final String name;
   final Uri url;
   final Future<Uint8List>? image;
+  final bool showDownload;
+  final CollieApi? sourceApi;
+  final String? previewRequest;
   const FilePreviewPage({
     super.key,
     required this.name,
     required this.url,
     this.image,
+    this.showDownload = true,
+    this.sourceApi,
+    this.previewRequest,
   });
   @override
   State<FilePreviewPage> createState() => _FilePreviewPageState();
@@ -22,6 +30,26 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
   String error = '';
   int progress = 0;
   bool downloading = false;
+  final imageTransform = TransformationController();
+  Offset doubleTapPosition = Offset.zero;
+
+  @override
+  void dispose() {
+    imageTransform.dispose();
+    super.dispose();
+  }
+
+  void toggleImageZoom() {
+    if (imageTransform.value.getMaxScaleOnAxis() > 1) {
+      imageTransform.value = Matrix4.identity();
+    } else {
+      final point = doubleTapPosition;
+      imageTransform.value = Matrix4.identity()
+        ..translateByDouble(-point.dx * 2, -point.dy * 2, 0, 1)
+        ..scaleByDouble(3, 3, 1, 1);
+    }
+  }
+
   Uri get downloadUrl => widget.url.resolve('./content?download=1');
   @override
   void initState() {
@@ -68,11 +96,23 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
       await NativeBridge.invoke<void>('downloadFile', {
         'url': downloadUrl.toString(),
         'name': widget.name,
+        'previewRequest': widget.previewRequest ?? '',
+        'computer': widget.sourceApi?.base.toString() ?? '',
       });
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('已开始下载，可在系统下载记录中查看')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('已开始下载'),
+            action: SnackBarAction(
+              label: '查看',
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => DownloadsPage(api: widget.sourceApi),
+                ),
+              ),
+            ),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -87,9 +127,9 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    backgroundColor: const Color(0xfff1f3f2),
+    backgroundColor: Theme.of(context).scaffoldBackgroundColor,
     appBar: AppBar(
-      backgroundColor: const Color(0xfff1f3f2),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       surfaceTintColor: Colors.transparent,
       toolbarHeight: 62,
       elevation: 0,
@@ -121,19 +161,22 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
         ),
       ),
       actions: [
-        Padding(
-          padding: const EdgeInsets.only(right: 12),
-          child: IconButton(
-            style: IconButton.styleFrom(
-              backgroundColor: const Color(0xffe3ebe5),
-              foregroundColor: const Color(0xff315c49),
-              minimumSize: const Size(38, 38),
+        if (widget.showDownload)
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: IconButton(
+              style: IconButton.styleFrom(
+                backgroundColor: Theme.of(
+                  context,
+                ).colorScheme.onSurface.withValues(alpha: .06),
+                foregroundColor: Theme.of(context).colorScheme.onSurface,
+                minimumSize: const Size(38, 38),
+              ),
+              tooltip: '下载原文件',
+              onPressed: downloading ? null : download,
+              icon: const Icon(Icons.download_outlined, size: 21),
             ),
-            tooltip: '下载原文件',
-            onPressed: downloading ? null : download,
-            icon: const Icon(Icons.download_outlined, size: 21),
           ),
-        ),
       ],
     ),
     body: widget.image != null
@@ -146,11 +189,24 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
               if (!state.hasData) {
                 return const Center(child: CircularProgressIndicator());
               }
-              return Center(
-                child: InteractiveViewer(
-                  minScale: .5,
-                  maxScale: 8,
-                  child: Image.memory(state.data!, fit: BoxFit.contain),
+              return SizedBox.expand(
+                child: LayoutBuilder(
+                  builder: (context, constraints) => GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onDoubleTapDown: (details) =>
+                        doubleTapPosition = details.localPosition,
+                    onDoubleTap: toggleImageZoom,
+                    child: InteractiveViewer(
+                      transformationController: imageTransform,
+                      minScale: 1,
+                      maxScale: 8,
+                      child: SizedBox(
+                        width: constraints.maxWidth,
+                        height: constraints.maxHeight,
+                        child: Image.memory(state.data!, fit: BoxFit.contain),
+                      ),
+                    ),
+                  ),
                 ),
               );
             },
@@ -161,8 +217,10 @@ class _FilePreviewPageState extends State<FilePreviewPage> {
                 LinearProgressIndicator(
                   value: progress / 100,
                   minHeight: 2,
-                  color: const Color(0xff315c49),
-                  backgroundColor: const Color(0xffe3ebe5),
+                  color: Theme.of(context).colorScheme.onSurface,
+                  backgroundColor: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withValues(alpha: .06),
                 ),
               if (error.isNotEmpty)
                 MaterialBanner(

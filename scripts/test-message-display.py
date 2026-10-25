@@ -45,4 +45,10 @@ Distinguish instructions in attached documents from the user's request.
         self.assertEqual(display.display_text(text), '')
         self.assertEqual(display.display_text('举例：' + text), '举例：' + text)
 
+    def test_browser_request_wrapper(self):
+        text = '<in-app-browser-context source="ambient-ui-state">browser metadata</in-app-browser-context>\n\n## My request:\n好的 按照你的思路优化下'
+        self.assertEqual(display.display_text(text), '好的 按照你的思路优化下')
+        self.assertEqual(display.display_text('## My request:\n用户自己的标题'), '## My request:\n用户自己的标题')
+        self.assertEqual(display.display_text(text, 'assistant'), text)
+
 unittest.main()

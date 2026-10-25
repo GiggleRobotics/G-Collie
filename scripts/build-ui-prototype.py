@@ -19,7 +19,7 @@ for path in adapters.glob('*.dart'): shutil.copy2(path,work/'lib'/path.name)
 # The following sources must never be rewritten by the preview build.
 manifest = {}
 for src in sorted((root/'flutter_client/lib').glob('*.dart')):
-    if src.name in ('api.dart','native.dart','ui.dart'): continue
+    if src.name in ('api.dart','native.dart','ui.dart','connection_page.dart'): continue
     copied=work/'lib'/src.name
     assert src.read_bytes()==copied.read_bytes(), f'Widget source drift: {src}'
     manifest[src.name]=hashlib.sha256(src.read_bytes()).hexdigest()
@@ -37,5 +37,5 @@ bootstrap_name = f'flutter_bootstrap.{revision}.js'
 (out/bootstrap_name).write_text(bootstrap)
 index=out/'index.html'
 index.write_text(index.read_text().replace('<base href="/">','<base href="./">').replace('flutter_bootstrap.js',bootstrap_name))
-(root/'docs/开发/交互原型/source-manifest.json').write_text(json.dumps({'source':'flutter_client/lib','git_commit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),'pubspec_sha256':hashlib.sha256((root/'flutter_client/pubspec.yaml').read_bytes()).hexdigest(),'unchanged_widget_sources_sha256':manifest,'adapters':['api.dart','native.dart','preview_main.dart','ui.dart','preview_computers.dart','preview_pairing.dart','preview_usage_limits.dart'],'prototype_ui_note':'Prototype-only UI changes include session filters, quota notices, home composer visibility and multi-computer pairing/selection. Production UI is unchanged.','note':'Shared widget source identity; Android system UI still requires device verification.'},ensure_ascii=False,indent=2)+'\n')
+(root/'docs/开发/交互原型/source-manifest.json').write_text(json.dumps({'source':'flutter_client/lib','git_commit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),'pubspec_sha256':hashlib.sha256((root/'flutter_client/pubspec.yaml').read_bytes()).hexdigest(),'unchanged_widget_sources_sha256':manifest,'adapters':['api.dart','native.dart','preview_main.dart','ui.dart','preview_computers.dart','preview_pairing.dart','preview_usage_limits.dart','preview_workspace.dart'],'prototype_ui_note':'Prototype-only UI changes include session filters, quota notices, home composer visibility and multi-computer pairing/selection. Production UI is unchanged.','note':'Shared widget source identity; Android system UI still requires device verification.'},ensure_ascii=False,indent=2)+'\n')
 print(f'Preview: {out}/index.html')

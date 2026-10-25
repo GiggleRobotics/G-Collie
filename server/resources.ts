@@ -44,7 +44,7 @@ export function installPreviews(app:Express,read:(id:string)=>Promise<any>,autho
   const t=tickets.get(req.params.key);if(!t||t.expires<Date.now()||!authorized(t.device)){res.status(410).type('html').send(page('预览已过期','请返回 G-Collie，重新点击文件。'));return}
   const file=await resourceFile(await read(t.session),t.resource);
   res.set({'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','X-Robots-Tag':'noindex, nofollow','Content-Security-Policy':"default-src 'none'; script-src 'self' 'unsafe-inline'; worker-src 'self'; connect-src 'self'; media-src 'self'; img-src 'self' data:; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"});
-  if(req.params.action==='content'){if(req.query.download==='1')res.attachment(file.name);else res.set('Content-Disposition',`inline; filename*=UTF-8''${encodeURIComponent(file.name)}`);if(file.data)res.type(file.mime).send(file.data);else{if(file.mime)res.type(file.mime);res.sendFile(file.path)}return}
+  if(req.params.action==='content'){if(req.query.download==='1')res.attachment(file.name);else res.set('Content-Disposition',`inline; filename*=UTF-8''${encodeURIComponent(file.name)}`);if(file.data)res.type(file.mime).send(file.data);else{if(file.mime)res.type(file.mime);res.sendFile(file.path,{dotfiles:'allow'})}return}
   if(req.params.action!=='view'){res.sendStatus(404);return}
   let body='';
   if(file.image)body='<img src="./content" alt="图片">';

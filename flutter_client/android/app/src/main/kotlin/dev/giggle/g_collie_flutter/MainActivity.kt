@@ -69,9 +69,60 @@ class MainActivity : FlutterActivity() {
                             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                         if (Build.VERSION.SDK_INT >= 29) request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, filename)
                         else request.setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, filename)
-                        (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
-                        result.success(null)
+                        val id = (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
+                        val prefs = getSharedPreferences("downloads", MODE_PRIVATE)
+                        val rows = JSONArray(prefs.getString("rows", "[]"))
+                        rows.put(JSONObject().put("id", id).put("name", name).put("time", System.currentTimeMillis()).put("previewRequest",call.argument<String>("previewRequest") ?: "").put("computer",call.argument<String>("computer") ?: ""))
+                        prefs.edit().putString("rows", rows.toString()).apply()
+                        result.success(id)
                     } catch (e: Exception) { result.error("download", e.message, null) }
+                }
+                "shareDiagnostic" -> {
+                    startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_SUBJECT,"G-Collie 诊断记录").putExtra(Intent.EXTRA_TEXT,call.argument<String>("text") ?: ""), "导出诊断记录"))
+                    result.success(null)
+                }
+                "downloads" -> {
+                    val manager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
+                    val rows = JSONArray(getSharedPreferences("downloads", MODE_PRIVATE).getString("rows", "[]"))
+                    val output = ArrayList<Map<String, Any>>()
+                    for (i in rows.length()-1 downTo 0) {
+                        val row = rows.getJSONObject(i)
+                        manager.query(DownloadManager.Query().setFilterById(row.getLong("id"))).use { cursor ->
+                            if (cursor.moveToFirst()) {
+                                output.add(mapOf("id" to row.getLong("id"), "name" to row.getString("name"), "time" to row.getLong("time"), "previewRequest" to row.optString("previewRequest"), "computer" to row.optString("computer"),
+                                    "status" to cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)),
+                                    "bytes" to cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)),
+                                    "total" to cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)),
+                                    "reason" to cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))))
+                            } else output.add(mapOf("id" to row.getLong("id"), "name" to row.getString("name"), "time" to row.getLong("time"), "previewRequest" to row.optString("previewRequest"), "computer" to row.optString("computer"), "status" to -1))
+                        }
+                    }
+                    result.success(output)
+                }
+                "readDownloadImage" -> worker.execute {
+                    try {
+                        val id=call.argument<Number>("id")!!.toLong()
+                        val manager=getSystemService(DOWNLOAD_SERVICE) as DownloadManager
+                        val mime=manager.getMimeTypeForDownloadedFile(id) ?: ""
+                        if (!mime.startsWith("image/")) { runOnUiThread { result.success(null) } }
+                        else {
+                            val uri=manager.getUriForDownloadedFile(id) ?: throw IllegalStateException("文件不存在")
+                            val bytes=contentResolver.openInputStream(uri)!!.use { val out=java.io.ByteArrayOutputStream(); val buffer=ByteArray(8192); var count=it.read(buffer); while(count!=-1 && out.size()<=15*1024*1024){out.write(buffer,0,count);count=it.read(buffer)};out.toByteArray() }
+                            if(bytes.size>15*1024*1024) throw IllegalStateException("图片超过 15 MB，请使用其他应用打开")
+                            runOnUiThread { result.success(bytes) }
+                        }
+                    }catch(e:Exception){runOnUiThread{result.error("image",e.message,null)}}
+                }
+                "openDownload" -> {
+                    try {
+                        val id = call.argument<Number>("id")!!.toLong()
+                        val manager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
+                        val uri = manager.getUriForDownloadedFile(id) ?: throw IllegalStateException("本地文件不存在或尚未完成下载")
+                        contentResolver.openFileDescriptor(uri, "r")?.close() ?: throw IllegalStateException("本地文件不存在")
+                        val mime = manager.getMimeTypeForDownloadedFile(id) ?: "application/octet-stream"
+                        startActivity(Intent.createChooser(Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "打开下载内容"))
+                        result.success(null)
+                    } catch(e: Exception) { result.error("open", e.message, null) }
                 }
                 "authorizationComplete" -> {
                     startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))

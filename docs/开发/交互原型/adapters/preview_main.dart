@@ -5,11 +5,63 @@ import 'api.dart';
 import 'preview_computers.dart';
 import 'preview_pairing.dart';
 
+ThemeData previewTheme(Brightness brightness) {
+  final dark = brightness == Brightness.dark;
+  final base = product.CollieApp().theme(brightness);
+  final ink = dark ? const Color(0xffeeeeee) : const Color(0xff171717);
+  final surface = dark ? const Color(0xff212121) : Colors.white;
+  final scheme = base.colorScheme.copyWith(
+    primary: ink,
+    onPrimary: surface,
+    surface: surface,
+    secondary: ink,
+    onSecondary: surface,
+    surfaceTint: Colors.transparent,
+    primaryContainer: dark ? const Color(0xff363636) : const Color(0xffeeeeee),
+    onPrimaryContainer: ink,
+    secondaryContainer: dark
+        ? const Color(0xff363636)
+        : const Color(0xffeeeeee),
+    onSecondaryContainer: ink,
+  );
+  return base.copyWith(
+    colorScheme: scheme,
+    bottomSheetTheme: BottomSheetThemeData(
+      backgroundColor: surface,
+      modalBackgroundColor: surface,
+      surfaceTintColor: Colors.transparent,
+    ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        backgroundColor: ink,
+        foregroundColor: surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(
+        foregroundColor: ink,
+        side: BorderSide(color: ink.withValues(alpha: .25)),
+      ),
+    ),
+    textButtonTheme: TextButtonThemeData(
+      style: TextButton.styleFrom(foregroundColor: ink),
+    ),
+    switchTheme: SwitchThemeData(
+      thumbColor: WidgetStateProperty.resolveWith(
+        (states) => states.contains(WidgetState.selected) ? surface : null,
+      ),
+      trackColor: WidgetStateProperty.resolveWith(
+        (states) => states.contains(WidgetState.selected) ? ink : null,
+      ),
+    ),
+  );
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await previewComputers.restore();
   final params = Uri.base.queryParameters;
-  final theme = product.CollieApp();
   product.appTheme.value = params['theme'] == 'dark'
       ? ThemeMode.dark
       : ThemeMode.light;
@@ -19,8 +71,8 @@ Future<void> main() async {
       builder: (_, mode, __) => MaterialApp(
         title: 'G-Collie · 同源 Flutter 原型',
         debugShowCheckedModeBanner: false,
-        theme: theme.theme(Brightness.light),
-        darkTheme: theme.theme(Brightness.dark),
+        theme: previewTheme(Brightness.light),
+        darkTheme: previewTheme(Brightness.dark),
         themeMode: mode,
         home: PreviewEntry(firstPairing: params['page'] == 'pair'),
       ),
@@ -61,7 +113,7 @@ class _PreviewComputerWorkspaceState extends State<PreviewComputerWorkspace> {
       return product.Workspace(
         key: ValueKey(id),
         api: api,
-        role: params['state'] == 'readonly' ? 'view' : 'control',
+        role: 'control',
         initialSession: (params['page'] == 'chat' || params['state'] == 'quota')
             ? 'codex:demo'
             : null,

@@ -1,3 +1,6 @@
+import 'preview_diagnostics.dart';
+import 'preview_schedule.dart';
+import 'preview_workspace.dart';
 import 'preview_usage_limits.dart';
 import 'preview_computers.dart';
 
@@ -19,7 +22,7 @@ import 'resources.dart';
 import 'process_record.dart';
 
 const ink = Color(0xff171717);
-const companionGreen = Color(0xff315c49);
+const companionGreen = Color(0xff333333);
 Color panelColor(BuildContext c) => Theme.of(c).brightness == Brightness.dark
     ? const Color(0xff303030)
     : const Color(0xfff4f4f4);
@@ -30,15 +33,25 @@ Color mutedColor(BuildContext c) => Theme.of(c).brightness == Brightness.dark
     ? const Color(0xff999999)
     : const Color(0xff888888);
 Widget glyph(String name, {double size = 22, Color? color}) => Builder(
-  builder: (c) => SvgPicture.asset(
-    'assets/ui/$name.svg',
-    width: size,
-    height: size,
-    colorFilter: ColorFilter.mode(
-      color ?? IconTheme.of(c).color ?? Theme.of(c).colorScheme.onSurface,
-      BlendMode.srcIn,
-    ),
-  ),
+  builder: (c) => ['Download', 'User', 'Clock'].contains(name)
+      ? Icon(
+          name == 'Download'
+              ? Icons.download_outlined
+              : name == 'Clock'
+              ? Icons.schedule_outlined
+              : Icons.person_outline,
+          size: size,
+          color: color,
+        )
+      : SvgPicture.asset(
+          'assets/ui/$name.svg',
+          width: size,
+          height: size,
+          colorFilter: ColorFilter.mode(
+            color ?? IconTheme.of(c).color ?? Theme.of(c).colorScheme.onSurface,
+            BlendMode.srcIn,
+          ),
+        ),
 );
 Widget agentLogo(String agent, {double size = 22}) => agent == 'Claude Code'
     ? Icon(Icons.auto_awesome, size: size, color: const Color(0xffd97757))
@@ -460,6 +473,12 @@ class _CollieShellState extends State<CollieShell> {
     super.initState();
     mode = widget.initialTheme;
     large = widget.initialLarge;
+    if (Uri.base.queryParameters['page'] == 'profile') {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        await editPreviewWorkspace(context, first: true);
+        if (mounted) setState(() {});
+      });
+    }
   }
 
   @override
@@ -542,8 +561,10 @@ class _CollieShellState extends State<CollieShell> {
   }
 
   ThemeMode mode = ThemeMode.system;
-  Future<void> create() async {
-    final settings = await chooseSessionSettings();
+  Future<void> create([String? selectedAgent]) async {
+    final settings = await chooseSessionSettings(
+      initial: selectedAgent == null ? null : {'agent': selectedAgent},
+    );
     if (settings == null || !mounted) return;
     setState(() => page = 'chat');
     widget.onCreate();
@@ -699,16 +720,24 @@ class _CollieShellState extends State<CollieShell> {
               }),
               navRow(
                 'Folder',
-                '项目',
+                '项目管理',
                 () => nav('projects'),
                 trailing: '${widget.projects.length}',
               ),
               navRow('Activity', '用量统计', () => nav('usage')),
+              navRow('Clock', '定时消息', () {
+                Navigator.pop(context);
+                showPreviewSchedules(context, widget.sessions);
+              }),
+              navRow('Download', '下载内容', () {
+                Navigator.pop(context);
+                showPreviewDownloads(context);
+              }),
               const SizedBox(height: 16),
               Row(
                 children: [
                   const SizedBox(width: 10),
-                  Expanded(child: muted(context, '最近会话')),
+                  Expanded(child: muted(context, '会话')),
                   iconAction('SlidersHorizontal', '筛选会话', filters, size: 16),
                 ],
               ),
@@ -821,15 +850,15 @@ class _CollieShellState extends State<CollieShell> {
                           color: Color(0xffe5eee8),
                           shape: BoxShape.circle,
                         ),
-                        child: collieMark(size: 35),
+                        child: workspaceAvatar(size: 35),
                       ),
                       const SizedBox(width: 11),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
-                              'Giggle 的工作台',
+                            Text(
+                              previewWorkspaceName,
                               style: TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w500,
@@ -1046,16 +1075,16 @@ class _CollieShellState extends State<CollieShell> {
   Future<void> workspaceMenu() async {
     await collieSheet<void>(
       context,
-      'Giggle 的工作台',
+      previewWorkspaceName,
       (ctx) => Column(
         children: [
           for (final item in [
+            ['User', '工作台资料'],
             ['Monitor', '电脑与连接'],
-            ['Smartphone', '手机与配对'],
             ['Bell', '通知'],
             ['Palette', '外观'],
             ['Info', '关于 G-Collie'],
-            ['LogOut', '断开本设备'],
+            ['LogOut', '解除当前电脑配对'],
           ])
             navRow(item[0], item[1], () {
               Navigator.pop(ctx);
@@ -1067,6 +1096,23 @@ class _CollieShellState extends State<CollieShell> {
   }
 
   Future<void> settings(String title) async {
+    if (title == '故障诊断') {
+      await showPreviewDiagnostics(context);
+      return;
+    }
+    if (title == '定时消息') {
+      await showPreviewSchedules(context, widget.sessions);
+      return;
+    }
+    if (title == '工作台资料') {
+      await editPreviewWorkspace(context);
+      if (mounted) setState(() {});
+      return;
+    }
+    if (title == '下载内容') {
+      await showPreviewDownloads(context);
+      return;
+    }
     if (title == '电脑与连接') {
       await showPreviewComputers(context);
       return;
@@ -1154,25 +1200,39 @@ class _CollieShellState extends State<CollieShell> {
             collieMark(size: 59),
             const SizedBox(height: 12),
             const Text('G-Collie', style: TextStyle(fontSize: 25)),
-            const Text('帮你照看每一个 Agent。'),
+            const Text('工作在电脑，掌控在手边。'),
             muted(ctx, '内测版 0.3.3 · By Giggle'),
             const SizedBox(height: 20),
-            const Text('Codex / Hermes 会话连接、新建、历史恢复、只读分享和工作台设置。'),
+            const Text(
+              'G-Collie 是连接手机与电脑的 AI 助手工作台，将 Codex、Hermes 和 Claude Code 汇集在一起，方便你在手机上查看会话、发送消息、跟进任务。',
+              style: TextStyle(fontSize: 14, height: 1.8),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              '连接多台电脑，按项目整理工作，查看用量与文件。任务在电脑上执行，手机连接中断不影响电脑上的任务继续运行。',
+              style: TextStyle(fontSize: 14, height: 1.8),
+            ),
+            const SizedBox(height: 16),
+            muted(
+              ctx,
+              '当前为交互原型。定时消息、下载管理、故障诊断等新增流程使用模拟数据，正式能力以安装版本为准。',
+              size: 12,
+            ),
           ],
         ),
       );
       return;
     }
-    if (title == '断开本设备') {
+    if (title == '解除当前电脑配对') {
       await collieSheet<void>(
         context,
         title,
         (ctx) => Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text('注销本设备凭证，回到配对页面。电脑上的任务会继续执行，其他设备的连接不受影响。'),
+            const Text('解除本手机与当前电脑的配对，之后需重新配对才能连接。其他已配对电脑与电脑上的任务不受影响。'),
             const SizedBox(height: 20),
-            outlineAction('确认断开本设备', () {
+            outlineAction('确认解除配对', () {
               Navigator.pop(ctx);
               Navigator.pop(context);
               widget.onDisconnect();
@@ -1279,15 +1339,6 @@ class _CollieShellState extends State<CollieShell> {
   Widget projectsPage() => ListView(
     padding: const EdgeInsets.all(22),
     children: [
-      Align(
-        alignment: Alignment.centerLeft,
-        child: TextButton.icon(
-          onPressed: home,
-          icon: const Icon(Icons.arrow_back, size: 18),
-          label: const Text('返回会话首页'),
-        ),
-      ),
-      const SizedBox(height: 8),
       Row(
         children: [
           const Expanded(
@@ -1325,65 +1376,105 @@ class _CollieShellState extends State<CollieShell> {
         ),
       for (final p in widget.projects)
         Padding(
-          padding: const EdgeInsets.only(bottom: 14),
+          padding: const EdgeInsets.only(bottom: 10),
           child: Material(
             color: panelColor(context),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(18),
+              borderRadius: BorderRadius.circular(14),
               side: BorderSide(
                 color: Theme.of(context).dividerColor.withValues(alpha: .15),
               ),
             ),
             child: InkWell(
-              borderRadius: BorderRadius.circular(18),
+              borderRadius: BorderRadius.circular(14),
               onTap: () => projectSessions(p),
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 18, 8, 18),
-                child: Row(
+                padding: const EdgeInsets.fromLTRB(14, 10, 2, 14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    glyph('Folder', size: 26),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
                             projectLabel(p),
-                            maxLines: 2,
+                            maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                              fontSize: 16,
+                              fontSize: 13,
                               fontWeight: FontWeight.w500,
                             ),
                           ),
-                          const SizedBox(height: 7),
-                          muted(
-                            context,
-                            '${widget.sessions.where((s) => s['projectPath'] == p['path']).length} 个会话',
-                            size: 12,
-                          ),
-                        ],
-                      ),
-                    ),
-                    PopupMenuButton<String>(
-                      tooltip: '项目操作',
-                      onSelected: (value) {
-                        if (value == 'details') {
-                          projectDetails(p);
-                        } else {
-                          renameProject(p);
-                        }
-                      },
-                      itemBuilder: (_) => [
-                        const PopupMenuItem(
-                          value: 'details',
-                          child: Text('项目详情'),
                         ),
-                        const PopupMenuItem(
-                          value: 'rename',
-                          child: Text('修改显示名称'),
+                        SizedBox(
+                          width: 32,
+                          height: 32,
+                          child: PopupMenuButton<String>(
+                            padding: EdgeInsets.zero,
+                            tooltip: '项目操作',
+                            iconSize: 20,
+                            onSelected: (value) {
+                              if (value == 'details') {
+                                projectDetails(p);
+                              } else {
+                                renameProject(p);
+                              }
+                            },
+                            itemBuilder: (_) => [
+                              const PopupMenuItem(
+                                value: 'details',
+                                child: Text('项目详情'),
+                              ),
+                              const PopupMenuItem(
+                                value: 'rename',
+                                child: Text('修改显示名称'),
+                              ),
+                            ],
+                          ),
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 6),
+                    Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: Row(
+                        children: [
+                          muted(
+                            context,
+                            '${widget.sessions.where((s) => s['projectPath'] == p['path']).length} 会话',
+                            size: 11,
+                          ),
+                          const Spacer(),
+                          for (final entry in [
+                            ('Codex', '128K'),
+                            ('Hermes', '36K'),
+                            ('Claude Code', '—'),
+                          ])
+                            Padding(
+                              padding: const EdgeInsets.only(left: 8),
+                              child: Tooltip(
+                                message: '${entry.$1} · 累计 Token（模拟）',
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    agentLogo(entry.$1, size: 14),
+                                    const SizedBox(width: 5),
+                                    Text(
+                                      entry.$2,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurface
+                                            .withValues(alpha: .65),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
@@ -1482,33 +1573,33 @@ class _CollieShellState extends State<CollieShell> {
             for (final a in ['Codex', 'Hermes', 'Claude Code'])
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 3),
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
                   child: InkWell(
-                    onTap: () {
-                      setState(() => agent = a);
-                      scaffold.currentState?.openDrawer();
-                    },
-                    borderRadius: BorderRadius.circular(17),
+                    onTap: widget.role == 'view' ? null : () => create(a),
+                    borderRadius: BorderRadius.circular(14),
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 13,
+                        horizontal: 10,
+                        vertical: 12,
                       ),
                       decoration: BoxDecoration(
                         color: panelColor(context),
                         border: Border.all(color: const Color(0xffe5e5e5)),
-                        borderRadius: BorderRadius.circular(17),
+                        borderRadius: BorderRadius.circular(14),
                       ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
+                      width: double.infinity,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          agentLogo(a, size: 19),
-                          const SizedBox(width: 6),
-                          Flexible(
-                            child: Text(
-                              '$a 会话',
-                              maxLines: 1,
-                              style: const TextStyle(fontSize: 11),
+                          agentLogo(a, size: 24),
+                          const SizedBox(height: 6),
+                          Text(
+                            a,
+                            maxLines: 1,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
                         ],
@@ -1519,8 +1610,23 @@ class _CollieShellState extends State<CollieShell> {
               ),
           ],
         ),
-        const SizedBox(height: 38),
-        muted(context, '最近会话', size: 13),
+        const SizedBox(height: 20),
+        Row(
+          children: [
+            Expanded(child: muted(context, '最近使用', size: 13)),
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  agent = 'all';
+                  project = '';
+                  query = '';
+                });
+                scaffold.currentState?.openDrawer();
+              },
+              child: const Text('查看全部会话'),
+            ),
+          ],
+        ),
         const SizedBox(height: 10),
         Expanded(
           child: RefreshIndicator(
@@ -1530,7 +1636,7 @@ class _CollieShellState extends State<CollieShell> {
               physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.only(bottom: 25),
               children: [
-                for (final s in widget.sessions)
+                for (final s in widget.sessions.take(5))
                   InkWell(
                     onTap: () => open(s['id']),
                     child: Container(
@@ -2498,6 +2604,7 @@ class _CollieShellState extends State<CollieShell> {
               '内置网络',
               '重新连接',
               '切换电脑',
+              '故障诊断',
             ].map((v) => PopupMenuItem(value: v, child: Text(v))).toList(),
           ),
         ],
@@ -2512,7 +2619,7 @@ class _CollieShellState extends State<CollieShell> {
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 child: Row(
                   children: [
-                    if (d != null && page == 'chat')
+                    if (page != 'chat' || d != null)
                       IconButton(
                         tooltip: '返回会话首页',
                         onPressed: home,
@@ -2527,7 +2634,15 @@ class _CollieShellState extends State<CollieShell> {
                       ),
                     const SizedBox(width: 5),
                     Expanded(
-                      child: d != null && page == 'chat'
+                      child: page != 'chat'
+                          ? Text(
+                              page == 'projects' ? '项目管理' : '用量统计',
+                              style: const TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            )
+                          : d != null
                           ? InkWell(
                               onTap: sessionMenu,
                               child: Row(
@@ -2584,15 +2699,6 @@ class _CollieShellState extends State<CollieShell> {
                 ),
               ),
             ),
-            if (page == 'usage')
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: () => setState(() => page = 'chat'),
-                  icon: const Icon(Icons.arrow_back, size: 18),
-                  label: Text(widget.detail == null ? '返回会话首页' : '返回会话'),
-                ),
-              ),
             if (widget.error.isNotEmpty && !quotaBlocked)
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16),

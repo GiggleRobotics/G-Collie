@@ -17,6 +17,50 @@ class ResetApi extends CollieApi {
 }
 
 void main() {
+  testWidgets(
+    'missing account identity explains disabled reset; identity restores button',
+    (tester) async {
+      FlutterSecureStorage.setMockInitialValues({});
+      final api = ResetApi();
+      addTearDown(api.close);
+      final data = <String, dynamic>{
+        'resetCredits': {'availableCount': 2, 'credits': []},
+      };
+      Future<void> show(Json account, String key) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: ThemeData.dark(),
+            home: Scaffold(
+              body: ResetCredits(
+                key: ValueKey(key),
+                account: account,
+                api: api,
+                compact: true,
+                onRefresh: () async {},
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      await show(data, 'missing');
+      expect(
+        tester.widget<OutlinedButton>(find.byType(OutlinedButton)).onPressed,
+        isNull,
+      );
+      expect(find.text('账号标识暂时不可读，请刷新后重试'), findsOneWidget);
+      await show({...data, 'accountKey': 'a'}, 'available');
+      expect(
+        tester.widget<OutlinedButton>(find.byType(OutlinedButton)).onPressed,
+        isNotNull,
+      );
+      await tester.tap(find.text('重置额度'));
+      await tester.pumpAndSettle();
+      expect(find.text('使用限额重置'), findsOneWidget);
+      expect(api.calls, isEmpty);
+    },
+  );
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
   final account = <String, dynamic>{
     'accountKey': 'a',

@@ -137,7 +137,7 @@ class CollieApi {
     if (path == '/auth/status')
       return {
         'paired': true,
-        'device': {'role': scenario == 'readonly' ? 'view' : 'control'},
+        'device': {'role': 'control'},
       };
     if (path == '/auth/pair') {
       if (body?['code'] != '123456') throw ApiException('演示：请输入配对码 123456');
