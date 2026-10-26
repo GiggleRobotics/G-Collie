@@ -946,9 +946,12 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     if (active) {
       load();
       poll();
-    } else {
-      setState(() => online = false);
     }
+    unawaited(
+      widget.api
+          .recordFailure('/connection/lifecycle', 'lifecycle-${state.name}')
+          .catchError((_) {}),
+    );
   }
 
   void leaveWorkspace() {
@@ -958,6 +961,8 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     navigator.popUntil((candidate) => candidate == route || candidate.isFirst);
     if (route?.isCurrent == true && route?.isFirst == false) navigator.pop();
   }
+
+  int connectionCheck = 0;
 
   void failure(Object e) {
     if (!mounted) return;
@@ -979,22 +984,35 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       return;
     }
     if (leaving) return;
-    if (e is ApiException && e.status >= 400 && e.status < 500) {
+    if (e is ApiException && e.status >= 400) {
       setState(() => error = '$e');
       return;
     }
-    setState(() {
-      error = '$e';
-      online = false;
-      if (detail != null) {
-        detail = {
-          ...detail!,
-          'desktopLive': false,
-          'readOnly': true,
-          'status': 'unknown',
-        };
-      }
-    });
+    setState(() => error = '$e');
+    final check = ++connectionCheck;
+    final token = generation;
+    unawaited(
+      widget.api.reachable().then((reachable) {
+        if (!mounted ||
+            leaving ||
+            check != connectionCheck ||
+            token != generation) {
+          return;
+        }
+        setState(() {
+          online = reachable;
+          error = reachable ? '会话请求暂未完成，电脑连接正常；正在重试' : '电脑暂时不可达，正在重连';
+        });
+        unawaited(
+          widget.api
+              .recordFailure(
+                '/connection/health',
+                reachable ? 'reachable-after-request-error' : 'unreachable',
+              )
+              .catchError((_) {}),
+        );
+      }),
+    );
   }
 
   Future<void> load() async {
@@ -1023,7 +1041,8 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
           sessions = data['sessions'] ?? [];
           projects = data['projects'] ?? [];
           warnings = data['warnings'] ?? [];
-          online = active;
+          connectionCheck++;
+          online = true;
           error = '';
         });
       }
@@ -1065,20 +1084,25 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       setState(() => detail = {...detail!, 'cwd': id.substring(14)});
       return;
     }
+    final sameSession = detail?['id'] == id;
     final token = ++generation;
+    connectionCheck++;
     setState(() {
       loading = true;
       error = '';
-      detail = null;
-      draft.clear();
-      answers.clear();
+      if (!sameSession) {
+        detail = null;
+        draft.clear();
+        answers.clear();
+      }
     });
     try {
       Json d = await widget.api.call('/local/${Uri.encodeComponent(id)}');
       if (!mounted || token != generation) return;
       setState(() {
         detail = d;
-        online = active;
+        connectionCheck++;
+        online = true;
       });
       if (effectiveRole != 'view' &&
           d['managed'] != true &&
@@ -1092,12 +1116,12 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       if (mounted && token == generation) {
         setState(() => detail = d);
         rememberDetail(d);
-        bottom();
+        if (!sameSession) bottom();
       }
     } catch (e) {
       if (mounted && token == generation) {
         final cached = cachedDetails[id];
-        if (cached is Map) {
+        if (!sameSession && cached is Map) {
           setState(
             () => detail = {
               ...Map<String, dynamic>.from(cached),
@@ -1138,7 +1162,8 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
               answers.clear();
             }
             detail = d;
-            online = active;
+            connectionCheck++;
+            online = true;
             error = '';
           });
           rememberDetail(d);
@@ -1152,16 +1177,22 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> control(String action, [Json extra = const {}]) async {
+  String? uncertainSendKey;
+  String? uncertainSendId;
+  Future<bool> control(String action, [Json extra = const {}]) async {
     final d = detail;
     if (d == null ||
         busy ||
         loading ||
         !active ||
         !canControl(d, effectiveRole, online)) {
-      return;
+      return false;
     }
     final token = generation;
+    final fingerprint = jsonEncode({'session': d['id'], ...extra});
+    final operationId = action == 'send' && uncertainSendKey == fingerprint
+        ? uncertainSendId!
+        : requestId();
     setState(() {
       busy = true;
       error = '';
@@ -1169,19 +1200,62 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     try {
       await widget.api.call(controlPath(d), {
         'action': action,
-        'requestId': requestId(),
+        'requestId': operationId,
         ...extra,
       });
-      if (mounted && token == generation && action == 'send') draft.clear();
-      final updated = await widget.api.call(
-        '/local/${Uri.encodeComponent(d['id'])}',
-      );
       if (mounted && token == generation) {
-        setState(() => detail = updated);
-        bottom();
+        setState(() {
+          if (action == 'send') {
+            draft.clear();
+            uncertainSendKey = null;
+            uncertainSendId = null;
+          }
+          busy = false;
+        });
+        // Sending is already acknowledged. A history read failure must not undo it.
+        unawaited(() async {
+          try {
+            final updated = await widget.api.call(
+              '/local/${Uri.encodeComponent(d['id'])}',
+            );
+            if (mounted && token == generation) {
+              setState(() {
+                detail = updated;
+                error = '';
+                online = true;
+                connectionCheck++;
+              });
+              bottom();
+              rememberDetail(updated);
+            }
+          } catch (e) {
+            if (mounted && token == generation) {
+              if (action == 'send') {
+                setState(() => error = '消息已发送，记录同步暂未完成；正在重试，请勿重复发送');
+              } else {
+                failure(e);
+              }
+            }
+          }
+        }());
       }
+      return true;
     } catch (e) {
-      if (token == generation) failure(e);
+      if (mounted && token == generation) {
+        final uncertain =
+            e is! ApiException ||
+            e.status == 0 ||
+            e.status >= 500 ||
+            RegExp('结果未知|结果可能未知|已提交|超时').hasMatch('$e');
+        if (action == 'send' && uncertain) {
+          uncertainSendKey = fingerprint;
+          uncertainSendId = operationId;
+          setState(() => error = '发送结果待确认，正在同步电脑状态；请勿重复发送');
+        } else {
+          failure(e);
+        }
+      }
+      return false;
     } finally {
       if (mounted) setState(() => busy = false);
     }
@@ -1413,8 +1487,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         onDisconnect: disconnect,
         onSend: (ids) async {
           if (detail?['draft'] == true) return sendDraft(ids);
-          await control('send', {'text': draft.text, 'attachments': ids});
-          return error.isEmpty;
+          return control('send', {'text': draft.text, 'attachments': ids});
         },
         onStop: () => control('stop', {'turnId': d?['turnId']}),
         onDraft: () => setState(() {}),

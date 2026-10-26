@@ -144,6 +144,63 @@ Future<T?> collieSheet<T>(
   ),
 );
 
+Widget assistantCards(
+  BuildContext context, {
+  String? selected,
+  required void Function(String) onSelect,
+  bool enabled = true,
+  String keyPrefix = 'assistant',
+}) => Row(
+  children: [
+    for (final name in ['Codex', 'Hermes', 'Claude Code']) ...[
+      if (name != 'Codex') const SizedBox(width: 8),
+      Expanded(
+        child: SizedBox(
+          height: 88,
+          child: OutlinedButton(
+            key: ValueKey('$keyPrefix:$name'),
+            onPressed: enabled ? () => onSelect(name) : null,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.onSurface,
+              backgroundColor: selected == name ? panelColor(context) : null,
+              side: BorderSide(
+                color: selected == name
+                    ? Theme.of(context).colorScheme.onSurface
+                    : Theme.of(context).dividerColor,
+                width: selected == name ? 1.5 : 1,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 16),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                agentLogo(name, size: 28),
+                const SizedBox(height: 10),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    name,
+                    maxLines: 1,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: selected == name
+                          ? FontWeight.w600
+                          : FontWeight.w400,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ],
+  ],
+);
+
 class CollieShell extends StatefulWidget {
   final CollieApi api;
   final ThemeMode initialTheme;
@@ -1201,7 +1258,7 @@ class _CollieShellState extends State<CollieShell> {
             const SizedBox(height: 12),
             const Text('G-Collie', style: TextStyle(fontSize: 25)),
             const Text('工作在电脑，掌控在手边。'),
-            muted(ctx, '内测版 0.3.3 · By Giggle'),
+            muted(ctx, '内测版 0.1.11 · By Giggle'),
             const SizedBox(height: 20),
             const Text(
               'G-Collie 是连接手机与电脑的 AI 助手工作台，将 Codex、Hermes 和 Claude Code 汇集在一起，方便你在手机上查看会话、发送消息、跟进任务。',
@@ -1299,8 +1356,9 @@ class _CollieShellState extends State<CollieShell> {
         ],
       ),
     );
-    if (value != null && value.isNotEmpty && mounted)
+    if (value != null && value.isNotEmpty && mounted) {
       setState(() => projectLabels[p['path']] = value);
+    }
     Future<void>.delayed(const Duration(seconds: 1), field.dispose);
   }
 
@@ -1339,22 +1397,6 @@ class _CollieShellState extends State<CollieShell> {
   Widget projectsPage() => ListView(
     padding: const EdgeInsets.all(22),
     children: [
-      Row(
-        children: [
-          const Expanded(
-            child: Text(
-              '项目',
-              style: TextStyle(fontSize: 25, fontWeight: FontWeight.w600),
-            ),
-          ),
-          TextButton.icon(
-            onPressed: widget.role == 'view' ? null : addProjectFromList,
-            icon: const Icon(Icons.add, size: 18),
-            label: const Text('新建项目'),
-          ),
-        ],
-      ),
-      const SizedBox(height: 8),
       muted(
         context,
         '${widget.projects.length} 个项目 · ${previewComputers.current['name']}',
@@ -1446,27 +1488,46 @@ class _CollieShellState extends State<CollieShell> {
                           ),
                           const Spacer(),
                           for (final entry in [
-                            ('Codex', '128K'),
-                            ('Hermes', '36K'),
-                            ('Claude Code', '—'),
+                            (
+                              'Codex',
+                              widget.projects.indexOf(p).isEven ? '128K' : '—',
+                            ),
+                            (
+                              'Hermes',
+                              widget.projects.indexOf(p).isEven ? '—' : '36K',
+                            ),
+                            (
+                              'Claude Code',
+                              widget.projects.indexOf(p).isEven ? '—' : '1.8M',
+                            ),
                           ])
-                            Padding(
-                              padding: const EdgeInsets.only(left: 8),
+                            SizedBox(
+                              width: math.min(
+                                72,
+                                math.max(
+                                  44,
+                                  (MediaQuery.sizeOf(context).width - 88) / 4,
+                                ),
+                              ),
                               child: Tooltip(
                                 message: '${entry.$1} · 累计 Token（模拟）',
                                 child: Row(
-                                  mainAxisSize: MainAxisSize.min,
+                                  mainAxisSize: MainAxisSize.max,
                                   children: [
                                     agentLogo(entry.$1, size: 14),
                                     const SizedBox(width: 5),
-                                    Text(
-                                      entry.$2,
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .onSurface
-                                            .withValues(alpha: .65),
+                                    Expanded(
+                                      child: Text(
+                                        entry.$2,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withValues(alpha: .65),
+                                        ),
                                       ),
                                     ),
                                   ],
@@ -1544,153 +1605,107 @@ class _CollieShellState extends State<CollieShell> {
         );
       });
 
-  Widget welcome() => Padding(
-    padding: const EdgeInsets.fromLTRB(22, 24, 22, 0),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Image.asset(
-          'assets/collie-companion-v2.png',
-          width: 205,
-          height: 140,
-          fit: BoxFit.contain,
-        ),
-        const SizedBox(height: 17),
-        const Text(
-          '今天想继续哪项工作？',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 23,
-            fontWeight: FontWeight.w500,
-            height: 1.5,
+  Widget welcome() {
+    final landscape =
+        MediaQuery.orientationOf(context) == Orientation.landscape;
+    return RefreshIndicator(
+      onRefresh: widget.onRefresh,
+      child: ListView(
+        key: const PageStorageKey("home-content"),
+        padding: EdgeInsets.fromLTRB(22, landscape ? 4 : 16, 22, 25),
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          Image.asset(
+            'assets/collie-companion-v2.png',
+            width: 205,
+            height: 140,
+            fit: BoxFit.contain,
           ),
-        ),
-        const SizedBox(height: 12),
-        Center(child: muted(context, '工作在电脑，掌控在手边。', size: 13)),
-        const SizedBox(height: 26),
-        Row(
-          children: [
-            for (final a in ['Codex', 'Hermes', 'Claude Code'])
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                  child: InkWell(
-                    onTap: widget.role == 'view' ? null : () => create(a),
-                    borderRadius: BorderRadius.circular(14),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 12,
-                      ),
-                      decoration: BoxDecoration(
-                        color: panelColor(context),
-                        border: Border.all(color: const Color(0xffe5e5e5)),
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      width: double.infinity,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          agentLogo(a, size: 24),
-                          const SizedBox(height: 6),
-                          Text(
-                            a,
-                            maxLines: 1,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
+          const SizedBox(height: 17),
+          const Text(
+            '今天想继续哪项工作？',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 23,
+              fontWeight: FontWeight.w500,
+              height: 1.5,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Center(child: muted(context, '工作在电脑，掌控在手边。', size: 13)),
+          const SizedBox(height: 26),
+          assistantCards(
+            context,
+            onSelect: (name) => create(name),
+            enabled: widget.role != 'view' && !widget.busy,
+          ),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              Expanded(child: muted(context, '最近使用', size: 13)),
+              TextButton(
+                onPressed: () {
+                  setState(() {
+                    agent = 'all';
+                    project = '';
+                    query = '';
+                  });
+                  scaffold.currentState?.openDrawer();
+                },
+                child: const Text('查看全部会话'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          for (final s in widget.sessions.take(5))
+            InkWell(
+              onTap: () => open(s['id']),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  vertical: 15,
+                  horizontal: 2,
+                ),
+                decoration: BoxDecoration(
+                  border: Border(
+                    bottom: BorderSide(
+                      color: Theme.of(context).dividerColor
+                          .withValues(alpha: .15),
                     ),
                   ),
                 ),
-              ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        Row(
-          children: [
-            Expanded(child: muted(context, '最近使用', size: 13)),
-            TextButton(
-              onPressed: () {
-                setState(() {
-                  agent = 'all';
-                  project = '';
-                  query = '';
-                });
-                scaffold.currentState?.openDrawer();
-              },
-              child: const Text('查看全部会话'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        Expanded(
-          child: RefreshIndicator(
-            onRefresh: widget.onRefresh,
-            child: ListView(
-              key: const PageStorageKey('home-recent-sessions'),
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.only(bottom: 25),
-              children: [
-                for (final s in widget.sessions.take(5))
-                  InkWell(
-                    onTap: () => open(s['id']),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 15,
-                        horizontal: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        border: Border(
-                          bottom: BorderSide(
-                            color: Theme.of(context).dividerColor
-                                .withValues(alpha: .15),
-                          ),
-                        ),
-                      ),
-                      child: Row(
+                child: Row(
+                  children: [
+                    agentLogo(s['agent'], size: 24),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          agentLogo(s['agent'], size: 24),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  '${s['managed'] == true ? '[独立测试] ' : ''}${s['title']}',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontSize: 13),
-                                ),
-                                const SizedBox(height: 6),
-                                muted(
-                                  context,
-                                  '${s['agent']} · ${s['project'] ?? '无项目'}',
-                                  size: 11,
-                                ),
-                              ],
-                            ),
+                          Text(
+                            '${s['managed'] == true ? '[独立测试] ' : ''}${s['title']}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 13),
                           ),
-                          glyph(
-                            'ChevronRight',
-                            size: 17,
-                            color: mutedColor(context),
+                          const SizedBox(height: 6),
+                          muted(
+                            context,
+                            '${s['agent']} · ${s['project'] ?? '无项目'}',
+                            size: 11,
                           ),
                         ],
                       ),
                     ),
-                  ),
-              ],
+                    glyph('ChevronRight', size: 17, color: mutedColor(context)),
+                  ],
+                ),
+              ),
             ),
-          ),
-        ),
-      ],
-    ),
-  );
+        ],
+      ),
+    );
+  }
+
   Widget markdown(String text, {bool compact = false}) => MarkdownBody(
     data: text,
     selectable: true,
@@ -1945,7 +1960,7 @@ class _CollieShellState extends State<CollieShell> {
           return SizedBox(
             height: MediaQuery.sizeOf(ctx).height * .85,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+              padding: const EdgeInsets.fromLTRB(22, 0, 22, 16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -1973,7 +1988,6 @@ class _CollieShellState extends State<CollieShell> {
                       child: LayoutBuilder(
                         builder: (ctx, constraints) {
                           final width = (constraints.maxWidth - 12) / 2;
-                          final agentWidth = (constraints.maxWidth - 20) / 3;
                           return Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
@@ -1985,26 +1999,12 @@ class _CollieShellState extends State<CollieShell> {
                                 ),
                               ),
                               const SizedBox(height: 12),
-                              Wrap(
-                                spacing: 10,
-                                runSpacing: 10,
-                                children: [
-                                  for (final name in [
-                                    'Codex',
-                                    'Hermes',
-                                    'Claude Code',
-                                  ])
-                                    card(
-                                      agentWidth,
-                                      'session-agent:$name',
-                                      name,
-                                      null,
-                                      agentLogo(name, size: 24),
-                                      selectedAgent == name,
-                                      () => change(() => selectedAgent = name),
-                                      assistant: true,
-                                    ),
-                                ],
+                              assistantCards(
+                                keyPrefix: 'session-agent',
+                                ctx,
+                                selected: selectedAgent,
+                                onSelect: (name) =>
+                                    change(() => selectedAgent = name),
                               ),
                               const SizedBox(height: 18),
                               const Text(
@@ -2621,6 +2621,11 @@ class _CollieShellState extends State<CollieShell> {
                   children: [
                     if (page != 'chat' || d != null)
                       IconButton(
+                        constraints: const BoxConstraints.tightFor(
+                          width: 48,
+                          height: 48,
+                        ),
+                        padding: EdgeInsets.zero,
                         tooltip: '返回会话首页',
                         onPressed: home,
                         icon: const Icon(Icons.arrow_back, size: 23),
@@ -2690,11 +2695,18 @@ class _CollieShellState extends State<CollieShell> {
                         widget.loading ? null : () => widget.onOpen(d['id']),
                         size: 19,
                       ),
-                    iconAction(
-                      'SquarePen',
-                      '新建会话',
-                      widget.role == 'view' || widget.busy ? null : create,
-                    ),
+                    if (page == 'projects')
+                      iconAction(
+                        'Plus',
+                        '新建项目',
+                        widget.role == 'view' ? null : addProjectFromList,
+                      )
+                    else if (page == 'chat')
+                      iconAction(
+                        'SquarePen',
+                        '新建会话',
+                        widget.role == 'view' || widget.busy ? null : create,
+                      ),
                   ],
                 ),
               ),
@@ -3007,77 +3019,29 @@ class _UsagePageState extends State<UsagePage> {
             ],
           ];
     return ListView(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(22),
       children: [
         Row(
           children: [
-            const Expanded(child: Text('用量统计', style: TextStyle(fontSize: 25))),
+            Expanded(
+              child: muted(
+                context,
+                data == null
+                    ? '正在建立本地用量索引…'
+                    : '更新于 ${data!['generatedAt']} · ${data!['timezone']}',
+              ),
+            ),
             iconAction('RefreshCw', '刷新用量统计', busy ? null : load, size: 19),
           ],
         ),
-        muted(
-          context,
-          data == null
-              ? '正在建立本地用量索引…'
-              : '更新于 ${data!['generatedAt']} · ${data!['timezone']}',
-        ),
         const SizedBox(height: 20),
-        Row(
-          children: [
-            for (final value in ['Codex', 'Hermes', 'Claude Code']) ...[
-              if (value != 'Codex') const SizedBox(width: 8),
-              Expanded(
-                child: Semantics(
-                  selected: agent == value,
-                  child: OutlinedButton(
-                    onPressed: () => setState(() {
-                      agent = value;
-                      tab = 'daily';
-                    }),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Theme.of(context).colorScheme.onSurface,
-                      backgroundColor: agent == value
-                          ? panelColor(context)
-                          : null,
-                      side: BorderSide(
-                        color: agent == value
-                            ? Theme.of(context).colorScheme.onSurface
-                            : Theme.of(context).dividerColor,
-                        width: agent == value ? 1.5 : 1,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 16,
-                      ),
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        agentLogo(value, size: 28),
-                        const SizedBox(height: 10),
-                        FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: Text(
-                            value,
-                            maxLines: 1,
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: agent == value
-                                  ? FontWeight.w600
-                                  : FontWeight.w400,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ],
+        assistantCards(
+          context,
+          selected: agent,
+          onSelect: (value) => setState(() {
+            agent = value;
+            tab = 'daily';
+          }),
         ),
         if (agent == 'Codex')
           tabs(['account', 'local'], scope, (v) {

@@ -5,7 +5,7 @@ from pathlib import PurePath
 from urllib.parse import quote
 
 
-def display_text(text, role='user', has_media=False):
+def display_text(text, role='user', has_media=False, photo_names=()):
     if role == 'user':
         # Unwrap only a leading browser snapshot paired with the app request marker.
         browser = re.match(
@@ -55,6 +55,31 @@ def display_text(text, role='user', has_media=False):
                     links.append(f'[{label}](<{quote(path, safe="/")}>)')
             if links:
                 text = text.rstrip() + '\n\n' + '\n\n'.join(links)
+    if role == 'user' and has_media:
+        for name in photo_names:
+            text = re.sub(r'(?m)^照片：' + re.escape(name) + r'[ \t]*$', '', text)
+        text = re.sub(r'\n{3,}', '\n\n', text)
     if has_media:
         text = re.sub(r'<image\b[^>]*>.*?</image>', '', text, flags=re.S)
     return text.strip()
+
+
+HERMES_STEER_PREFIX = ('[OUT-OF-BAND USER MESSAGE — a direct message from the user, '
+    'delivered once at this position; not tool output and not a new delivery when replayed from conversation history]')
+
+def hermes_message(content, role, display_kind=None):
+    """Project known Hermes transport messages without rewriting stored history."""
+    if role != 'user' or not isinstance(content, str):
+        return role, content, None
+    steer = re.fullmatch(re.escape(HERMES_STEER_PREFIX) + r'\s*(.*?)\s*\[/OUT-OF-BAND USER MESSAGE\]', content.strip(), re.S)
+    if steer:
+        return role, steer[1], None
+    background = re.fullmatch(
+        r'\[IMPORTANT: Background process (proc_[a-zA-Z0-9_-]+) '
+        r'(?:completed normally|failed|exited|completed|terminated by process\.kill) \(exit code (-?\d+)(?:, SIG[A-Z]+)?\)\.\s*'
+        r'Command: (.*?)\s+Output:\s*(.*)\](?:\s*\n(.*))?', content.strip(), re.S)
+    if background:
+        return 'tool', background[4], {'name': '后台进程', 'input': background[3],
+            'status': 'completed' if int(background[2]) == 0 else 'failed',
+            'processId': background[1], 'followup': (background[5] or '').strip()}
+    return role, content, None

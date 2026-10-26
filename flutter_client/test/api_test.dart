@@ -33,7 +33,10 @@ void main() {
     );
   });
   test('Claude sessions use Claude control endpoint', () {
-    expect(controlPath({'desktopLive': true, 'claudeLive': true, 'nativeId': 'abc'}), '/claude/abc');
+    expect(
+      controlPath({'desktopLive': true, 'claudeLive': true, 'nativeId': 'abc'}),
+      '/claude/abc',
+    );
   });
   test('read-only, disconnected and archived devices cannot control', () {
     final detail = {'desktopLive': true, 'desktopControl': true};
@@ -85,6 +88,29 @@ void main() {
         api.close();
         await server.close(force: true);
       }
+    },
+  );
+  test(
+    'reachability verifies health identity and preserves gateway authorization',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      var valid = true;
+      server.listen((request) async {
+        expect(request.uri.path, '/healthz');
+        expect(request.cookies.single.value, 'test-gateway');
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          valid ? '{"ok":true,"version":"test"}' : '{"ok":true}',
+        );
+        await request.response.close();
+      });
+      final api = CollieApi(Uri.parse('http://127.0.0.1:${server.port}'))
+        ..gatewayCookie = 'gcollie_gateway=test-gateway';
+      expect(await api.reachable(), true);
+      valid = false;
+      expect(await api.reachable(), false);
+      api.close();
+      await server.close(force: true);
     },
   );
 }

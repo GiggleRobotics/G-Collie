@@ -233,6 +233,35 @@ class CollieApi {
     }
   }
 
+  Future<bool> reachable() async {
+    final probe = HttpClient()..connectionTimeout = const Duration(seconds: 4);
+    try {
+      final request = await probe
+          .getUrl(endpoint.resolve('/healthz'))
+          .timeout(const Duration(seconds: 4));
+      request.followRedirects = false;
+      if (gatewayCookie.isNotEmpty) {
+        request.headers.set(HttpHeaders.cookieHeader, gatewayCookie);
+      }
+      final response = await request.close().timeout(
+        const Duration(seconds: 4),
+      );
+      final text = await utf8.decoder
+          .bind(response)
+          .join()
+          .timeout(const Duration(seconds: 4));
+      final data = jsonDecode(text);
+      return response.statusCode == 200 &&
+          data is Map &&
+          data['ok'] == true &&
+          data['version'] is String;
+    } catch (_) {
+      return false;
+    } finally {
+      probe.close(force: true);
+    }
+  }
+
   Future<dynamic> call(String path, [Json? body]) async {
     final correlation = requestId();
     try {
@@ -270,6 +299,7 @@ class CollieApi {
       endpoint.resolve('/api$path'),
     );
     request.headers.set('x-gcollie-request-id', correlation);
+    request.headers.set('x-gcollie-media', 'references');
     request.followRedirects = false;
     request.headers.set(HttpHeaders.acceptHeader, 'application/json');
     if (requestCookie.isNotEmpty) {

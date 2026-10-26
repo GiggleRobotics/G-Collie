@@ -1,3 +1,4 @@
+import 'section_app_bar.dart';
 import 'connection_page.dart';
 import 'api.dart';
 import 'preview.dart';
@@ -47,7 +48,8 @@ class _DownloadsPageState extends State<DownloadsPage> {
   @override
   Widget build(BuildContext context) => ConnectionPage(
     api: widget.api,
-    appBar: AppBar(
+    appBar: SectionAppBar(
+      primary: false,
       leading: IconButton(
         tooltip: '返回',
         onPressed: () => Navigator.pop(context),

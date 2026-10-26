@@ -1,3 +1,4 @@
+import 'section_app_bar.dart';
 import 'connection_page.dart';
 
 import 'dart:typed_data';
@@ -169,7 +170,7 @@ class _PreviewDownloadsState extends State<PreviewDownloads> {
   void openImage() => Navigator.of(context).push(
     MaterialPageRoute<void>(
       builder: (_) => Scaffold(
-        appBar: AppBar(title: const Text('桌面截图.png')),
+        appBar: SectionAppBar(primary: false, title: const Text('桌面截图.png')),
         body: SizedBox.expand(
           child: InteractiveViewer(
             minScale: 1,
@@ -297,7 +298,8 @@ class _PreviewDownloadsState extends State<PreviewDownloads> {
   Widget build(BuildContext context) {
     final muted = Theme.of(context).colorScheme.onSurface.withValues(alpha: .5);
     return ConnectionPage(
-      appBar: AppBar(
+      appBar: SectionAppBar(
+        primary: false,
         title: const Text(
           '下载内容',
           style: TextStyle(fontSize: 20, fontWeight: FontWeight.w500),

@@ -1,3 +1,4 @@
+import 'section_app_bar.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -65,7 +66,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('故障诊断')),
+    appBar: SectionAppBar(title: const Text('故障诊断')),
     body: ListView(
       padding: const EdgeInsets.all(22),
       children: [
@@ -156,7 +157,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
         ),
         if (phoneEvents.isNotEmpty)
           ExpansionTile(
-            title: const Text('手机请求失败记录'),
+            title: const Text('手机连接与请求记录'),
             children: [
               for (final e in phoneEvents.reversed.take(20))
                 ListTile(

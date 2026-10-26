@@ -1,6 +1,6 @@
 """Read-only, allowlisted session projection. Never exports settings or credentials."""
-import json,sqlite3,pathlib,sys,datetime,re,os
-from message_display import display_text
+import json,sqlite3,pathlib,sys,datetime,re,os,hashlib,base64
+from message_display import display_text, hermes_message
 from process_records import ProcessRecords
 HOME=pathlib.Path.home()
 def db(path):
@@ -42,6 +42,35 @@ def summary(agent,r):
  cwd=r.get('cwd') or r.get('git_repo_root') or ''
  p=project_for(agent,r,cwd)
  return dict(projectPath=p['path'] if p else None,id=agent.lower()+':'+r['id'],nativeId=r['id'],agent=agent,title=(r.get('name') or r.get('title') or '未命名会话')[:160],cwd=cwd,project=p['name'] if p else '无项目',branch=r.get('git_branch'),model=r.get('model'),updatedAt=ms(r.get('updated_at_ms') or r.get('updated_at') or r.get('last_activity_at') or r.get('started_at')),archived=bool(r.get('archived')),status='unknown',readOnly=True,usage=None)
+def photo_names(media,text):
+ names=[]
+ uploads=(pathlib.Path(os.environ.get('GCOLLIE_DATA_DIR',str(pathlib.Path.cwd()/'.data')))/'uploads').resolve()
+ for ref in media:
+  if ref.startswith('data:'):continue
+  try:
+   path=pathlib.Path(ref).resolve()
+   if not path.is_relative_to(uploads):continue
+   relative=path.relative_to(uploads)
+   if len(relative.parts)!=3 or not re.fullmatch(r'[a-f0-9-]{36}',relative.parts[0]) or relative.parts[1:]!=('media','image.jpg'):continue
+   meta=json.loads((uploads/relative.parts[0]/'meta.json').read_text())
+   if meta.get('image') and meta.get('session')==key:names.append(meta['name'])
+  except (OSError,ValueError,TypeError,KeyError):pass
+ labels=set(re.findall(r'(?m)^照片：([^\r\n]+)$',text))
+ if labels and any(ref.startswith('data:image/') for ref in media):
+  digests=set()
+  for ref in media:
+   if ref.startswith('data:image/'):
+    try:digests.add(hashlib.sha256(base64.b64decode(ref.split(',',1)[1],validate=True)).digest())
+    except (ValueError,IndexError):pass
+  try:folders=list(uploads.iterdir())
+  except OSError:folders=[]
+  for folder in folders:
+   try:
+    if not re.fullmatch(r'[a-f0-9-]{36}',folder.name):continue
+    meta=json.loads((folder/'meta.json').read_text())
+    if meta.get('image') and meta.get('session')==key and meta.get('name') in labels and hashlib.sha256((folder/'media/image.jpg').read_bytes()).digest() in digests:names.append(meta['name'])
+   except (OSError,ValueError,TypeError,KeyError):pass
+ return names
 def codexdb():
  files=list((HOME/'.codex').glob('state_*.sqlite'))
  return db(max(files,key=lambda p:p.stat().st_mtime)) if files else None
@@ -93,7 +122,7 @@ else:
      modern_usage=True;u=p.get('thread_token_usage') or {};usage={'input':u.get('input_tokens'),'output':u.get('output_tokens'),'cached':u.get('cached_input_tokens'),'semantics':'includes-cache'}
     if kind=='event_msg' and p.get('type')=='token_count' and not modern_usage:
      u=(p.get('info') or {}).get('total_token_usage') or {};usage={'input':u.get('input_tokens'),'output':u.get('output_tokens'),'cached':u.get('cached_input_tokens'),'semantics':'includes-cache'}
-    text=display_text(text,role,bool(media))
+    text=display_text(text,role,bool(media),photo_names(media,text))
     if text or media:events.append(dict(id=str(index),role=role,text=text,media=media,phase=p.get('channel'),time=ms(d.get('timestamp'))))
  elif agent=='hermes':
   with db(HOME/'.hermes/state.db') as c:
@@ -103,6 +132,13 @@ else:
    for row in reversed(list(c.execute("SELECT id,role,content,tool_name,tool_calls,tool_call_id,display_kind,timestamp FROM messages WHERE session_id=? AND role IN ('user','assistant','tool') ORDER BY id DESC LIMIT 200",(native,)))):
     r=dict(row);content=r['content'];media=[]
     if r.get('display_kind') in ['hidden','internal_notification']:continue
+    projected_role,content,background=hermes_message(content,r['role'],r.get('display_kind'))
+    if background:
+     followup=background.pop('followup','')
+     events.append(dict(id='background:'+str(r['id']),role='tool',text=content[:24000],time=ms(r['timestamp']),**background))
+     if not followup:continue
+     projected_role,content='user',followup
+    r['role']=projected_role
     if r['role']=='user':process.turn='user:'+str(r['id'])
     if r['role']=='tool':
      process.finish(r.get('tool_call_id') or str(r['id']),content,ms(r['timestamp']),r.get('tool_name') or '工具');continue
@@ -114,8 +150,19 @@ else:
       if isinstance(part,dict) and part.get('type') in ['image','image_url','input_image','local_image','localImage']:
        value=part.get('image_url') or part.get('url') or part.get('path');value=value.get('url') if isinstance(value,dict) else value
        if isinstance(value,str) and len(value)<8*1024*1024:media.append(value)
+    if r['role']=='user' and isinstance(content,str):
+     # Hermes persists uploaded photos as local @image references.
+     image_root=(HOME/'.hermes/images').resolve()
+     def photo_ref(match):
+      path=pathlib.Path(match[1])
+      try:
+       if path.resolve().is_relative_to(image_root) and path.is_file() and path.suffix.lower() in {'.png','.jpg','.jpeg','.gif','.webp'}:
+        media.append(str(path));return ''
+      except OSError:pass
+      return match[0]
+     content=re.sub(r'(?m)^@image:([^\n]+)\n?\[screenshot\][ \t]*$',photo_ref,content)
     text=clean(content) or ('工具 '+str(r['tool_name']) if r['tool_name'] else '')
-    text=display_text(text,r['role'],bool(media))
+    text=display_text(text,r['role'],bool(media),photo_names(media,text))
     if text.strip() or media:events.append(dict(id=str(r['id']),role=r['role'],text=text,media=media,phase='commentary' if r.get('tool_calls') else None,time=ms(r['timestamp'])))
     calls=r.get('tool_calls')
     try:calls=json.loads(calls) if isinstance(calls,str) else calls

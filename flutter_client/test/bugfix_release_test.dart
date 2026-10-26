@@ -1,0 +1,306 @@
+import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:g_collie_flutter/api.dart';
+import 'package:g_collie_flutter/main.dart';
+import 'package:g_collie_flutter/ui.dart';
+import 'workspace_test.dart' show FakeApi;
+
+class RefreshApi extends FakeApi {
+  Completer<dynamic>? response;
+  bool serverError = false;
+  bool transportError = false;
+  bool healthReachable = true;
+  @override
+  Future<bool> reachable() async => healthReachable;
+  @override
+  Future<dynamic> call(String path, [Json? body]) async {
+    if (path == '/local/codex%3Aone') {
+      if (transportError) throw ApiException('会话请求超时');
+      if (serverError) throw ApiException('会话接口暂时失败', 503);
+      if (response != null) return response!.future;
+    }
+    return super.call(path, body);
+  }
+}
+
+class ProjectApi extends FakeApi {
+  @override
+  Future<dynamic> call(String path, [Json? body]) async {
+    if (path == '/local') {
+      return {
+        'sessions': [],
+        'warnings': [],
+        'projects': [
+          for (final name in ['alpha', 'beta'])
+            {'name': name, 'path': '/$name'},
+        ],
+      };
+    }
+    if (path == '/usage') {
+      return {
+        'agents': {
+          'Codex': {
+            'projects': [
+              {
+                'path': '/alpha',
+                'usage': {'total': 128000},
+              },
+            ],
+          },
+          'Hermes': {
+            'projects': [
+              {
+                'path': '/beta',
+                'usage': {'total': 0},
+              },
+            ],
+          },
+          'Claude Code': {
+            'projects': [
+              {
+                'path': '/beta',
+                'usage': {'total': 1800000},
+              },
+            ],
+          },
+        },
+      };
+    }
+    return super.call(path, body);
+  }
+}
+
+class SendApi extends FakeApi {
+  final history = Completer<dynamic>();
+  final operations = <Json>[];
+  bool submitted = false;
+  bool unknown = false;
+  @override
+  Future<dynamic> call(String path, [Json? body]) async {
+    if (path == '/desktop/one') {
+      operations.add(body!);
+      if (unknown) throw ApiException('请求结果未知');
+      submitted = true;
+      return {'ok': true};
+    }
+    if (path == '/local/codex%3Aone' && submitted) return history.future;
+    return super.call(path, body);
+  }
+}
+
+void main() {
+  setUp(() => FlutterSecureStorage.setMockInitialValues({}));
+  testWidgets(
+    'acknowledged send clears draft before history completes and survives history failure',
+    (tester) async {
+      final api = SendApi();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Workspace(
+            api: api,
+            role: 'control',
+            initialSession: 'codex:one',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final shell = tester.widget<CollieShell>(find.byType(CollieShell));
+      shell.draft.text = '发送已确认';
+      expect(await shell.onSend(['photo']), true);
+      await tester.pump();
+      expect(shell.draft.text, isEmpty);
+      expect(tester.widget<CollieShell>(find.byType(CollieShell)).busy, false);
+      api.history.completeError(ApiException('历史读取超时'));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<CollieShell>(find.byType(CollieShell)).error,
+        contains('消息已发送'),
+      );
+      expect(tester.widget<CollieShell>(find.byType(CollieShell)).online, true);
+      await tester.pumpWidget(const SizedBox());
+      api.close();
+    },
+  );
+  testWidgets(
+    'unconfirmed send retains its request id when the user retries the same content',
+    (tester) async {
+      final api = SendApi()..unknown = true;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Workspace(
+            api: api,
+            role: 'control',
+            initialSession: 'codex:one',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      var shell = tester.widget<CollieShell>(find.byType(CollieShell));
+      shell.draft.text = '不要重复发送';
+      expect(await shell.onSend([]), false);
+      await tester.pump();
+      shell = tester.widget<CollieShell>(find.byType(CollieShell));
+      expect(await shell.onSend([]), false);
+      expect(api.operations[0]['requestId'], api.operations[1]['requestId']);
+      expect(shell.draft.text, '不要重复发送');
+      await tester.pumpWidget(const SizedBox());
+      api.close();
+    },
+  );
+  testWidgets(
+    'transport failure marks offline only when health probe fails and recovers',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = RefreshApi();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Workspace(
+            api: api,
+            role: 'control',
+            initialSession: 'codex:one',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      api.transportError = true;
+      await tester.tap(find.byTooltip('刷新会话'));
+      await tester.pumpAndSettle();
+      expect(tester.widget<CollieShell>(find.byType(CollieShell)).online, true);
+      api.healthReachable = false;
+      await tester.tap(find.byTooltip('刷新会话'));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<CollieShell>(find.byType(CollieShell)).online,
+        false,
+      );
+      expect(find.text('Hello from computer'), findsOneWidget);
+      api.transportError = false;
+      api.healthReachable = true;
+      await tester.widget<CollieShell>(find.byType(CollieShell)).onRefresh();
+      await tester.pumpAndSettle();
+      expect(tester.widget<CollieShell>(find.byType(CollieShell)).online, true);
+      await tester.pumpWidget(const SizedBox());
+      api.close();
+    },
+  );
+  testWidgets('project usage slots align across numeric and missing values', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = ProjectApi();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Workspace(api: api, role: 'control'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('打开会话列表'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('项目管理'));
+    await tester.pumpAndSettle();
+    for (final agent in ['Codex', 'Hermes', 'Claude Code']) {
+      final slots = find.byTooltip('$agent · 累计 Token');
+      expect(slots, findsNWidgets(2));
+      expect(
+        tester.getTopLeft(slots.at(0)).dx,
+        tester.getTopLeft(slots.at(1)).dx,
+      );
+      final firstText = find
+          .descendant(of: slots.at(0), matching: find.byType(Text))
+          .first;
+      final secondText = find
+          .descendant(of: slots.at(1), matching: find.byType(Text))
+          .first;
+      expect(tester.getTopLeft(firstText).dx, tester.getTopLeft(secondText).dx);
+    }
+    expect(find.text('128K'), findsOneWidget);
+    expect(find.text('1.8M'), findsOneWidget);
+    expect(find.text('0'), findsNothing);
+    expect(find.text('—'), findsNWidgets(4));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    api.close();
+  });
+  testWidgets('landscape home scrolls to assistants and recent sessions', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(890, 400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = FakeApi();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Workspace(api: api, role: 'control'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.scrollUntilVisible(
+      find.text('Example session'),
+      220,
+      scrollable: find.descendant(
+        of: find.byKey(const PageStorageKey('home-content')),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    await tester.tap(find.text('Example session'));
+    await tester.pumpAndSettle();
+    expect(find.text('Hello from computer'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    api.close();
+  });
+
+  testWidgets(
+    'refresh retains conversation, draft, toolbar and lifecycle connection',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = RefreshApi();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Workspace(
+            api: api,
+            role: 'control',
+            initialSession: 'codex:one',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final before = tester.getTopLeft(find.byTooltip('新建会话'));
+      await tester.enterText(find.byType(TextField).last, '保留未发送草稿');
+      api.response = Completer<dynamic>();
+      await tester.tap(find.byTooltip('刷新会话'));
+      await tester.pump();
+      expect(find.text('今天想继续哪项工作？'), findsNothing);
+      expect(find.text('保留未发送草稿'), findsOneWidget);
+      expect(tester.getTopLeft(find.byTooltip('新建会话')), before);
+      api.response!.complete(await FakeApi().call('/local/codex%3Aone'));
+      await tester.pumpAndSettle();
+      expect(find.text('保留未发送草稿'), findsOneWidget);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump();
+      expect(tester.widget<CollieShell>(find.byType(CollieShell)).online, true);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      api.response = null;
+      api.serverError = true;
+      await tester.tap(find.byTooltip('刷新会话'));
+      await tester.pumpAndSettle();
+      expect(tester.widget<CollieShell>(find.byType(CollieShell)).online, true);
+      expect(find.text('保留未发送草稿'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      api.close();
+    },
+  );
+}

@@ -1,3 +1,4 @@
+import 'section_app_bar.dart';
 import 'connection_page.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -107,7 +108,8 @@ class _SchedulePreviewState extends State<SchedulePreview> {
             ).colorScheme.onSurface.withValues(alpha: .5);
             return ConnectionPage(
               api: widget.api,
-              appBar: AppBar(
+              appBar: SectionAppBar(
+                primary: false,
                 title: Text(
                   old == null ? '添加定时消息' : '编辑定时消息',
                   style: const TextStyle(
@@ -382,7 +384,8 @@ class _SchedulePreviewState extends State<SchedulePreview> {
   @override
   Widget build(BuildContext context) => ConnectionPage(
     api: widget.api,
-    appBar: AppBar(
+    appBar: SectionAppBar(
+      primary: false,
       leading: IconButton(
         tooltip: '返回',
         onPressed: () => Navigator.pop(context),

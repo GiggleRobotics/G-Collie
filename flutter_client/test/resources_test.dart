@@ -5,6 +5,46 @@ import 'package:g_collie_flutter/resources.dart';
 
 void main() {
   test(
+    'inline history photo decodes locally without a resource request',
+    () async {
+      final api = CollieApi(Uri.parse('http://127.0.0.1:1'));
+      final data = await SessionResources(
+        api,
+        'codex:test',
+      ).image('data:image/png;base64,AQID');
+      expect(data, [1, 2, 3]);
+      api.close();
+    },
+  );
+
+  test(
+    'new photo refreshes a cached resource index within the first lookup',
+    () async {
+      final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      var calls = 0;
+      upstream.listen((request) async {
+        calls++;
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          calls == 1
+              ? '{"resources":[{"id":"old","ref":"/old.png"}]}'
+              : '{"resources":[{"id":"old","ref":"/old.png"},{"id":"new","ref":"/new.png"}]}',
+        );
+        await request.response.close();
+      });
+      final api = CollieApi(Uri.parse('http://127.0.0.1:${upstream.port}'));
+      try {
+        final resources = SessionResources(api, 'codex:test');
+        expect((await resources.find('/old.png'))?['id'], 'old');
+        expect((await resources.find('/new.png'))?['id'], 'new');
+        expect(calls, 2);
+      } finally {
+        api.close();
+        await upstream.close(force: true);
+      }
+    },
+  );
+  test(
     'browser relay exposes only issued paths without device credentials',
     () async {
       final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);

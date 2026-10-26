@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'downloads.dart';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
@@ -11,8 +13,16 @@ class SessionResources {
   final String session;
   Future<List<Json>>? _listing;
   SessionResources(this.api, this.session);
+  void invalidate() => _listing = null;
   String get root => '/local/${Uri.encodeComponent(session)}/resources';
   Future<Json?> find(String ref) async {
+    final embedded = RegExp(
+      r'^gcollie-resource:([a-f0-9]{32})$',
+    ).firstMatch(ref);
+    if (embedded != null) {
+      return {'id': embedded[1], 'ref': ref, 'name': '会话图片.png', 'image': true};
+    }
+    final hadListing = _listing != null;
     _listing ??= api
         .call(root)
         .then(
@@ -29,6 +39,7 @@ class SessionResources {
         }
       }
       _listing = null;
+      if (hadListing) return await find(ref);
       return null;
     } catch (_) {
       _listing = null;
@@ -107,6 +118,10 @@ class SessionResources {
   }
 
   Future<Uint8List> image(String ref) async {
+    if (RegExp(r'^data:image/(png|jpeg|gif|webp);base64,').hasMatch(ref)) {
+      if (ref.length > 8 * 1024 * 1024) throw ApiException('图片数据过大');
+      return base64Decode(ref.substring(ref.indexOf(',') + 1));
+    }
     final file = await find(ref);
     if (file == null) throw ApiException('图片未被此会话引用');
     return Uint8List.fromList(await api.imageBytes('$root/${file['id']}'));
@@ -129,12 +144,45 @@ class SessionImage extends StatefulWidget {
 
 class _SessionImageState extends State<SessionImage> {
   late Future<Uint8List> bytes;
+  bool failed = false;
+  DateTime lastAttempt = DateTime.fromMillisecondsSinceEpoch(0);
+  Future<Uint8List> load() async {
+    lastAttempt = DateTime.now();
+    failed = false;
+    for (var attempt = 0; ; attempt++) {
+      try {
+        final data = await widget.resources.image(widget.source);
+        failed = false;
+        return data;
+      } catch (_) {
+        if (attempt >= 2 || !mounted) {
+          failed = true;
+          rethrow;
+        }
+        widget.resources.invalidate();
+        await Future<void>.delayed(Duration(milliseconds: 600 * (attempt + 1)));
+      }
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant SessionImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!remote &&
+        (oldWidget.source != widget.source ||
+            oldWidget.resources != widget.resources ||
+            (failed &&
+                DateTime.now().difference(lastAttempt).inSeconds >= 10))) {
+      bytes = load();
+    }
+  }
+
   bool get remote =>
       ['http', 'https'].contains(Uri.tryParse(widget.source)?.scheme);
   @override
   void initState() {
     super.initState();
-    if (!remote) bytes = widget.resources.image(widget.source);
+    if (!remote) bytes = load();
   }
 
   @override
@@ -142,7 +190,7 @@ class _SessionImageState extends State<SessionImage> {
     Widget error() => OutlinedButton.icon(
       onPressed: () {
         if (!remote) {
-          setState(() => bytes = widget.resources.image(widget.source));
+          setState(() => bytes = load());
         }
         widget.resources.open(context, widget.source);
       },

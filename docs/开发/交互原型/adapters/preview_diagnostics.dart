@@ -1,3 +1,5 @@
+import 'section_app_bar.dart';
+
 import 'package:flutter/material.dart';
 
 Future<void> showPreviewDiagnostics(BuildContext context) => Navigator.of(
@@ -17,11 +19,12 @@ class _PreviewDiagnosticsState extends State<PreviewDiagnostics> {
   Future<void> check() async {
     setState(() => checking = true);
     await Future<void>.delayed(const Duration(milliseconds: 900));
-    if (mounted)
+    if (mounted) {
       setState(() {
         checking = false;
         checkedAt = DateTime.now();
       });
+    }
   }
 
   @override
@@ -70,7 +73,7 @@ class _PreviewDiagnosticsState extends State<PreviewDiagnostics> {
       ),
     ];
     return Scaffold(
-      appBar: AppBar(
+      appBar: SectionAppBar(
         title: const Text(
           '故障诊断',
           style: TextStyle(fontSize: 20, fontWeight: FontWeight.w500),

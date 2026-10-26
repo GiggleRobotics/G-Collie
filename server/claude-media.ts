@@ -17,7 +17,7 @@ export async function claudeMediaInput(text:string,files:Attachment[]=[]){
   const run=(args:string[])=>exec(ffmpeg(),['-hide_banner','-loglevel','error','-nostdin','-threads','1',...args],{timeout:Math.max(1,Math.min(10000,deadline-Date.now())),maxBuffer:1024*1024});
   if(file.image){
    const output=join(cache,'image.jpg');if(!existsSync(output))await run(['-i',file.path,'-frames:v','1','-vf','scale=2048:2048:force_original_aspect_ratio=decrease','-q:v','3','-y',output]);
-   content.push({type:'text',text:`照片：${file.name}`},await image(output));
+   content.push(await image(output));
   }else{
    let duration=0;
    try{await exec(ffmpeg(),['-hide_banner','-nostdin','-i',file.path],{timeout:Math.max(1,Math.min(5000,deadline-Date.now())),maxBuffer:256000})}catch(e:any){const match=String(e.stderr||'').match(/Duration: (\d+):(\d+):(\d+(?:\.\d+)?)/);if(match)duration=Number(match[1])*3600+Number(match[2])*60+Number(match[3])}

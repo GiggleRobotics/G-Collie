@@ -48,6 +48,9 @@ bool isActive(Json d) =>
 
 // Preview-only in-memory transport. No HTTP client or real credentials.
 class CollieApi {
+  Future<bool> reachable() async => !previewOffline;
+  Future<void> recordFailure(String path, String reason, [String? correlation]) async {}
+
   final Uri base;
   final String previewName, previewComputerId;
   bool previewOffline = false;

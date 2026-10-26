@@ -42,11 +42,12 @@ class _ConnectionPageState extends State<ConnectionPage> {
       final api = widget.api;
       if (api == null) throw Exception();
       final r = await api.call('/network');
-      if (mounted)
+      if (mounted) {
         setState(() {
           name = r['computerName'] ?? api.base.host;
           status = '已连接';
         });
+      }
     } catch (_) {
       if (mounted) setState(() => status = '未连接');
     } finally {

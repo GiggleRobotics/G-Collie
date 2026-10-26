@@ -1,3 +1,4 @@
+import 'section_app_bar.dart';
 import 'connection_page.dart';
 
 import 'package:flutter/material.dart';
@@ -44,7 +45,8 @@ class _SchedulePreviewState extends State<SchedulePreview> {
             final muted = Theme.of(ctx).colorScheme.onSurface
                 .withValues(alpha: .5);
             return ConnectionPage(
-              appBar: AppBar(
+              appBar: SectionAppBar(
+                primary: false,
                 title: Text(
                   old == null ? '添加定时消息' : '编辑定时消息',
                   style: const TextStyle(
@@ -288,8 +290,9 @@ class _SchedulePreviewState extends State<SchedulePreview> {
                           ),
                         ),
                       );
-                      if (selected != null && ctx.mounted)
+                      if (selected != null && ctx.mounted) {
                         change(() => session = selected);
+                      }
                     },
                   ),
                 ],
@@ -299,7 +302,7 @@ class _SchedulePreviewState extends State<SchedulePreview> {
         ),
       ),
     );
-    if (saved == true && mounted)
+    if (saved == true && mounted) {
       setState(() {
         final value = <String, dynamic>{
           'session': session,
@@ -315,13 +318,15 @@ class _SchedulePreviewState extends State<SchedulePreview> {
           old.addAll(value);
         }
       });
+    }
     await Future<void>.delayed(const Duration(milliseconds: 350));
     text.dispose();
   }
 
   @override
   Widget build(BuildContext context) => ConnectionPage(
-    appBar: AppBar(
+    appBar: SectionAppBar(
+      primary: false,
       title: const Text('定时消息'),
       actions: [
         IconButton(
@@ -437,8 +442,9 @@ class _SchedulePreviewState extends State<SchedulePreview> {
                             ],
                           ),
                         );
-                        if (yes == true && mounted)
+                        if (yes == true && mounted) {
                           setState(() => demoSchedules.remove(task));
+                        }
                       },
                       child: const Text('取消任务'),
                     ),

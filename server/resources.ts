@@ -20,6 +20,9 @@ export function references(d:any):Resource[]{
  }
  return [...refs].filter(r=>(!/^https?:|^data:/i.test(r)&&(extensions.has(extname(r.split(/[?#]/)[0]).toLowerCase())||media.has(r)||/\/uploads\/[a-f0-9-]{36}\/content$/.test(r)))||/^data:image\/(png|jpeg|gif|webp);base64,/i.test(r)).map(ref=>({id:createHash('sha256').update(d.id+'\0'+ref).digest('hex').slice(0,32),ref,name:ref.startsWith('data:')?'会话图片.png':basename(ref.replace(/^file:\/\//,'')),image:media.has(ref)||ref.startsWith('data:')||images.has(extname(ref).toLowerCase())}));
 }
+// Compact responses keep image bytes behind the existing session-scoped resource checks.
+export function compactReferences(d:any){return references(d).map(r=>r.ref.startsWith('data:')?{...r,ref:'gcollie-resource:'+r.id}:r)}
+export function compactDetail(d:any){if(!d?.id||!Array.isArray(d.events))return d;const refs=new Map(references(d).filter(r=>r.ref.startsWith('data:')).map(r=>[r.ref,'gcollie-resource:'+r.id]));return{...d,events:d.events.map((e:any)=>({...e,media:(e.media||[]).map((ref:string)=>refs.get(ref)||ref)}))}}
 export async function resourceFile(d:any,id:string){
  const r=references(d).find(r=>r.id===id);if(!r)throw Error('文件未被此会话引用');
  if(r.ref.startsWith('data:')){const m=r.ref.match(/^data:(image\/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/=]+)$/);if(!m||m[2].length>8*1024*1024)throw Error('图片格式或大小不支持');const data=Buffer.from(m[2],'base64');return {...r,path:'',data,mime:m[1],size:data.length,mtime:0,extension:'.png'};}
