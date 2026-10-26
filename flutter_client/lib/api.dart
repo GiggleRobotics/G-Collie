@@ -1,8 +1,8 @@
+import 'diagnostic_log.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 typedef Json = Map<String, dynamic>;
 
@@ -56,36 +56,11 @@ bool isActive(Json d) =>
     ['running', 'starting', 'waiting'].contains(d['status']);
 
 class CollieApi {
-  static Future<void> _diagnosticWrite = Future.value();
   Future<void> recordFailure(
     String path,
     String reason, [
     String? correlation,
-  ]) async {
-    final route = path
-        .split('?')
-        .first
-        .replaceAll(RegExp(r'[a-f0-9-]{16,}'), ':id');
-    _diagnosticWrite = _diagnosticWrite.catchError((_) {}).then((_) async {
-      const store = FlutterSecureStorage();
-      final raw = await store.read(key: 'diagnostic-failures');
-      final rows = raw == null ? <dynamic>[] : jsonDecode(raw) as List;
-      rows.add({
-        'time': DateTime.now().toIso8601String(),
-        'route': route,
-        'category': reason,
-        'requestId': correlation,
-        'computer': base.host,
-      });
-      await store.write(
-        key: 'diagnostic-failures',
-        value: jsonEncode(
-          rows.skip(rows.length > 100 ? rows.length - 100 : 0).toList(),
-        ),
-      );
-    });
-    await _diagnosticWrite;
-  }
+  ]) => DiagnosticLog.record(base.host, path, reason, requestId: correlation);
 
   final Uri base;
   final HttpClient _client = HttpClient()
@@ -264,12 +239,27 @@ class CollieApi {
 
   Future<dynamic> call(String path, [Json? body]) async {
     final correlation = requestId();
+    final began = Stopwatch()..start();
     try {
-      return await _call(
+      final result = await _call(
         path,
         body,
         correlation,
       ).timeout(const Duration(seconds: 35));
+      if (!path.startsWith('/diagnostics/requests/pending')) {
+        unawaited(
+          DiagnosticLog.record(
+            base.host,
+            path,
+            'http-ok',
+            requestId: correlation,
+            durationMs: began.elapsedMilliseconds,
+            status: 200,
+            sample: body == null && began.elapsedMilliseconds < 2000,
+          ).catchError((_) {}),
+        );
+      }
+      return result;
     } on ApiException catch (e) {
       unawaited(
         recordFailure(

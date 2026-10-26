@@ -1,4 +1,5 @@
 import 'profile.dart';
+import 'network_test.dart';
 import 'computers.dart';
 import 'schedules.dart';
 import 'downloads.dart';
@@ -208,6 +209,7 @@ class CollieShell extends StatefulWidget {
   final String role, error;
   final String? computerName;
   final VoidCallback? onManageComputers;
+  final Future<void> Function()? onClearCache;
   final bool connecting;
   final bool online, loading, busy, enabled, running;
   final List<dynamic> sessions, projects, warnings;
@@ -231,6 +233,7 @@ class CollieShell extends StatefulWidget {
     required this.api,
     this.computerName,
     this.onManageComputers,
+    this.onClearCache,
     this.connecting = false,
     this.initialTheme = ThemeMode.system,
     this.initialLarge = false,
@@ -269,10 +272,12 @@ class _CollieShellState extends State<CollieShell> {
   final Map<String, SessionResources> _resourceSessions = {};
   SessionResources get resources {
     final id = widget.detail?['id'] as String? ?? '';
-    return _resourceSessions.putIfAbsent(
+    final value = _resourceSessions.putIfAbsent(
       id,
       () => SessionResources(widget.api, id),
     );
+    value.offline = !widget.online;
+    return value;
   }
 
   Widget eventBody(Json e) => Column(
@@ -933,6 +938,28 @@ class _CollieShellState extends State<CollieShell> {
       if (mounted) setState(() {});
       return;
     }
+    if (title == '本地缓存') {
+      await collieSheet<void>(
+        context,
+        title,
+        (ctx) => Column(
+          children: [
+            const Text(
+              '最多保留最近打开的 25 个会话；历史约 3 MiB，图片最多 50 MiB。清理不会删除电脑端会话、草稿或已下载文件。',
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton(
+              onPressed: () async {
+                await widget.onClearCache?.call();
+                if (ctx.mounted) Navigator.pop(ctx);
+              },
+              child: const Text('清理当前电脑缓存'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
     if (title == '故障诊断') {
       await collieSheet<void>(
         context,
@@ -949,8 +976,12 @@ class _CollieShellState extends State<CollieShell> {
       widget.onManageComputers!();
       return;
     }
-    if (title == '内置远程连接') {
-      await collieSheet<void>(context, title, (_) => const NetworkPane());
+    if (title == '远程连接') {
+      await collieSheet<void>(
+        context,
+        title,
+        (_) => NetworkPane(api: widget.api),
+      );
       return;
     }
     if (title == '任务提醒') {
@@ -1021,7 +1052,7 @@ class _CollieShellState extends State<CollieShell> {
             const SizedBox(height: 12),
             const Text('G-Collie', style: TextStyle(fontSize: 25)),
             const Text('工作在电脑，掌控在手边。'),
-            muted(ctx, '内测版 0.1.12 · By Giggle'),
+            muted(ctx, '内测版 0.1.13 · By Giggle'),
             const SizedBox(height: 20),
             const Text(
               'G-Collie 是连接手机与电脑的 AI 助手工作台，将 Codex、Hermes 和 Claude Code 汇集在一起，方便你在手机上查看会话、发送消息、跟进任务。',
@@ -1535,8 +1566,12 @@ class _CollieShellState extends State<CollieShell> {
           context,
           d['draft'] == true
               ? '直接发送第一条消息，自动生成会话名称'
+              : d['localHistory'] == true
+              ? d['uncached'] == true
+                    ? '此会话尚未缓存，连接电脑后可加载历史'
+                    : '本地历史 · 上次同步 ${d['lastSyncedAt'] ?? '时间未知'}'
               : !widget.online
-              ? '电脑连接中断 · 状态未知'
+              ? '本地历史 · 电脑暂不可达'
               : d['desktopLive'] == true
               ? '桌面实时连接 · ${const {'idle': '空闲', 'running': '执行中', 'waiting': '等待处理', 'starting': '加载中'}[d['status']] ?? '状态未知'} · 最近 ${d['historyLimit'] ?? 200} 条记录'
               : '桌面历史 · 运行状态未知 · 最近 ${d['historyLimit'] ?? 200} 条记录',
@@ -2170,7 +2205,11 @@ class _CollieShellState extends State<CollieShell> {
                   ),
                 TextField(
                   controller: widget.draft,
-                  enabled: (widget.enabled && !quotaBlocked),
+                  enabled:
+                      widget.role != 'view' &&
+                      !widget.busy &&
+                      !widget.loading &&
+                      widget.detail != null,
                   minLines: 1,
                   maxLines: 6,
                   maxLength: 4000,
@@ -2180,7 +2219,7 @@ class _CollieShellState extends State<CollieShell> {
                     hintText: quotaBlocked
                         ? '额度恢复后可继续，草稿会保留'
                         : !widget.online
-                        ? '电脑连接后可发送'
+                        ? '离线草稿，连接后由你确认发送'
                         : widget.loading
                         ? '正在加载历史会话…'
                         : d?['archived'] == true
@@ -2401,8 +2440,9 @@ class _CollieShellState extends State<CollieShell> {
             },
             itemBuilder: (_) => [
               '任务提醒',
-              '内置远程连接',
+              '远程连接',
               '故障诊断',
+              '本地缓存',
               '重新连接',
               '切换电脑',
             ].map((v) => PopupMenuItem(value: v, child: Text(v))).toList(),
@@ -2638,13 +2678,8 @@ class _SettingsBodyState extends State<SettingsBody> {
             '服务：${(diagnostics!['checks'] as List?)?.firstOrNull?['status'] ?? '暂不可用'}',
           ),
         if (data?['embedded']?['address'] != null)
-          SelectableText('内置远程连接：${data!['embedded']['address']}'),
+          SelectableText('远程连接：${data!['embedded']['address']}'),
         const SizedBox(height: 12),
-        Text('系统 Tailscale：${data?['tailscale']?['state'] ?? '暂不可用'}'),
-        if (data?['tailscale']?['httpsURL'] != null)
-          SelectableText('系统 Tailscale 候选地址：${data!['tailscale']['httpsURL']}'),
-        for (final a in data?['addresses'] ?? [])
-          SelectableText('网卡候选地址（未验证）：$a'),
         outlineAction(busy ? '正在检测…' : '重新检测连接', busy ? null : load),
         muted(context, '电脑须保持联网、运行服务，休眠期间无法执行任务。无论使用哪种连接，G-Collie 都要求配对。'),
       ],
@@ -3014,12 +3049,49 @@ class _UsagePageState extends State<UsagePage> {
 }
 
 class NetworkPane extends StatefulWidget {
-  const NetworkPane({super.key});
+  final CollieApi? api;
+  const NetworkPane({super.key, this.api});
   @override
   State<NetworkPane> createState() => _NetworkPaneState();
 }
 
 class _NetworkPaneState extends State<NetworkPane> {
+  ConnectionTest? test;
+  Json? result;
+  String testStatus = '';
+  bool testing = false;
+  Future<void> testConnection() async {
+    if (testing || widget.api == null) return;
+    final current = ConnectionTest(widget.api!);
+    test = current;
+    setState(() {
+      testing = true;
+      result = null;
+      testStatus = '正在测试…';
+    });
+    try {
+      final value = await current.run((message) {
+        if (mounted) setState(() => testStatus = message);
+      });
+      if (mounted) {
+        setState(() {
+          result = value;
+          testStatus = '电脑服务可达 · 测试完成';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(
+          () => testStatus = current.cancelled
+              ? '测试已取消或达到 20 秒上限'
+              : '$testStatus\n${e is TimeoutException ? '此阶段超时，请检查当前连接后重试' : '测试失败：$e'}',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => testing = false);
+    }
+  }
+
   Json? state;
   String error = '';
   bool busy = false, loginRequested = false, authorizing = false;
@@ -3033,6 +3105,7 @@ class _NetworkPaneState extends State<NetworkPane> {
 
   @override
   void dispose() {
+    test?.cancel();
     poller?.cancel();
     super.dispose();
   }
@@ -3109,6 +3182,31 @@ class _NetworkPaneState extends State<NetworkPane> {
           }
         }),
         outlineAction('重新检测连接', refresh),
+        const SizedBox(height: 12),
+        outlineAction(
+          testing ? '测试中…' : '测试连接',
+          testing || widget.api == null ? null : testConnection,
+        ),
+        if (widget.api == null) const Text('连接电脑后可测试该连接。'),
+        const Text(
+          '测量手机与当前电脑之间的连接；最多约 2 MiB 流量、20 秒，不代表公网带宽。',
+          style: TextStyle(fontSize: 12),
+        ),
+        if (testing)
+          TextButton(
+            onPressed: () => test?.cancel(),
+            child: const Text('取消测试'),
+          ),
+        if (testStatus.isNotEmpty) Text(testStatus),
+        if (result != null) ...[
+          Text(
+            '平均延时：${(result!['averageMs'] as num).toStringAsFixed(1)} ms · 波动：${(result!['variationMs'] as num).toStringAsFixed(1)} ms',
+          ),
+          Text(
+            '下载：${(result!['downloadMbps'] as num).toStringAsFixed(2)} Mbps · 上传：${(result!['uploadMbps'] as num).toStringAsFixed(2)} Mbps',
+          ),
+          Text('测试时间：${result!['time']}'),
+        ],
         outlineAction('退出账号', () async {
           try {
             await NativeBridge.network('Logout');

@@ -1,10 +1,11 @@
 import 'section_app_bar.dart';
+import 'diagnostic_log.dart';
+import 'diagnostic_sync.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'api.dart';
 import 'native.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class DiagnosticsPage extends StatefulWidget {
   final CollieApi api;
@@ -18,7 +19,64 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
   List<dynamic> checks = [];
   List<dynamic> recent = [];
   List<dynamic> phoneEvents = [];
-  bool busy = false;
+  bool busy = false, uploading = false;
+  DateTime from = DateTime.now().subtract(const Duration(hours: 1)),
+      to = DateTime.now();
+  String transferStatus = '';
+  Future<void> chooseRange(bool start) async {
+    final now = DateTime.now(), initial = start ? from : to;
+    final day = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: now.subtract(const Duration(days: 6)),
+      lastDate: now,
+    );
+    if (day == null || !mounted) return;
+    final hour = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+    );
+    if (hour == null || !mounted) return;
+    final value = DateTime(
+      day.year,
+      day.month,
+      day.day,
+      hour.hour,
+      hour.minute,
+    );
+    setState(() {
+      if (start) {
+        from = value;
+      } else {
+        to = value;
+      }
+    });
+    if (from.isAfter(to)) {
+      setState(() => transferStatus = '开始时间不能晚于结束时间');
+      return;
+    }
+    await localLogs();
+  }
+
+  Future<void> localLogs() async {
+    final events = await DiagnosticLog.between(widget.api.base.host, from, to);
+    if (mounted) setState(() => phoneEvents = events);
+  }
+
+  Future<void> upload() async {
+    if (uploading) return;
+    setState(() => uploading = true);
+    try {
+      if (from.isAfter(to)) throw ApiException('开始时间不能晚于结束时间');
+      await DiagnosticSync(widget.api).upload(from, to);
+      if (mounted) setState(() => transferStatus = '手机日志已上传到当前配对电脑');
+    } catch (e) {
+      if (mounted) setState(() => transferStatus = '上传失败，可恢复连接后重试：$e');
+    } finally {
+      if (mounted) setState(() => uploading = false);
+    }
+  }
+
   String? time;
   @override
   void initState() {
@@ -28,15 +86,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
 
   Future<void> check() async {
     setState(() => busy = true);
-    try {
-      final raw = await const FlutterSecureStorage().read(
-        key: 'diagnostic-failures',
-      );
-      phoneEvents = raw == null ? [] : jsonDecode(raw);
-      phoneEvents = phoneEvents
-          .where((e) => e['computer'] == widget.api.base.host)
-          .toList();
-    } catch (_) {}
+    await localLogs();
     try {
       final r = await widget.api.call('/diagnostics');
       if (mounted) {
@@ -71,6 +121,19 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
     body: ListView(
       padding: const EdgeInsets.all(22),
       children: [
+        const Text('日志时间段（最近 7 天）'),
+        TextButton(onPressed: () => chooseRange(true), child: Text('从：$from')),
+        TextButton(onPressed: () => chooseRange(false), child: Text('至：$to')),
+        OutlinedButton(
+          onPressed: uploading ? null : upload,
+          child: Text(uploading ? '正在上传…' : '上传手机日志到当前电脑'),
+        ),
+        if (transferStatus.isNotEmpty) Text(transferStatus),
+        const Text(
+          '电脑断连时仍可导出本地日志；电脑主动获取仅在手机应用在线时响应。',
+          style: TextStyle(fontSize: 12),
+        ),
+        const SizedBox(height: 16),
         const Text('检查当前电脑的连接与服务', style: TextStyle(fontSize: 18)),
         const SizedBox(height: 12),
         OutlinedButton.icon(
@@ -123,6 +186,8 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
                   await Clipboard.setData(
                     ClipboardData(
                       text: jsonEncode({
+                        'from': from.toUtc().toIso8601String(),
+                        'to': to.toUtc().toIso8601String(),
                         'time': time,
                         'checks': checks,
                         'recent': recent,
@@ -146,6 +211,8 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
               : () async {
                   await NativeBridge.invoke('shareDiagnostic', {
                     'text': const JsonEncoder.withIndent('  ').convert({
+                      'from': from.toUtc().toIso8601String(),
+                      'to': to.toUtc().toIso8601String(),
                       'time': time,
                       'checks': checks,
                       'recent': recent,

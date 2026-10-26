@@ -90,7 +90,7 @@ class NativeBridge {
     if (state['state'] != 'Running') {
       throw ApiException(
         state['state'] == 'NeedsLogin'
-            ? '请在右上角“内置网络”登录，或启用系统 Tailscale 后重新连接'
+            ? '请在右上角“远程连接”登录，或启用系统 Tailscale 后重新连接'
             : '私有网络仍在连接，请稍后重试（${state['state']}）',
       );
     }

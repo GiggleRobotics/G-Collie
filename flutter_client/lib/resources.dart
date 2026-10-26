@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'offline_assets.dart';
 import 'dart:convert';
 import 'downloads.dart';
 import 'dart:typed_data';
@@ -11,6 +12,7 @@ import 'native.dart';
 class SessionResources {
   final CollieApi api;
   final String session;
+  bool offline = false;
   Future<List<Json>>? _listing;
   SessionResources(this.api, this.session);
   void invalidate() => _listing = null;
@@ -85,6 +87,24 @@ class SessionResources {
 
   Future<void> open(BuildContext context, String ref) async {
     try {
+      final cached = await OfflineAssets.read(
+        OfflineAssets.key('${api.base}', session, ref),
+      );
+      if (cached != null && context.mounted) {
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => FilePreviewPage(
+              name: '本地会话图片',
+              url: api.base,
+              image: Future.value(cached),
+              showDownload: false,
+            ),
+          ),
+        );
+        return;
+      }
+      if (offline) throw ApiException('此资源尚未下载，连接电脑后可打开；已下载文件请到下载内容查看。');
+
       final uri = Uri.tryParse(ref);
       if (uri != null && ['http', 'https'].contains(uri.scheme)) {
         if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
@@ -122,9 +142,24 @@ class SessionResources {
       if (ref.length > 8 * 1024 * 1024) throw ApiException('图片数据过大');
       return base64Decode(ref.substring(ref.indexOf(',') + 1));
     }
-    final file = await find(ref);
-    if (file == null) throw ApiException('图片未被此会话引用');
-    return Uint8List.fromList(await api.imageBytes('$root/${file['id']}'));
+    final key = OfflineAssets.key('${api.base}', session, ref);
+    final cached = await OfflineAssets.read(key);
+    if (offline) {
+      if (cached != null) return cached;
+      throw ApiException('图片未缓存，连接电脑后加载');
+    }
+    try {
+      final file = await find(ref);
+      if (file == null) throw ApiException('图片未被此会话引用');
+      final bytes = Uint8List.fromList(
+        await api.imageBytes('$root/${file['id']}'),
+      );
+      unawaited(OfflineAssets.save(key, bytes).catchError((_) {}));
+      return bytes;
+    } catch (_) {
+      if (cached != null) return cached;
+      rethrow;
+    }
   }
 }
 

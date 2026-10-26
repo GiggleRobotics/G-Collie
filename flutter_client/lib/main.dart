@@ -1,4 +1,6 @@
+import 'offline_assets.dart';
 import 'profile.dart';
+import 'diagnostic_sync.dart';
 import 'pending_messages.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -296,9 +298,9 @@ class _ConnectionState extends State<ConnectionPage> {
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
-              collieSheet<void>(context, '内置远程连接', (_) => const NetworkPane());
+              collieSheet<void>(context, '远程连接', (_) => NetworkPane(api: api));
             },
-            child: const Text('内置远程连接'),
+            child: const Text('远程连接'),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx),
@@ -547,7 +549,7 @@ class _ConnectionState extends State<ConnectionPage> {
               if (workspaceOpen && api != null)
                 TextButton(
                   onPressed: () => Navigator.pop(ctx, '__settings__'),
-                  child: const Text('连接设置'),
+                  child: const Text('连接状态'),
                 ),
               OutlinedButton.icon(
                 onPressed: () => Navigator.pop(ctx, '__add__'),
@@ -568,7 +570,7 @@ class _ConnectionState extends State<ConnectionPage> {
           'view';
       await collieSheet<void>(
         context,
-        '连接设置',
+        '连接状态',
         (ctx) => SettingsBody(api: api!, role: role, title: '电脑与连接'),
       );
       return;
@@ -683,13 +685,13 @@ class _ConnectionState extends State<ConnectionPage> {
                   } else {
                     collieSheet<void>(
                       context,
-                      '内置远程连接',
-                      (_) => const NetworkPane(),
+                      '远程连接',
+                      (_) => NetworkPane(api: api),
                     );
                   }
                 },
                 itemBuilder: (_) => [
-                  '内置远程连接',
+                  '远程连接',
                   '切换电脑',
                 ].map((v) => PopupMenuItem(value: v, child: Text(v))).toList(),
               ),
@@ -860,18 +862,52 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   final Map<String, dynamic> cachedDetails = {};
   Future<void> cacheWrite = Future.value();
   String? lastCache;
+  final savedDrafts = <String, String>{};
+  Timer? draftTimer;
+  String get draftKey => 'workspace-drafts:${widget.api.base}';
+  String draftId() =>
+      detail?['draft'] == true ? '__new__' : '${detail?['id'] ?? ''}';
+  void persistDraft() {
+    final id = draftId();
+    if (id.isEmpty) return;
+    if (draft.text.isEmpty) {
+      savedDrafts.remove(id);
+    } else {
+      savedDrafts[id] = draft.text;
+    }
+    final snapshot = jsonEncode(savedDrafts);
+    cacheWrite = cacheWrite
+        .catchError((_) {})
+        .then((_) => storage.write(key: draftKey, value: snapshot));
+  }
+
+  void draftChanged() {
+    draftTimer?.cancel();
+    draftTimer = Timer(const Duration(milliseconds: 300), persistDraft);
+  }
+
   String get cacheKey => 'workspace-cache:${widget.api.base}';
 
   Future<void> restoreWorkspace() async {
     try {
       final raw = await storage.read(key: cacheKey);
-      if (raw != null && mounted && sessions.isEmpty && !online) {
+      if (raw != null && mounted) {
         final saved = jsonDecode(raw);
-        cachedDetails.addAll(Map<String, dynamic>.from(saved['details'] ?? {}));
-        setState(() {
-          sessions = saved['sessions'] ?? [];
-          projects = saved['projects'] ?? [];
-        });
+        final older = Map<String, dynamic>.from(saved['details'] ?? {});
+        for (final entry in older.entries) {
+          cachedDetails.putIfAbsent(entry.key, () => entry.value);
+        }
+        if (sessions.isEmpty && !online) {
+          setState(() {
+            sessions = saved['sessions'] ?? [];
+            projects = saved['projects'] ?? [];
+          });
+        }
+      }
+      final draftRaw = await storage.read(key: draftKey);
+      if (draftRaw != null && mounted) {
+        savedDrafts.addAll(Map<String, String>.from(jsonDecode(draftRaw)));
+        if (draft.text.isEmpty) draft.text = savedDrafts[draftId()] ?? '';
       }
     } catch (_) {}
   }
@@ -898,8 +934,14 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   }
 
   void rememberDetail(Json value) {
-    cachedDetails[value['id']] = value;
-    while (cachedDetails.length > 10) {
+    cachedDetails.remove(value['id']);
+    cachedDetails[value['id']] = {
+      ...value,
+      'lastSyncedAt': DateTime.now().toIso8601String(),
+    };
+    while (cachedDetails.length > 25 ||
+        (cachedDetails.length > 1 &&
+            utf8.encode(jsonEncode(cachedDetails)).length > 3 * 1024 * 1024)) {
       cachedDetails.remove(cachedDetails.keys.first);
     }
     unawaited(saveWorkspace());
@@ -912,9 +954,12 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    restoreWorkspace();
+    draft.addListener(draftChanged);
     load();
-    if (widget.initialSession != null) open(widget.initialSession!);
+    restoreWorkspace().then((_) {
+      if (!mounted) return;
+      if (widget.initialSession != null) open(widget.initialSession!);
+    });
     NativeBridge.invoke<bool>('notificationEnabled')
         .then((enabled) {
           if (enabled == true && mounted) {
@@ -1062,6 +1107,17 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     }
   }
 
+  Json localDetail(String id, Map cached) => {
+    ...Map<String, dynamic>.from(cached),
+    'id': id,
+    'readOnly': true,
+    'desktopControl': false,
+    'desktopLive': false,
+    'status': 'unknown',
+    'pending': null,
+    'localHistory': true,
+  };
+
   Future<void> open(String id) async {
     if (id.startsWith('draft-agent:') && detail?['draft'] == true) {
       setState(() => detail = {...detail!, 'agent': id.substring(12)});
@@ -1071,6 +1127,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       setState(() => detail = {...detail!, 'cwd': id.substring(14)});
       return;
     }
+    persistDraft();
     final sameSession = detail?['id'] == id;
     final token = ++generation;
     connectionCheck++;
@@ -1078,11 +1135,32 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       loading = true;
       error = '';
       if (!sameSession) {
-        detail = null;
-        draft.clear();
+        final cached = cachedDetails[id];
+        detail = cached is Map ? localDetail(id, cached) : null;
+        draft.text = savedDrafts[id] ?? '';
         answers.clear();
       }
     });
+    if (!online) {
+      setState(() {
+        detail ??= {
+          'id': id,
+          'title': '会话历史',
+          'agent': id.startsWith('codex:')
+              ? 'Codex'
+              : id.startsWith('hermes:')
+              ? 'Hermes'
+              : 'Claude Code',
+          'events': <Json>[],
+          'readOnly': true,
+          'localHistory': true,
+          'uncached': true,
+          'status': 'unknown',
+        };
+        loading = false;
+      });
+      return;
+    }
     try {
       Json d = await widget.api.call('/local/${Uri.encodeComponent(id)}');
       if (!mounted || token != generation) return;
@@ -1116,6 +1194,8 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
               'desktopControl': false,
               'desktopLive': false,
               'status': 'unknown',
+              'pending': null,
+              'localHistory': true,
             },
           );
         }
@@ -1131,9 +1211,11 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       scroll.jumpTo(scroll.position.maxScrollExtent);
     }
   });
+  late final diagnosticSync = DiagnosticSync(widget.api);
   Future<void> poll() async {
     if (polling || loading || busy || !active) return;
     polling = true;
+    if (online) unawaited(diagnosticSync.tick());
     final token = generation;
     final current = detail;
     try {
@@ -1280,6 +1362,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   }
 
   Future<void> create() async {
+    persistDraft();
     final previous = detail;
     setState(() {
       generation++;
@@ -1296,6 +1379,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         'status': 'idle',
         'events': <Json>[],
       };
+      draft.text = savedDrafts['__new__'] ?? '';
     });
   }
 
@@ -1369,6 +1453,9 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    draftTimer?.cancel();
+    persistDraft();
+    draft.removeListener(draftChanged);
     generation++;
     timer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
@@ -1529,6 +1616,8 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
             ? online && effectiveRole != 'view'
             : canControl(d, effectiveRole, online));
     void home() {
+      persistDraft();
+      draftTimer?.cancel();
       setState(() {
         generation++;
         detail = null;
@@ -1551,6 +1640,18 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         api: widget.api,
         connecting: refreshingConnection && !online,
         computerName: connectionName,
+        onClearCache: () async {
+          await cacheWrite;
+          cachedDetails.clear();
+          lastCache = null;
+          await storage.delete(key: cacheKey);
+          await OfflineAssets.clear(computer: '${widget.api.base}');
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('已清理当前电脑的本地历史与图片，草稿已保留')),
+            );
+          }
+        },
         onManageComputers: widget.onManageComputers,
         initialTheme: appTheme.value,
         initialLarge: appLarge.value,

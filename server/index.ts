@@ -1,3 +1,5 @@
+import {DiagnosticStore,installDiagnostics} from './diagnostic-store.js';
+import {installNetworkTest} from './network-test.js';
 import {Schedules} from './schedules.js';
 import {prepareAgentMedia} from './claude-media.js';
 import {FolderProjects,prepareFolderThread} from './projects.js';
@@ -30,8 +32,9 @@ import {applyAction,seeds,type Task} from './core.js';
 const app=express();const host=process.env.HOST||'127.0.0.1';const port=Number(process.env.PORT||4310);const dir=process.env.GCOLLIE_DATA_DIR||join(process.cwd(),'.data');await mkdir(dir,{recursive:true,mode:0o700});
 const tokenPath=join(dir,'access-token');let token:string;try{token=(await readFile(tokenPath,'utf8')).trim()}catch{token=randomBytes(24).toString('hex');await writeFile(tokenPath,token,{mode:0o600})}
 let tasks:Task[];try{tasks=JSON.parse(await readFile(join(dir,'tasks.json'),'utf8'))}catch{tasks=seeds()}
+const history=new DiagnosticStore(dir);
 const diagnosticPath=join(dir,'diagnostic-events.json');let diagnosticEvents:any[]=[];try{diagnosticEvents=JSON.parse(readFileSync(diagnosticPath,'utf8'))}catch{}
-app.use((req,res,next)=>{const began=Date.now();const requestId=typeof req.headers['x-gcollie-request-id']==='string'&&/^[a-zA-Z0-9_-]{8,80}$/.test(req.headers['x-gcollie-request-id'])?req.headers['x-gcollie-request-id']:randomBytes(16).toString('hex');res.setHeader('x-gcollie-request-id',requestId);res.on('finish',()=>{if(res.statusCode<400)return;diagnosticEvents.push({requestId,time:new Date().toISOString(),route:req.route?.path||'unmatched',method:req.method,status:res.statusCode,durationMs:Date.now()-began});diagnosticEvents=diagnosticEvents.filter(r=>Date.parse(r.time)>Date.now()-7*86400000).slice(-500);try{writeFileSync(diagnosticPath,JSON.stringify(diagnosticEvents),{mode:0o600})}catch{}});next()});
+app.use((req,res,next)=>{const began=Date.now();const requestId=typeof req.headers['x-gcollie-request-id']==='string'&&/^[a-zA-Z0-9_-]{8,80}$/.test(req.headers['x-gcollie-request-id'])?req.headers['x-gcollie-request-id']:randomBytes(16).toString('hex');res.setHeader('x-gcollie-request-id',requestId);res.on('finish',()=>{try{if(!req.path.startsWith('/api/diagnostics/requests/pending'))history.record({requestId,route:req.route?.path||'unmatched',method:req.method,status:res.statusCode,durationMs:Date.now()-began,category:'http'});}catch{}if(res.statusCode<400)return;diagnosticEvents.push({requestId,time:new Date().toISOString(),route:req.route?.path||'unmatched',method:req.method,status:res.statusCode,durationMs:Date.now()-began});diagnosticEvents=diagnosticEvents.filter(r=>Date.parse(r.time)>Date.now()-7*86400000).slice(-500);try{writeFileSync(diagnosticPath,JSON.stringify(diagnosticEvents),{mode:0o600})}catch{}});next()});
 const attachments=new AttachmentStore(dir);const auth=new DeviceAuth(dir);const embeddedNetwork=new EmbeddedNetwork(dir,port);void embeddedNetwork.restore();
 async function currentNetwork(){const n=await networkStatus(port);const embedded=embeddedNetwork.publicStatus();return{...n,embedded,pairingAddresses:[...(embedded.address?[embedded.address]:[]),...n.pairingAddresses]}}
 const clients=new Set<express.Response>();let revision=0;const seen=new Map<string,number>();
@@ -61,6 +64,7 @@ app.get('/share/:key',(req,res)=>{const s=shares.get(req.params.key);res.set({'C
 const resourceDetail=(id:string)=>id.startsWith('claude:')?claude.detail(id.slice(7)):detailLocal(id);
 const issuePreview=installPreviews(app,resourceDetail,id=>id==='local-owner'||auth.list().some(d=>d.id===id));
 app.use('/api/attachments',express.json({limit:'15mb'}));
+app.use('/api/diagnostics/phone',express.json({limit:'512kb'}));
 app.use(express.json({limit:'64kb'}));
 app.use('/api',(req,res,next)=>{res.setHeader('Cache-Control','no-store');if(!sameOrigin(req)){res.status(403).json({error:'拒绝跨站请求'});return}next()});
 const deviceFor=(req:express.Request)=>auth.authenticate(cookieToken(req));
@@ -68,9 +72,11 @@ const bootstrapFor=(req:express.Request)=>localBootstrap(req)&&req.headers.autho
 app.get('/api/auth/status',(req,res)=>{const d=deviceFor(req);res.json({paired:!!d,device:d?auth.public(d):null})});
 app.post('/api/auth/exchange',(req,res)=>{const existing=deviceFor(req);if(existing){res.json({device:auth.public(existing)});return}if(!bootstrapFor(req)){res.status(401).json({error:'请在电脑本机使用管理密钥，或输入设备配对码'});return}const r=auth.enroll(req.body.name||'电脑浏览器','owner');writeDeviceCookie(req,res,r.token);res.json({device:r.device})});
 app.post('/api/auth/pair',(req,res)=>{try{const r=auth.pair(req.body.code,req.body.name);writeDeviceCookie(req,res,r.token);res.json({device:r.device})}catch(e){res.status(429).json({error:(e as Error).message})}});
-app.use('/api',(req,res,next)=>{const d=deviceFor(req);if(!d&&!bootstrapFor(req)){res.status(401).json({error:'设备未配对、已过期或已被撤销，请重新配对'});return}res.locals.device=d;res.locals.role=d?.role||'owner';if(d?.role==='view'&&!['GET','HEAD'].includes(req.method)&&!req.path.startsWith('/push/')&&!['/auth/logout'].includes(req.path)&&!/^\/local\/[^/]+\/resources\/[a-f0-9]{32}\/preview$/.test(req.path)){res.status(403).json({error:'此设备为只读权限，不能控制任务'});return}next()});
+app.use('/api',(req,res,next)=>{const d=deviceFor(req);if(!d&&!bootstrapFor(req)){res.status(401).json({error:'设备未配对、已过期或已被撤销，请重新配对'});return}res.locals.device=d;res.locals.role=d?.role||'owner';if(d?.role==='view'&&!['GET','HEAD'].includes(req.method)&&!req.path.startsWith('/push/')&&!['/auth/logout','/diagnostics/network/start','/diagnostics/phone'].includes(req.path)&&!/^\/diagnostics\/network\/[a-f0-9-]+\/upload$/.test(req.path)&&!/^\/local\/[^/]+\/resources\/[a-f0-9]{32}\/preview$/.test(req.path)){res.status(403).json({error:'此设备为只读权限，不能控制任务'});return}next()});
 const ownerOnly=(req:express.Request,res:express.Response,next:express.NextFunction)=>{if(res.locals.role!=='owner'){res.status(403).json({error:'请在电脑管理端执行此操作'});return}next()};
 const attachmentDevice=(res:express.Response)=>res.locals.device?.id||'local-owner';
+installNetworkTest(app,attachmentDevice);
+installDiagnostics(app,history,attachmentDevice,id=>auth.list().some(d=>d.id===id));
 app.get('/api/local/:id/resources',async(req,res)=>{try{res.json({resources:(req.header('x-gcollie-media')==='references'?compactReferences:references)(await resourceDetail(req.params.id))})}catch{res.status(404).json({error:'会话资源不可用'})}});
 app.get('/api/local/:id/resources/:resource',async(req,res)=>{try{const f=await resourceFile(await resourceDetail(req.params.id),req.params.resource);res.set({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});if(f.data)res.type(f.mime).send(f.data);else{if(f.mime)res.type(f.mime);res.sendFile(f.path,{dotfiles:'allow'})}}catch{res.status(404).json({error:'图片不存在或不允许访问'})}});
 app.post('/api/local/:id/resources/:resource/preview',async(req,res)=>{try{res.json({path:await issuePreview(req.params.id,req.params.resource,attachmentDevice(res))})}catch{res.status(404).json({error:'文件已移动、删除或不允许预览'})}});
@@ -84,7 +90,7 @@ app.post('/api/devices/pair',ownerOnly,async(req,res)=>{try{const invite=auth.ch
 app.post('/api/devices/:id/revoke',ownerOnly,(req,res)=>{try{auth.revoke(String(req.params.id));notifications.unsubscribe(String(req.params.id));broadcast();res.json({ok:true})}catch(e){res.status(409).json({error:(e as Error).message})}});
 app.post('/api/auth/logout',(req,res)=>{if(res.locals.device){notifications.unsubscribe(res.locals.device.id);auth.logout(res.locals.device.id);}res.clearCookie('gcollie_device',{path:'/'});res.json({ok:true})});
 app.post('/api/adapters/codex/control',ownerOnly,async(req,res)=>{try{if(typeof req.body.enabled!=='boolean')throw Error('无效设置');if(process.env.ORBIT_DESKTOP_CONTROL!==undefined)throw Error('当前由 ORBIT_DESKTOP_CONTROL 环境设置控制，请先修改服务配置');if(req.body.enabled&&!(await desktopCreator.status()).available)throw Error('桌面接口尚未连接，无法启用控制');const p=join(dir,'settings.json');await writeFile(p+'.tmp',JSON.stringify({codexControl:req.body.enabled}),{mode:0o600});await rename(p+'.tmp',p);res.json({enabled:await desktopControlEnabled()})}catch(e){res.status(409).json({error:(e as Error).message})}});
-app.get('/api/diagnostics/system',ownerOnly,async(_req,res)=>{res.json({version:'0.3.5',node:process.versions.node,platform:process.platform,host,uptimeSeconds:Math.round(process.uptime()),codex:{...await desktopCreator.status(),controlEnabled:await desktopControlEnabled()},hermes:{discovery:'本机唯一后端',experimental:true},authentication:'per-device',notificationScope:'最近关注的 30 个会话，服务重启后恢复，断线期间不推断任务完成'})});
+app.get('/api/diagnostics/system',ownerOnly,async(_req,res)=>{res.json({version:'0.3.6',node:process.versions.node,platform:process.platform,host,uptimeSeconds:Math.round(process.uptime()),codex:{...await desktopCreator.status(),controlEnabled:await desktopControlEnabled()},hermes:{discovery:'本机唯一后端',experimental:true},authentication:'per-device',notificationScope:'最近关注的 30 个会话，服务重启后恢复，断线期间不推断任务完成'})});
 app.get('/api/folders',async(req,res)=>{try{if(res.locals.role==='view')throw Error('只读设备不能浏览电脑目录');res.json(await folderProjects.browse(typeof req.query.path==='string'?req.query.path:undefined))}catch(e){res.status(403).json({error:(e as Error).message})}});
 app.post('/api/folders',async(req,res)=>{try{res.json(await folderProjects.createFolder(req.body.parent,req.body.name))}catch(e){res.status(409).json({error:(e as Error).message})}});
 app.post('/api/projects',async(req,res)=>{try{res.json(await folderProjects.add(req.body.path,req.body.name));broadcast()}catch(e){res.status(409).json({error:(e as Error).message})}});
@@ -96,7 +102,7 @@ app.get('/api/push/key',(_req,res)=>res.json({publicKey:notifications.publicKey(
 app.post('/api/push/subscribe',(req,res)=>{try{if(!res.locals.device)throw Error('请先登记本设备');notifications.subscribe(res.locals.device.id,req.body.subscription);res.json({ok:true})}catch(e){res.status(400).json({error:(e as Error).message})}});
 app.post('/api/push/unsubscribe',(_req,res)=>{if(res.locals.device)notifications.unsubscribe(res.locals.device.id);res.json({ok:true})});
 app.post('/api/push/test',async(_req,res)=>{const sent=res.locals.device?await notifications.test(res.locals.device.id):false;res.json({sent})});
-app.get('/healthz',(_req,res)=>res.json({ok:true,version:'0.3.5'}));
+app.get('/healthz',(_req,res)=>res.json({ok:true,version:'0.3.6'}));
 const draftsPath=join(dir,'created-sessions.json');let created:Record<string,any>={};try{created=JSON.parse(await readFile(draftsPath,'utf8'))}catch{}
 const sessionCreation=new SessionCreation(dir);
 app.post('/api/sessions',async(req,res)=>{try{

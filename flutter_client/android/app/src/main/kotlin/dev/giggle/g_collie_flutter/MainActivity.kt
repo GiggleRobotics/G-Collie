@@ -56,6 +56,11 @@ class MainActivity : FlutterActivity() {
         channel = MethodChannel(engine.dartExecutor.binaryMessenger, "dev.giggle.gcollie/native")
         channel!!.setMethodCallHandler { call, result ->
             when (call.method) {
+                "offlineDirectory" -> {
+                    val directory = java.io.File(filesDir, "offline-images")
+                    directory.mkdirs()
+                    result.success(directory.absolutePath)
+                }
                 "downloadFile" -> {
                     try {
                         val uri = Uri.parse(call.argument<String>("url") ?: "")
