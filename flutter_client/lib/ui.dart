@@ -1,3 +1,4 @@
+import 'network_authorization.dart';
 import 'profile.dart';
 import 'network_test.dart';
 import 'computers.dart';
@@ -210,7 +211,8 @@ class CollieShell extends StatefulWidget {
   final String? computerName;
   final VoidCallback? onManageComputers;
   final Future<void> Function()? onClearCache;
-  final bool connecting;
+  final bool connecting, reconnecting;
+  final Future<void> Function()? onReconnect;
   final bool online, loading, busy, enabled, running;
   final List<dynamic> sessions, projects, warnings;
   final Json? detail;
@@ -235,6 +237,8 @@ class CollieShell extends StatefulWidget {
     this.onManageComputers,
     this.onClearCache,
     this.connecting = false,
+    this.reconnecting = false,
+    this.onReconnect,
     this.initialTheme = ThemeMode.system,
     this.initialLarge = false,
     required this.role,
@@ -1052,7 +1056,7 @@ class _CollieShellState extends State<CollieShell> {
             const SizedBox(height: 12),
             const Text('G-Collie', style: TextStyle(fontSize: 25)),
             const Text('工作在电脑，掌控在手边。'),
-            muted(ctx, '内测版 0.1.13 · By Giggle'),
+            muted(ctx, '内测版 0.1.14 · By Giggle'),
             const SizedBox(height: 20),
             const Text(
               'G-Collie 是连接手机与电脑的 AI 助手工作台，将 Codex、Hermes 和 Claude Code 汇集在一起，方便你在手机上查看会话、发送消息、跟进任务。',
@@ -2428,24 +2432,26 @@ class _CollieShellState extends State<CollieShell> {
         actions: [
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert),
-            onSelected: (v) {
+            onSelected: (v) async {
               if (v == '重新连接') {
-                widget.onRefresh();
-                if (widget.detail != null) widget.onOpen(widget.detail!['id']);
+                await (widget.onReconnect ?? widget.onRefresh)();
               } else if (v == '切换电脑') {
                 widget.onManageComputers?.call();
               } else {
                 settings(v);
               }
             },
-            itemBuilder: (_) => [
-              '任务提醒',
-              '远程连接',
-              '故障诊断',
-              '本地缓存',
-              '重新连接',
-              '切换电脑',
-            ].map((v) => PopupMenuItem(value: v, child: Text(v))).toList(),
+            itemBuilder: (_) => ['任务提醒', '远程连接', '故障诊断', '本地缓存', '重新连接', '切换电脑']
+                .map(
+                  (v) => PopupMenuItem(
+                    value: v,
+                    enabled: v != '重新连接' || !widget.reconnecting,
+                    child: Text(
+                      v == '重新连接' && widget.reconnecting ? '正在重新连接…' : v,
+                    ),
+                  ),
+                )
+                .toList(),
           ),
         ],
       ),
@@ -2677,8 +2683,6 @@ class _SettingsBodyState extends State<SettingsBody> {
           Text(
             '服务：${(diagnostics!['checks'] as List?)?.firstOrNull?['status'] ?? '暂不可用'}',
           ),
-        if (data?['embedded']?['address'] != null)
-          SelectableText('远程连接：${data!['embedded']['address']}'),
         const SizedBox(height: 12),
         outlineAction(busy ? '正在检测…' : '重新检测连接', busy ? null : load),
         muted(context, '电脑须保持联网、运行服务，休眠期间无法执行任务。无论使用哪种连接，G-Collie 都要求配对。'),
@@ -3121,13 +3125,15 @@ class _NetworkPaneState extends State<NetworkPane> {
           url.scheme == 'https' &&
           url.host == 'login.tailscale.com') {
         loginRequested = false;
-        if (!await launchUrl(url, mode: LaunchMode.inAppBrowserView)) {
-          throw ApiException('无法打开 App 内授权窗口，请检查默认浏览器是否支持授权');
-        }
+        if (!mounted) return;
+        final authorized = await Navigator.of(context).push<bool>(
+          MaterialPageRoute(builder: (_) => NetworkAuthorizationPage(url: url)),
+        );
+        if (authorized == true) NativeBridge.onNetworkReady?.call();
+        authorizing = false;
       }
       if (authorizing && s['state'] == 'Running') {
         authorizing = false;
-        await NativeBridge.invoke<void>('authorizationComplete');
         NativeBridge.onNetworkReady?.call();
       }
       if (mounted) {
@@ -3181,17 +3187,12 @@ class _NetworkPaneState extends State<NetworkPane> {
             if (mounted) setState(() => error = '$e');
           }
         }),
-        outlineAction('重新检测连接', refresh),
         const SizedBox(height: 12),
         outlineAction(
           testing ? '测试中…' : '测试连接',
           testing || widget.api == null ? null : testConnection,
         ),
         if (widget.api == null) const Text('连接电脑后可测试该连接。'),
-        const Text(
-          '测量手机与当前电脑之间的连接；最多约 2 MiB 流量、20 秒，不代表公网带宽。',
-          style: TextStyle(fontSize: 12),
-        ),
         if (testing)
           TextButton(
             onPressed: () => test?.cancel(),
@@ -3785,7 +3786,7 @@ class _AddComputerPaneState extends State<AddComputerPane> {
       ),
       TextButton(
         onPressed: busy ? null : () => Navigator.pop(context),
-        child: const Text('取消并返回切换电脑'),
+        child: const Text('取消'),
       ),
     ],
   );

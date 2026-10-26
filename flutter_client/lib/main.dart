@@ -777,7 +777,7 @@ class _ConnectionState extends State<ConnectionPage> {
                                   setState(() => addingComputer = false);
                                   await restore();
                                 },
-                          child: const Text('取消并返回原电脑'),
+                          child: const Text('取消'),
                         ),
                       const SizedBox(height: 15),
                       FilledButton(
@@ -858,7 +858,8 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   late String? connectionName = widget.computerName;
   bool nameRequested = false;
   int generation = 0, ticks = 0;
-  bool refreshingConnection = false;
+  bool refreshingConnection = false, reconnecting = false;
+  Future<void>? loadPending;
   final Map<String, dynamic> cachedDetails = {};
   Future<void> cacheWrite = Future.value();
   String? lastCache;
@@ -1047,12 +1048,47 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> load() async {
-    if (refreshingConnection || leaving) return;
+  Future<void> load() {
+    if (leaving) return Future.value();
+    return loadPending ??= loadCurrent().whenComplete(() => loadPending = null);
+  }
+
+  Future<void> reconnect() async {
+    if (reconnecting || leaving || !mounted) return;
+    setState(() => reconnecting = true);
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('正在重新连接当前电脑…')));
+    try {
+      if (loadPending != null) await loadPending;
+      if (!mounted || leaving) return;
+      setState(() {
+        online = false;
+        error = '';
+      });
+      await load();
+      if (online && detail != null && detail?['draft'] != true) {
+        await open(detail!['id']);
+      }
+      if (mounted && !leaving) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(online ? '已重新连接当前电脑' : '未能连接电脑，请检查电脑服务与网络')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => reconnecting = false);
+    }
+  }
+
+  Future<void> loadCurrent() async {
+    if (leaving) return;
     if (mounted) setState(() => refreshingConnection = true);
+    var rebuiltConnection = false;
     try {
       if (!online && NativeBridge.embedded(widget.api.base)) {
         await NativeBridge.connect(widget.api);
+        rebuiltConnection = true;
       }
       if (!online) {
         final auth = await widget.api.call('/auth/status');
@@ -1077,6 +1113,12 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
           online = true;
           error = '';
         });
+      }
+      if (rebuiltConnection &&
+          await NativeBridge.invoke<bool>('notificationEnabled') == true) {
+        unawaited(
+          NativeBridge.startNotifications(widget.api).catchError((_) {}),
+        );
       }
       if (!nameRequested) {
         nameRequested = true;
@@ -1638,7 +1680,9 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       },
       child: CollieShell(
         api: widget.api,
-        connecting: refreshingConnection && !online,
+        connecting: reconnecting || (refreshingConnection && !online),
+        reconnecting: reconnecting,
+        onReconnect: reconnect,
         computerName: connectionName,
         onClearCache: () async {
           await cacheWrite;

@@ -45,6 +45,8 @@ class NativeBridge {
       if (response.statusCode == 200 &&
           data.contains('"ok":true') &&
           data.contains('"version"')) {
+        api.endpoint = api.base;
+        api.gatewayCookie = '';
         return;
       }
     } catch (_) {

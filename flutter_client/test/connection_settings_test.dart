@@ -65,6 +65,7 @@ void main() {
       );
       expect(find.textContaining('null'), findsNothing);
       expect(find.textContaining('实验性'), findsNothing);
+      expect(find.textContaining('远程连接：'), findsNothing);
       await tester.pumpWidget(const SizedBox());
       api.close();
     },
@@ -98,7 +99,7 @@ void main() {
     );
     await tester.tap(find.text('添加'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('取消并返回切换电脑'));
+    await tester.tap(find.text('取消'));
     await tester.pumpAndSettle();
     expect(find.text('原会话'), findsOneWidget);
     expect(find.byType(AddComputerPane), findsNothing);

@@ -7,7 +7,7 @@ import 'api.dart';
 class ConnectionTest {
   final CollieApi api;
   final HttpClient client = HttpClient()
-    ..connectionTimeout = const Duration(seconds: 4);
+    ..connectionTimeout = const Duration(seconds: 6);
   bool cancelled = false;
   ConnectionTest(this.api);
   void cancel() {
@@ -22,7 +22,7 @@ class ConnectionTest {
           body == null ? 'GET' : 'POST',
           api.endpoint.resolve('/api$path'),
         )
-        .timeout(const Duration(seconds: 4));
+        .timeout(const Duration(seconds: 6));
     if (api.requestCookie.isNotEmpty) {
       r.headers.set(HttpHeaders.cookieHeader, api.requestCookie);
     }
@@ -31,9 +31,9 @@ class ConnectionTest {
       r.contentLength = body.length;
       r.add(body);
     }
-    final response = await r.close().timeout(const Duration(seconds: 5));
+    final response = await r.close().timeout(const Duration(seconds: 8));
     final bytes = <int>[];
-    await for (final chunk in response.timeout(const Duration(seconds: 5))) {
+    await for (final chunk in response.timeout(const Duration(seconds: 8))) {
       bytes.addAll(chunk);
       if (bytes.length > 1100000) throw ApiException('测试响应超过限制');
     }
@@ -65,7 +65,10 @@ class ConnectionTest {
       down.stop();
       progress('测量上传速度…');
       final random = Random();
-      final data = List<int>.generate(1024 * 1024, (_) => random.nextInt(256));
+      final data = List<int>.generate(
+        start['bytes'] as int,
+        (_) => random.nextInt(256),
+      );
       final up = Stopwatch()..start();
       await transfer('$root/upload', body: data);
       up.stop();
