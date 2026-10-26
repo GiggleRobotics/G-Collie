@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'api.dart';
 
 String processDuration(dynamic value) {
@@ -111,6 +112,22 @@ class _ProcessRecordState extends State<ProcessRecord> {
               ),
             ),
           ),
+          if (expanded)
+            Align(
+              alignment: Alignment.centerRight,
+              child: IconButton(
+                tooltip: '复制工具记录',
+                icon: const Icon(Icons.copy_outlined, size: 16),
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: detail));
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(const SnackBar(content: Text('工具记录已复制')));
+                  }
+                },
+              ),
+            ),
           if (expanded)
             Container(
               margin: const EdgeInsets.only(left: 21, top: 3, bottom: 8),

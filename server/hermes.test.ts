@@ -12,3 +12,13 @@ test('Hermes 执行中仍提交 prompt.submit，沿用后端的 steer/queue/inte
  assert.deepEqual(calls,[{method:'prompt.submit',params:{session_id:'runtime',text:'补充要求'}}]);b.close();
  }finally{rmSync(root,{recursive:true,force:true})}
 });
+
+test('Hermes sudo and secret use masked input protocol and explicit cancellation',()=>{
+ for(const method of ['sudo','secret']){
+  const raw={open_requests:[{id:'secure',method,params:{command:'sudo true',prompt:'请输入密钥',env_var:'TEST_KEY'}}]};
+  assert.equal(hermesPending(raw)?.kind,'secret');
+  assert.deepEqual(hermesAnswer(raw,{pendingId:'secure',value:'test-value'}),{id:'secure',result:{value:'test-value'}});
+  assert.deepEqual(hermesAnswer(raw,{pendingId:'secure',value:''}),{id:'secure',result:{value:''}});
+  assert.throws(()=>hermesAnswer(raw,{pendingId:'old',value:'test-value'}),/过期/);
+ }
+});

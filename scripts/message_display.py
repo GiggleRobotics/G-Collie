@@ -83,3 +83,11 @@ def hermes_message(content, role, display_kind=None):
             'status': 'completed' if int(background[2]) == 0 else 'failed',
             'processId': background[1], 'followup': (background[5] or '').strip()}
     return role, content, None
+
+
+def codex_created_input(kind, payload):
+    """Unwrap the exact desktop creation receipt before generic tool projection."""
+    if kind != 'response_item' or payload.get('type') != 'function_call_output' or payload.get('name') != 'create_thread' or not isinstance(payload.get('output'), str):
+        return None
+    match = re.fullmatch(r'\s*<codex_delegation>\s*<source_thread_id>[^<]+</source_thread_id>\s*<input>(.*?)</input>\s*</codex_delegation>\s*', payload['output'], re.S)
+    return match[1] if match else None

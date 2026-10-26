@@ -21,13 +21,15 @@ export class ResetService{
  }
 }
 export class UsageService{
- private local:any;private localAt=0;private localPending?:Promise<any>;private account:any;private accountAt=0;private accountPending?:Promise<any>;
+ private local:any;private localAt=0;private localPending?:Promise<any>;private account:any;private accountAt=0;private accountPending?:Promise<any>;private refreshPending?:Promise<any>;
  constructor(private dir:string,private limits:()=>Promise<any>,private accountUsage:()=>Promise<any>){const timer=setInterval(()=>{void this.localRead().catch(()=>{})},60000);timer.unref();void this.localRead().catch(()=>{})}
  private localRead(){if(this.local&&Date.now()-this.localAt<45000)return Promise.resolve(this.local);if(!this.localPending)this.localPending=exec('python3',[join(process.cwd(),'scripts/read-usage.py')],{env:{...process.env,GCOLLIE_DATA_DIR:this.dir},maxBuffer:32*1024*1024,timeout:120000}).then(({stdout})=>{this.local=JSON.parse(stdout);this.localAt=Date.now();return this.local}).finally(()=>{this.localPending=undefined});return this.localPending}
  private accountRead(){if(this.account&&Date.now()-this.accountAt<60000)return Promise.resolve(this.account);if(!this.accountPending)this.accountPending=(async()=>{const results=await Promise.allSettled([this.limits(),this.accountUsage()]);const l=results[0],u=results[1];this.account={fetchedAt:new Date().toISOString(),limits:l.status==='fulfilled'?normalizeLimits(l.value):[],accountKey:l.status==='fulfilled'?l.value.accountKey??null:null,accountLabel:l.status==='fulfilled'?l.value.accountLabel??null:null,resetUnavailableReason:l.status==='fulfilled'?(l.value.accountKey?null:l.value.resetUnavailableReason||'账号标识暂时不可读，请刷新后重试'):'账号额度暂时不可读，请刷新后重试',resetCredits:l.status==='fulfilled'?resetSummary(l.value):null,limitsError:l.status==='rejected'?'账号额度暂时不可读':null,usage:u.status==='fulfilled'?{summary:u.value.summary??null,dailyUsageBuckets:u.value.dailyUsageBuckets??null}:null,usageError:u.status==='rejected'?'当前 Codex 后端未提供账号 Token 统计':null};this.accountAt=Date.now();return this.account})().finally(()=>{this.accountPending=undefined});return this.accountPending}
  invalidateAccount(){this.accountAt=0;this.account=undefined}
- async readAccount(force=false){if(force){await this.accountPending;this.invalidateAccount()}return{codexAccount:await this.accountRead()}}
- async read(force=false){if(force){await this.accountPending;this.invalidateAccount()}const [local,account]=await Promise.all([this.localRead(),this.accountRead()]);return{...local,codexAccount:account}}
+ private refreshAccount(){if(!this.refreshPending)this.refreshPending=(async()=>{const previous=this.accountPending;if(previous)await previous;else if(this.account&&Date.now()-this.accountAt<10000)return this.account;this.invalidateAccount();return await this.accountRead()})().finally(()=>{this.refreshPending=undefined});return this.refreshPending}
+ async readAccount(force=false){return{codexAccount:await(force?this.refreshAccount():this.accountRead())}}
+ async read(force=false){const [local,account]=await Promise.all([this.localRead(),force?this.refreshAccount():this.accountRead()]);return{...local,codexAccount:account}}
+
 }
 
 export function exhaustedCodexWindows(account:any){return (account?.limits||[]).filter((b:any)=>!String(b.id).toLowerCase().includes('review')).flatMap((b:any)=>b.windows||[]).filter((w:any)=>[300,10080].includes(w.windowMinutes)&&typeof w.usedPercent==='number'&&w.usedPercent>=100)}

@@ -90,8 +90,52 @@ class SendApi extends FakeApi {
   }
 }
 
+class SlowSendApi extends FakeApi {
+  final ack = Completer<dynamic>();
+  @override
+  Future<dynamic> call(String path, [Json? body]) async {
+    if (path == '/desktop/one') return ack.future;
+    return super.call(path, body);
+  }
+}
+
 void main() {
   setUp(() => FlutterSecureStorage.setMockInitialValues({}));
+  testWidgets('sent text is visible before a slow desktop acknowledges it', (
+    tester,
+  ) async {
+    final api = SlowSendApi();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Workspace(api: api, role: 'control', initialSession: 'codex:one'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final shell = tester.widget<CollieShell>(find.byType(CollieShell));
+    shell.draft.text = '慢链路即时显示';
+    final send = shell.onSend([]);
+    await tester.pump();
+    final current = tester.widget<CollieShell>(find.byType(CollieShell));
+    expect(
+      current.detail!['events']
+          .where((e) => e['text'] == '慢链路即时显示')
+          .single['sendStatus'],
+      'sending',
+    );
+    api.ack.complete({'ok': true, 'turnId': 'verified-turn'});
+    expect(await send, true);
+    await tester.pump();
+    expect(
+      tester
+          .widget<CollieShell>(find.byType(CollieShell))
+          .detail!['events']
+          .where((e) => e['text'] == '慢链路即时显示')
+          .single['sendStatus'],
+      'sent',
+    );
+    await tester.pumpWidget(const SizedBox());
+    api.close();
+  });
   testWidgets(
     'acknowledged send clears draft before history completes and survives history failure',
     (tester) async {

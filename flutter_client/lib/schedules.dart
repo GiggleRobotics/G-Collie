@@ -111,7 +111,7 @@ class _SchedulePreviewState extends State<SchedulePreview> {
               appBar: SectionAppBar(
                 primary: false,
                 title: Text(
-                  old == null ? '添加定时消息' : '编辑定时消息',
+                  old == null ? '添加定时任务' : '编辑定时任务',
                   style: const TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.w500,
@@ -157,7 +157,7 @@ class _SchedulePreviewState extends State<SchedulePreview> {
                             }
                             Navigator.pop(ctx, true);
                           },
-                          child: const Text('保存定时消息'),
+                          child: const Text('保存定时任务'),
                         ),
                       ),
                     ],
@@ -392,12 +392,12 @@ class _SchedulePreviewState extends State<SchedulePreview> {
         icon: const Icon(Icons.arrow_back, size: 23),
       ),
       title: const Text(
-        '定时消息',
+        '定时任务',
         style: TextStyle(fontSize: 20, fontWeight: FontWeight.w500),
       ),
       actions: [
         IconButton(
-          tooltip: '新建定时消息',
+          tooltip: '新建定时任务',
           onPressed: edit,
           icon: const Icon(Icons.add),
         ),
@@ -428,12 +428,12 @@ class _SchedulePreviewState extends State<SchedulePreview> {
                   color: Colors.grey,
                 ),
                 const SizedBox(height: 18),
-                const Text('还没有定时消息'),
+                const Text('还没有定时任务'),
                 const SizedBox(height: 16),
                 OutlinedButton.icon(
                   onPressed: edit,
                   icon: const Icon(Icons.add, size: 18),
-                  label: const Text('新建定时消息'),
+                  label: const Text('新建定时任务'),
                 ),
               ],
             ),
@@ -510,7 +510,7 @@ class _SchedulePreviewState extends State<SchedulePreview> {
                         final yes = await showDialog<bool>(
                           context: context,
                           builder: (ctx) => AlertDialog(
-                            title: const Text('取消此定时消息？'),
+                            title: const Text('取消此定时任务？'),
                             content: const Text('取消后不会再按此计划发送。'),
                             actions: [
                               TextButton(

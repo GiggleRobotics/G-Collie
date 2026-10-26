@@ -1,4 +1,5 @@
 import 'profile.dart';
+import 'computers.dart';
 import 'schedules.dart';
 import 'downloads.dart';
 import 'diagnostics.dart';
@@ -556,7 +557,7 @@ class _CollieShellState extends State<CollieShell> {
                 trailing: '${widget.projects.length}',
               ),
               navRow('Activity', '用量统计', () => nav('usage')),
-              navRow('Clock', '定时消息', () {
+              navRow('Clock', '定时任务', () {
                 Navigator.pop(context);
                 showPreviewSchedules(context, widget.sessions, widget.api);
               }),
@@ -933,9 +934,12 @@ class _CollieShellState extends State<CollieShell> {
       return;
     }
     if (title == '故障诊断') {
-      await Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => DiagnosticsPage(api: widget.api),
+      await collieSheet<void>(
+        context,
+        title,
+        (_) => SizedBox(
+          height: MediaQuery.sizeOf(context).height * .65,
+          child: DiagnosticsPage(api: widget.api, embedded: true),
         ),
       );
       return;
@@ -945,20 +949,8 @@ class _CollieShellState extends State<CollieShell> {
       widget.onManageComputers!();
       return;
     }
-    if (title == '内置网络') {
-      await showDialog<void>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('内置远程连接'),
-          content: const SizedBox(width: 400, child: NetworkPane()),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('关闭'),
-            ),
-          ],
-        ),
-      );
+    if (title == '内置远程连接') {
+      await collieSheet<void>(context, title, (_) => const NetworkPane());
       return;
     }
     if (title == '任务提醒') {
@@ -1029,7 +1021,7 @@ class _CollieShellState extends State<CollieShell> {
             const SizedBox(height: 12),
             const Text('G-Collie', style: TextStyle(fontSize: 25)),
             const Text('工作在电脑，掌控在手边。'),
-            muted(ctx, '内测版 0.1.11 · By Giggle'),
+            muted(ctx, '内测版 0.1.12 · By Giggle'),
             const SizedBox(height: 20),
             const Text(
               'G-Collie 是连接手机与电脑的 AI 助手工作台，将 Codex、Hermes 和 Claude Code 汇集在一起，方便你在手机上查看会话、发送消息、跟进任务。',
@@ -1593,7 +1585,25 @@ class _CollieShellState extends State<CollieShell> {
                 color: panelColor(context),
                 borderRadius: BorderRadius.circular(24),
               ),
-              child: eventBody(Map<String, dynamic>.from(e)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  eventBody(Map<String, dynamic>.from(e)),
+                  if (e['sendStatus'] != null)
+                    muted(
+                      context,
+                      const {
+                            'sending': '发送中…',
+                            'sent': '已发送 · 等待记录同步',
+                            'failed': '发送失败，请检查提示后重试',
+                            'unknown': '发送结果未知，请勿重复发送',
+                          }[e['sendStatus']] ??
+                          '',
+                      size: 10,
+                    ),
+                ],
+              ),
             ),
           )
         else
@@ -2391,7 +2401,7 @@ class _CollieShellState extends State<CollieShell> {
             },
             itemBuilder: (_) => [
               '任务提醒',
-              '内置网络',
+              '内置远程连接',
               '故障诊断',
               '重新连接',
               '切换电脑',
@@ -2589,6 +2599,11 @@ class _SettingsBodyState extends State<SettingsBody> {
   }
 
   Future<void> load() async {
+    if (busy) return;
+    setState(() {
+      busy = true;
+      error = '';
+    });
     try {
       if (widget.title == '通知') {
         final enabled = await NativeBridge.notificationStatus();
@@ -2605,6 +2620,8 @@ class _SettingsBodyState extends State<SettingsBody> {
       if (mounted) setState(() {});
     } catch (e) {
       if (mounted) setState(() => error = '$e');
+    } finally {
+      if (mounted) setState(() => busy = false);
     }
   }
 
@@ -2615,35 +2632,20 @@ class _SettingsBodyState extends State<SettingsBody> {
       if (widget.title == '电脑与连接') ...[
         Text('电脑：${data?['computerName'] ?? '检测中…'}'),
         const SizedBox(height: 16),
-        if (diagnostics != null) ...[
+        SelectableText('服务地址：${widget.api.base}'),
+        if (diagnostics != null)
           Text(
-            '服务 ${diagnostics!['version']} · 已运行 ${((diagnostics!['uptimeSeconds'] ?? 0) / 60).floor()} 分钟',
+            '服务：${(diagnostics!['checks'] as List?)?.firstOrNull?['status'] ?? '暂不可用'}',
           ),
-          Text(
-            'Codex 控制：${diagnostics!['codex']?['controlEnabled'] == true ? '已启用' : '未启用，仅查看历史'}',
-          ),
-          outlineAction(
-            diagnostics!['codex']?['controlEnabled'] == true
-                ? '关闭 Codex 控制'
-                : '启用实验性 Codex 控制',
-            () async {
-              try {
-                await widget.api.call('/adapters/codex/control', {
-                  'enabled': diagnostics!['codex']?['controlEnabled'] != true,
-                });
-                await load();
-              } catch (e) {
-                if (mounted) setState(() => error = '$e');
-              }
-            },
-          ),
-        ],
-        const SizedBox(height: 16),
-        Text('Tailscale：${data?['tailscale']?['state'] ?? '未安装或正在检测'}'),
+        if (data?['embedded']?['address'] != null)
+          SelectableText('内置远程连接：${data!['embedded']['address']}'),
+        const SizedBox(height: 12),
+        Text('系统 Tailscale：${data?['tailscale']?['state'] ?? '暂不可用'}'),
         if (data?['tailscale']?['httpsURL'] != null)
-          SelectableText('${data!['tailscale']['httpsURL']}'),
-        for (final a in data?['addresses'] ?? []) SelectableText('$a'),
-        outlineAction('重新检测连接', load),
+          SelectableText('系统 Tailscale 候选地址：${data!['tailscale']['httpsURL']}'),
+        for (final a in data?['addresses'] ?? [])
+          SelectableText('网卡候选地址（未验证）：$a'),
+        outlineAction(busy ? '正在检测…' : '重新检测连接', busy ? null : load),
         muted(context, '电脑须保持联网、运行服务，休眠期间无法执行任务。无论使用哪种连接，G-Collie 都要求配对。'),
       ],
       if (widget.title == '手机与配对') ...[
@@ -3091,7 +3093,10 @@ class _NetworkPaneState extends State<NetworkPane> {
         for (final p in state?['computers'] ?? [])
           TextButton(
             onPressed: () => NativeBridge.onLink?.call(p['address']),
-            child: Text('${p['name']}\n${p['address']}'),
+            child: Text(
+              '${p['name']}\n${p['address']}',
+              textAlign: TextAlign.center,
+            ),
           ),
         outlineAction('登录 / 授权入网', () async {
           try {
@@ -3592,4 +3597,98 @@ class _DeviceAdminState extends State<DeviceAdmin> {
       ],
     );
   }
+}
+
+class AddComputerPane extends StatefulWidget {
+  final ComputerStore computers;
+  const AddComputerPane({super.key, required this.computers});
+  @override
+  State<AddComputerPane> createState() => _AddComputerPaneState();
+}
+
+class _AddComputerPaneState extends State<AddComputerPane> {
+  final address = TextEditingController(), code = TextEditingController();
+  bool busy = false;
+  String error = '';
+  Future<void> pair() async {
+    if (busy) return;
+    setState(() {
+      busy = true;
+      error = '';
+    });
+    CollieApi? client;
+    try {
+      final raw = Uri.parse(address.text.trim());
+      final base = serverUri(raw.replace(fragment: '').toString());
+      final invite = Uri.splitQueryString(raw.fragment)['pair'];
+      client = CollieApi(
+        base,
+        cookie: '',
+        saveCookie: (value) =>
+            widget.computers.storage.write(key: 'cookie:$base', value: value),
+      );
+      await NativeBridge.connect(client);
+      final result = await client.call('/auth/pair', {
+        'code': invite ?? code.text.trim(),
+        'name': '我的手机',
+      });
+      await widget.computers.remember(
+        base,
+        result['device']['role'],
+        select: false,
+      );
+      if (mounted) Navigator.pop(context, '$base');
+    } catch (e) {
+      if (mounted) setState(() => error = '$e');
+    } finally {
+      client?.close();
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    address.dispose();
+    code.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      const Text('添加不会断开当前电脑。取消后返回电脑列表。'),
+      const SizedBox(height: 16),
+      TextField(
+        controller: address,
+        enabled: !busy,
+        decoration: const InputDecoration(
+          labelText: '服务地址或完整配对链接',
+          hintText: 'http://100.x.x.x:4310',
+        ),
+      ),
+      const SizedBox(height: 16),
+      TextField(
+        controller: code,
+        enabled: !busy,
+        keyboardType: TextInputType.number,
+        maxLength: 6,
+        decoration: const InputDecoration(labelText: '配对码（完整配对链接可不填）'),
+      ),
+      if (error.isNotEmpty)
+        Text(
+          error,
+          style: TextStyle(color: Theme.of(context).colorScheme.error),
+        ),
+      FilledButton(
+        onPressed: busy ? null : pair,
+        child: Text(busy ? '正在配对…' : '配对并连接'),
+      ),
+      TextButton(
+        onPressed: busy ? null : () => Navigator.pop(context),
+        child: const Text('取消并返回切换电脑'),
+      ),
+    ],
+  );
 }

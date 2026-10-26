@@ -38,7 +38,7 @@ export class FolderProjects {
 }
 
 // Persist an empty native thread in the chosen cwd, then let the desktop own its first turn.
-export async function prepareFolderThread(root:string,cwd:string):Promise<string>{
+export async function prepareFolderThread(root:string,cwd:string,title="新会话"):Promise<string>{
  const child=spawn(process.env.ORBIT_CODEX_BIN||process.env.CODEX_CLI_PATH||(existsSync('/usr/lib/chatgpt/resources/codex')?'/usr/lib/chatgpt/resources/codex':'codex'),['app-server','--listen','stdio://'],{stdio:'pipe',env:codexEnvironment(root)});
  child.stderr.on('data',()=>{});let seq=0;let stage='启动';
  const pending=new Map<number,{resolve:(r:any)=>void;reject:(e:Error)=>void}>();
@@ -47,5 +47,5 @@ export async function prepareFolderThread(root:string,cwd:string):Promise<string
  const lines=createInterface({input:child.stdout});lines.on('line',line=>{try{const m=JSON.parse(line),p=pending.get(m.id);if(p){pending.delete(m.id);m.error?p.reject(Error(m.error.message)):p.resolve(m.result)}}catch{}});
  const rpc=(method:string,params:any)=>new Promise<any>((resolve,reject)=>{stage=method;const id=++seq;pending.set(id,{resolve,reject});child.stdin.write(JSON.stringify({id,method,params})+'\n')});
  const timer=setTimeout(()=>{fail(Error('创建目录会话超时（'+stage+'），结果未知'));child.kill()},20000);
- try{await rpc('initialize',{clientInfo:{name:'gcollie_folder',version:'0.1.5'},capabilities:{}});child.stdin.write('{"method":"initialized"}\n');const r=await rpc('thread/start',{cwd,persistExtendedHistory:true});if(!r.thread?.id)throw Error('未返回原生会话编号');await rpc('thread/inject_items',{threadId:r.thread.id,items:[{type:'message',role:'developer',content:[{type:'input_text',text:'Project working directory: '+cwd}]}]});await rpc('thread/name/set',{threadId:r.thread.id,name:'新会话'});await rpc('thread/read',{threadId:r.thread.id,includeTurns:false});await rpc('thread/unsubscribe',{threadId:r.thread.id});return r.thread.id}finally{clearTimeout(timer);lines.close();child.kill()}
+ try{await rpc('initialize',{clientInfo:{name:'gcollie_folder',version:'0.1.5'},capabilities:{}});child.stdin.write('{"method":"initialized"}\n');const r=await rpc('thread/start',{cwd:cwd||homedir(),persistExtendedHistory:true});if(!r.thread?.id)throw Error('未返回原生会话编号');if(cwd)await rpc('thread/inject_items',{threadId:r.thread.id,items:[{type:'message',role:'developer',content:[{type:'input_text',text:'Project working directory: '+cwd}]}]});await rpc('thread/name/set',{threadId:r.thread.id,name:title});await rpc('thread/read',{threadId:r.thread.id,includeTurns:false});await rpc('thread/unsubscribe',{threadId:r.thread.id});return r.thread.id}finally{clearTimeout(timer);lines.close();child.kill()}
 }

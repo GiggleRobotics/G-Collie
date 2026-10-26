@@ -8,7 +8,8 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class DiagnosticsPage extends StatefulWidget {
   final CollieApi api;
-  const DiagnosticsPage({super.key, required this.api});
+  final bool embedded;
+  const DiagnosticsPage({super.key, required this.api, this.embedded = false});
   @override
   State<DiagnosticsPage> createState() => _DiagnosticsPageState();
 }
@@ -66,7 +67,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: SectionAppBar(title: const Text('故障诊断')),
+    appBar: widget.embedded ? null : SectionAppBar(title: const Text('故障诊断')),
     body: ListView(
       padding: const EdgeInsets.all(22),
       children: [

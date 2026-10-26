@@ -51,3 +51,13 @@ test('selected card is forwarded and an uncertain attempt cannot switch cards',a
  await assert.rejects(service.reset({...body,creditId:'card-two'}),/timeout/);
  assert.equal(calls.length,2);assert.equal(calls[0].creditId,'card-two');assert.deepEqual(calls[0],calls[1]);
 });
+
+test('concurrent force refreshes merge and repeated clicks respect minimum interval',async()=>{
+ let calls=0;
+ const service=new UsageService('/tmp',async()=>{calls++;return{accountKey:'a'}},async()=>({}));
+ (service as any).localRead=async()=>({});
+ await Promise.all(Array.from({length:20},()=>service.readAccount(true)));
+ assert.equal(calls,1);
+ await service.readAccount(true);assert.equal(calls,1);
+ service.invalidateAccount();await service.readAccount(true);assert.equal(calls,2);
+});

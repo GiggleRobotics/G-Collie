@@ -1,4 +1,4 @@
-import {Schedules,scheduleLimits} from './schedules.js';
+import {Schedules} from './schedules.js';
 import {prepareAgentMedia} from './claude-media.js';
 import {FolderProjects,prepareFolderThread} from './projects.js';
 import {ClaudeBridge} from './claude.js';
@@ -43,7 +43,15 @@ const claude=new ClaudeBridge(dir,broadcast);
 const hermes=new HermesBridge(dir,broadcast);
 const hermesMisses=new Map<string,number>();
 const folderProjects=new FolderProjects(dir);
-const desktopCreator=new DesktopCreator(dir,async(cwd,b)=>{const threadId=await prepareFolderThread(dir,await folderProjects.folder(cwd));await folderProjects.assign(threadId,cwd);await desktopCreator.firstMessage(threadId,b.prompt);return{threadId}});const shares=new ShareStore(dir);
+const desktopCreator=new DesktopCreator(dir,undefined,async b=>{
+ const cwd=b.cwd?await folderProjects.folder(b.cwd):'';
+ const threadId=await prepareFolderThread(dir,cwd,b.title||'新会话');
+ if(cwd)await folderProjects.assign(threadId,cwd);
+ await desktopCreator.load(threadId);
+ let lastError:unknown;const deadline=Date.now()+8000;for(let attempt=0;attempt<20;attempt++){try{await desktop.follow(threadId);lastError=undefined;break}catch(e){lastError=e;if(Date.now()>=deadline||!/no-client-found|未收到桌面快照/.test(String(e)))throw e;await new Promise(r=>setTimeout(r,250))}}if(lastError)throw lastError;
+ const sent=await desktop.action(threadId,{action:'send',text:b.prompt,requestId:b.requestId,mediaPrepared:true,attachments:[]});
+ return{threadId,turnId:sent.turnId};
+});const shares=new ShareStore(dir);
 const desktop=new DesktopBridge(dir,broadcast);const notifications=new Notifications(dir,id=>auth.list().some(d=>d.id===id));
 const codex=new CodexBridge(dir);codex.on('change',broadcast);
 notifications.restore(async(id:string)=>{const d=await detailLocal(id);if(d.archived)return{desktopLive:false};if(id.startsWith('hermes:'))return hermes.view(d.nativeId);await desktop.follow(d.nativeId);return desktop.view(d.nativeId)});
@@ -76,7 +84,7 @@ app.post('/api/devices/pair',ownerOnly,async(req,res)=>{try{const invite=auth.ch
 app.post('/api/devices/:id/revoke',ownerOnly,(req,res)=>{try{auth.revoke(String(req.params.id));notifications.unsubscribe(String(req.params.id));broadcast();res.json({ok:true})}catch(e){res.status(409).json({error:(e as Error).message})}});
 app.post('/api/auth/logout',(req,res)=>{if(res.locals.device){notifications.unsubscribe(res.locals.device.id);auth.logout(res.locals.device.id);}res.clearCookie('gcollie_device',{path:'/'});res.json({ok:true})});
 app.post('/api/adapters/codex/control',ownerOnly,async(req,res)=>{try{if(typeof req.body.enabled!=='boolean')throw Error('无效设置');if(process.env.ORBIT_DESKTOP_CONTROL!==undefined)throw Error('当前由 ORBIT_DESKTOP_CONTROL 环境设置控制，请先修改服务配置');if(req.body.enabled&&!(await desktopCreator.status()).available)throw Error('桌面接口尚未连接，无法启用控制');const p=join(dir,'settings.json');await writeFile(p+'.tmp',JSON.stringify({codexControl:req.body.enabled}),{mode:0o600});await rename(p+'.tmp',p);res.json({enabled:await desktopControlEnabled()})}catch(e){res.status(409).json({error:(e as Error).message})}});
-app.get('/api/diagnostics/system',ownerOnly,async(_req,res)=>{res.json({version:'0.3.4',node:process.versions.node,platform:process.platform,host,uptimeSeconds:Math.round(process.uptime()),codex:{...await desktopCreator.status(),controlEnabled:await desktopControlEnabled()},hermes:{discovery:'本机唯一后端',experimental:true},authentication:'per-device',notificationScope:'最近关注的 30 个会话，服务重启后恢复，断线期间不推断任务完成'})});
+app.get('/api/diagnostics/system',ownerOnly,async(_req,res)=>{res.json({version:'0.3.5',node:process.versions.node,platform:process.platform,host,uptimeSeconds:Math.round(process.uptime()),codex:{...await desktopCreator.status(),controlEnabled:await desktopControlEnabled()},hermes:{discovery:'本机唯一后端',experimental:true},authentication:'per-device',notificationScope:'最近关注的 30 个会话，服务重启后恢复，断线期间不推断任务完成'})});
 app.get('/api/folders',async(req,res)=>{try{if(res.locals.role==='view')throw Error('只读设备不能浏览电脑目录');res.json(await folderProjects.browse(typeof req.query.path==='string'?req.query.path:undefined))}catch(e){res.status(403).json({error:(e as Error).message})}});
 app.post('/api/folders',async(req,res)=>{try{res.json(await folderProjects.createFolder(req.body.parent,req.body.name))}catch(e){res.status(409).json({error:(e as Error).message})}});
 app.post('/api/projects',async(req,res)=>{try{res.json(await folderProjects.add(req.body.path,req.body.name));broadcast()}catch(e){res.status(409).json({error:(e as Error).message})}});
@@ -88,7 +96,7 @@ app.get('/api/push/key',(_req,res)=>res.json({publicKey:notifications.publicKey(
 app.post('/api/push/subscribe',(req,res)=>{try{if(!res.locals.device)throw Error('请先登记本设备');notifications.subscribe(res.locals.device.id,req.body.subscription);res.json({ok:true})}catch(e){res.status(400).json({error:(e as Error).message})}});
 app.post('/api/push/unsubscribe',(_req,res)=>{if(res.locals.device)notifications.unsubscribe(res.locals.device.id);res.json({ok:true})});
 app.post('/api/push/test',async(_req,res)=>{const sent=res.locals.device?await notifications.test(res.locals.device.id):false;res.json({sent})});
-app.get('/healthz',(_req,res)=>res.json({ok:true,version:'0.3.4'}));
+app.get('/healthz',(_req,res)=>res.json({ok:true,version:'0.3.5'}));
 const draftsPath=join(dir,'created-sessions.json');let created:Record<string,any>={};try{created=JSON.parse(await readFile(draftsPath,'utf8'))}catch{}
 const sessionCreation=new SessionCreation(dir);
 app.post('/api/sessions',async(req,res)=>{try{
@@ -146,25 +154,25 @@ app.get('/api/events',(req,res)=>{res.setHeader('Content-Type','text/event-strea
 let mutation=Promise.resolve();
 app.post('/api/tasks/:id/actions',(req,res)=>{mutation=mutation.then(async()=>{try{const {requestId,action,text,approvalId}=req.body;if(typeof requestId!=='string'||requestId.length>100)throw Error('缺少操作编号');const key=`${req.params.id}:${requestId}`;if(seen.has(key)){res.json({ok:true,duplicate:true});return}const task=tasks.find(t=>t.id===req.params.id);if(!task){res.status(404).json({error:'任务不存在'});return}applyAction(task,action,text,approvalId);await persist();seen.set(key,Date.now());if(seen.size>5000)seen.delete(seen.keys().next().value!);broadcast();res.json({ok:true})}catch(e){res.status(409).json({error:(e as Error).message})}})});
 app.post('/api/demo/reset',(_req,res)=>{mutation=mutation.then(async()=>{tasks=seeds();await persist();broadcast();res.json({ok:true})})});
-const usage=new UsageService(dir,()=>codex.usageLimits().catch(async()=>{try{return await codex.usageLimits()}catch(e){console.warn('Codex 账号额度读取失败：',(e as Error).message);return {...await desktopCreator.usageLimits(),resetUnavailableReason:'账号标识暂时不可读，请刷新后重试'}}}),()=>codex.accountUsage());
+const usage=new UsageService(dir,()=>codex.usageLimits().catch(async e=>{console.warn('Codex 账号额度读取失败：',(e as Error).message);if(/401|429|token_revoked|invalidated oauth/i.test(String(e)))throw e;return {...await desktopCreator.usageLimits(),resetUnavailableReason:'账号标识暂时不可读，请刷新后重试'}}),()=>codex.accountUsage());
 const resets=new ResetService(()=>codex.usageLimits(),p=>codex.consumeReset(p),()=>usage.invalidateAccount(),join(dir,'reset-attempt-cards.json'));
 const schedules=new Schedules(join(dir,'schedules.json'),async task=>{
  if(!auth.list().some(d=>d.id===task.device))throw Error('来源设备已解除配对或授权过期');
- const account=await scheduleLimits(()=>codex.usageLimits(),()=>desktopCreator.usageLimits());if(exhaustedCodexWindows({limits:normalizeScheduleLimits(account)}).length)throw Error('Codex 额度不足');
+ const {codexAccount:account}=await usage.readAccount();if(account.limitsError)throw Error('Codex 额度暂时不可读，请检查账号连接');if(exhaustedCodexWindows(account).length)throw Error('Codex 额度不足');
  const requestId='schedule-'+task.id+'-'+task.lastRun;
  if(task.session==='new'){await desktopCreator.create({agent:'Codex',title:sessionTitle(task.text),prompt:task.text,cwd:'',requestId});invalidateLocal();broadcast();return}
  const id=task.session.slice(6);const detail=await detailLocal(task.session);if(detail.archived)throw Error('会话已归档');
  if(!await desktopControlEnabled())throw Error('桌面控制不可用');await desktop.follow(id);const state=desktop.view(id);if(!['idle','completed','interrupted'].includes(state.status))throw Error('会话忙碌或状态未确认，本次未发送');
  await desktop.action(id,{action:'send',text:task.text,requestId});broadcast();
 });
-function normalizeScheduleLimits(raw:any){return (raw.rateLimitsByLimitId?Object.values(raw.rateLimitsByLimitId):[raw.rateLimits]).filter(Boolean).map((b:any)=>({id:b.limitId,windows:[b.primary,b.secondary].filter(Boolean).map((w:any)=>({windowMinutes:w.windowDurationMins,usedPercent:w.usedPercent}))}))}
+
 setInterval(()=>void schedules.tick().catch(e=>console.error('定时消息状态保存失败',e.message)),10000).unref();
 app.get('/api/schedules',(_req,res)=>res.json({tasks:schedules.list(attachmentDevice(res))}));
 app.post('/api/schedules',(req,res)=>{try{res.json(schedules.upsert(attachmentDevice(res),req.body))}catch(e){res.status(400).json({error:(e as Error).message})}});
 app.post('/api/schedules/:id',(req,res)=>{try{res.json(schedules.upsert(attachmentDevice(res),req.body,req.params.id))}catch(e){res.status(400).json({error:(e as Error).message})}});
 app.delete('/api/schedules/:id',(req,res)=>{try{schedules.remove(attachmentDevice(res),req.params.id);res.json({ok:true})}catch(e){res.status(400).json({error:(e as Error).message})}});
 app.post('/api/schedules/:id/cancel',(req,res)=>{try{schedules.remove(attachmentDevice(res),req.params.id);res.json({ok:true})}catch(e){res.status(400).json({error:(e as Error).message})}});
-app.get('/api/diagnostics',async(_req,res)=>{const checks:any[]=[{name:'电脑服务',status:'正常',detail:'健康请求已到达来源电脑服务'}];try{const r=await codex.usageLimits();checks.push({name:'Codex 连接',status:'正常',detail:r.accountKey?'账号连接正常':'额度可读，账号标识未提供'})}catch(e){const authFailure=/401|token_revoked|invalidated oauth/i.test(String(e));checks.push({name:'Codex 连接',status:'异常',detail:authFailure?'Codex 额度凭据已失效，请在电脑更新登录状态；这不代表手机与电脑断连':'Codex 额度查询失败；电脑服务已响应，请单独检查助手状态'})}try{await listLocal();checks.push({name:'会话索引',status:'正常',detail:'可读取本地会话索引'})}catch{checks.push({name:'会话索引',status:'异常',detail:'会话索引读取失败，请检查电脑服务日志'})}res.json({time:new Date().toISOString(),checks,recent:diagnosticEvents.slice(-30)})});
+app.get('/api/diagnostics',async(_req,res)=>{const checks:any[]=[{name:'电脑服务',status:'正常',detail:'健康请求已到达来源电脑服务'}];try{const {codexAccount:r}=await usage.readAccount();if(r.limitsError)throw Error(r.resetUnavailableReason);checks.push({name:'Codex 连接',status:'正常',detail:r.accountKey?'账号连接正常':'额度可读，账号标识未提供'})}catch(e){const authFailure=/401|token_revoked|invalidated oauth/i.test(String(e));checks.push({name:'Codex 连接',status:'异常',detail:authFailure?'Codex 额度凭据已失效，请在电脑更新登录状态；这不代表手机与电脑断连':'Codex 额度查询失败；电脑服务已响应，请单独检查助手状态'})}try{await listLocal();checks.push({name:'会话索引',status:'正常',detail:'可读取本地会话索引'})}catch{checks.push({name:'会话索引',status:'异常',detail:'会话索引读取失败，请检查电脑服务日志'})}res.json({time:new Date().toISOString(),checks,recent:diagnosticEvents.slice(-30)})});
 app.post('/api/usage/codex/reset',async(req,res)=>{try{res.json(await resets.reset(req.body))}catch(e){res.status(409).json({error:(e as Error).message})}});
 app.get('/api/usage/limits',async(req,res)=>{res.set('Cache-Control','no-store');try{res.json(await usage.readAccount(req.query.refresh==='1'))}catch{res.status(503).json({error:'账号额度暂时不可用'})}});
 app.get('/api/usage',async(req,res)=>{res.set('Cache-Control','no-store');try{res.json(await usage.read(req.query.refresh==='1'))}catch{res.status(503).json({error:'用量索引暂时不可用，请稍后刷新'})}});

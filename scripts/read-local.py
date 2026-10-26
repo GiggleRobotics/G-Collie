@@ -1,6 +1,6 @@
 """Read-only, allowlisted session projection. Never exports settings or credentials."""
 import json,sqlite3,pathlib,sys,datetime,re,os,hashlib,base64
-from message_display import display_text, hermes_message
+from message_display import display_text, hermes_message, codex_created_input
 from process_records import ProcessRecords
 HOME=pathlib.Path.home()
 def db(path):
@@ -106,6 +106,9 @@ else:
     try:d=json.loads(line)
     except:continue
     p=d.get('payload',{});kind=d.get('type');text='';role='';media=[]
+    created_input=codex_created_input(kind,p)
+    if created_input is not None:
+     events.append(dict(id=p.get('id') or str(index),role='user',text=created_input,media=[],time=ms(d.get('timestamp')),turnId=(p.get('internal_chat_message_metadata_passthrough') or {}).get('turn_id')));continue
     if process.feed(kind,p,ms(d.get('timestamp')),index):continue
     if kind=='response_item':
      t=p.get('type')
@@ -123,7 +126,7 @@ else:
     if kind=='event_msg' and p.get('type')=='token_count' and not modern_usage:
      u=(p.get('info') or {}).get('total_token_usage') or {};usage={'input':u.get('input_tokens'),'output':u.get('output_tokens'),'cached':u.get('cached_input_tokens'),'semantics':'includes-cache'}
     text=display_text(text,role,bool(media),photo_names(media,text))
-    if text or media:events.append(dict(id=str(index),role=role,text=text,media=media,phase=p.get('channel'),time=ms(d.get('timestamp'))))
+    if text or media:events.append(dict(id=p.get('id') or str(index),role=role,text=text,media=media,phase=p.get('channel'),turnId=(p.get('internal_chat_message_metadata_passthrough') or {}).get('turn_id'),time=ms(d.get('timestamp'))))
  elif agent=='hermes':
   with db(HOME/'.hermes/state.db') as c:
    row=c.execute('SELECT id,title,cwd,git_repo_root,git_branch,model,started_at,last_activity_at,archived,input_tokens,output_tokens,cache_read_tokens FROM sessions WHERE id=? AND hidden=0',(native,)).fetchone()
@@ -161,6 +164,13 @@ else:
       except OSError:pass
       return match[0]
      content=re.sub(r'(?m)^@image:([^\n]+)\n?\[screenshot\][ \t]*$',photo_ref,content)
+    if r['role']=='assistant' and isinstance(content,str):
+     def assistant_media(match):
+      value=match[1].strip().strip('\"')
+      if pathlib.Path(value).is_absolute() and pathlib.Path(value).suffix.lower() in {'.png','.jpg','.jpeg','.gif','.webp'}:
+       media.append(value);return ''
+      return match[0]
+     content=re.sub(r'(?m)^MEDIA:[ \t]*([^\r\n]+)$',assistant_media,content)
     text=clean(content) or ('工具 '+str(r['tool_name']) if r['tool_name'] else '')
     text=display_text(text,r['role'],bool(media),photo_names(media,text))
     if text.strip() or media:events.append(dict(id=str(r['id']),role=r['role'],text=text,media=media,phase='commentary' if r.get('tool_calls') else None,time=ms(r['timestamp'])))

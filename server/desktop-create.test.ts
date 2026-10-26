@@ -9,3 +9,13 @@ test('显式选择的新目录可创建原生目录会话，同一编号只发�
  await assert.rejects(c.create({...b,folderSelected:false,requestId:'not-selected'}),/未找到/);
  }finally{rmSync(root,{recursive:true,force:true})}
 });
+
+test('independent creation never invokes cross-task create tool and deduplicates result',async()=>{
+ const root=mkdtempSync(join(tmpdir(),'gcollie-independent-'));
+ try{let calls=0;const c:any=new DesktopCreator(root,undefined,async(b:any)=>{calls++;return{threadId:'direct',turnId:'turn-direct'}});
+ c.tool=async()=>{throw Error('cross-task tool must not run')};
+ const b={requestId:'independent-request',prompt:'first',cwd:''};
+ assert.deepEqual(await c.create(b),{id:'codex:direct',nativeId:'direct',turnId:'turn-direct'});
+ assert.deepEqual(await c.create(b),{id:'codex:direct',nativeId:'direct',turnId:'turn-direct'});assert.equal(calls,1);
+ }finally{rmSync(root,{recursive:true,force:true})}
+});

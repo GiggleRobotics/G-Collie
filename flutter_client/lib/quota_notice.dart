@@ -68,7 +68,7 @@ class _CodexQuotaNoticeState extends State<CodexQuotaNotice> {
   void didUpdateWidget(covariant CodexQuotaNotice old) {
     super.didUpdateWidget(old);
     if (old.error != widget.error || (!old.online && widget.online)) {
-      load(force: true);
+      load();
     }
   }
 
@@ -207,7 +207,7 @@ class _CodexQuotaNoticeState extends State<CodexQuotaNotice> {
                   api: widget.api,
                   readOnly: widget.readOnly || !widget.online,
                   onRefresh: () async {
-                    await load(force: true);
+                    await load();
                     await widget.onRefresh();
                   },
                 ),

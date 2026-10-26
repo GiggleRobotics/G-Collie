@@ -5,6 +5,12 @@ spec=importlib.util.spec_from_file_location('display',pathlib.Path(__file__).wit
 display=importlib.util.module_from_spec(spec);spec.loader.exec_module(display)
 
 class DisplayTests(unittest.TestCase):
+    def test_codex_creation_receipt_is_user_input_only_for_exact_envelope(self):
+        p = {'type':'function_call_output','name':'create_thread','output':'<codex_delegation>\n<source_thread_id>source</source_thread_id>\n<input>首条消息</input>\n</codex_delegation>'}
+        self.assertEqual(display.codex_created_input('response_item',p),'首条消息')
+        self.assertIsNone(display.codex_created_input('response_item',{**p,'name':'other'}))
+        self.assertIsNone(display.codex_created_input('response_item',{**p,'output':'ordinary tool result'}))
+
     def test_full_attachment_envelope(self):
         text="""# Files mentioned by the user:
 

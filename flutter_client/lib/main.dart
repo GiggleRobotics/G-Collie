@@ -1,4 +1,5 @@
 import 'profile.dart';
+import 'pending_messages.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/services.dart';
@@ -295,21 +296,9 @@ class _ConnectionState extends State<ConnectionPage> {
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
-              showDialog<void>(
-                context: context,
-                builder: (c) => AlertDialog(
-                  title: const Text('内置远程连接'),
-                  content: const SizedBox(width: 400, child: NetworkPane()),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(c),
-                      child: const Text('关闭'),
-                    ),
-                  ],
-                ),
-              );
+              collieSheet<void>(context, '内置远程连接', (_) => const NetworkPane());
             },
-            child: const Text('内置网络'),
+            child: const Text('内置远程连接'),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx),
@@ -560,11 +549,6 @@ class _ConnectionState extends State<ConnectionPage> {
                   onPressed: () => Navigator.pop(ctx, '__settings__'),
                   child: const Text('连接设置'),
                 ),
-              if (workspaceOpen)
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx, '__retry__'),
-                  child: const Text('重试连接当前电脑'),
-                ),
               OutlinedButton.icon(
                 onPressed: () => Navigator.pop(ctx, '__add__'),
                 icon: const Icon(Icons.add, size: 18),
@@ -589,10 +573,24 @@ class _ConnectionState extends State<ConnectionPage> {
       );
       return;
     }
-    if (selected == '__retry__') {
-      try {
-        if (api != null) await NativeBridge.connect(api!);
-      } catch (_) {}
+    if (selected == '__add__') {
+      final added = await collieSheet<String>(
+        context,
+        '添加电脑',
+        (_) => AddComputerPane(computers: computers),
+      );
+      if (!mounted) return;
+      if (added == null) {
+        await manageComputers();
+        return;
+      }
+      if (workspaceOpen) {
+        switchTarget = added;
+        Navigator.pop(context);
+      } else {
+        await storage.write(key: 'server', value: added);
+        await restore();
+      }
       return;
     }
     if (selected == address.text && workspaceOpen) return;
@@ -683,26 +681,15 @@ class _ConnectionState extends State<ConnectionPage> {
                   if (v == '切换电脑') {
                     manageComputers();
                   } else {
-                    showDialog<void>(
-                      context: context,
-                      builder: (ctx) => AlertDialog(
-                        title: const Text('内置远程连接'),
-                        content: const SizedBox(
-                          width: 400,
-                          child: NetworkPane(),
-                        ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(ctx),
-                            child: const Text('关闭'),
-                          ),
-                        ],
-                      ),
+                    collieSheet<void>(
+                      context,
+                      '内置远程连接',
+                      (_) => const NetworkPane(),
                     );
                   }
                 },
                 itemBuilder: (_) => [
-                  '内置网络',
+                  '内置远程连接',
                   '切换电脑',
                 ].map((v) => PopupMenuItem(value: v, child: Text(v))).toList(),
               ),
@@ -1100,7 +1087,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       Json d = await widget.api.call('/local/${Uri.encodeComponent(id)}');
       if (!mounted || token != generation) return;
       setState(() {
-        detail = d;
+        detail = pendingMessages.merge(d);
         connectionCheck++;
         online = true;
       });
@@ -1114,7 +1101,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         );
       }
       if (mounted && token == generation) {
-        setState(() => detail = d);
+        setState(() => detail = pendingMessages.merge(d));
         rememberDetail(d);
         if (!sameSession) bottom();
       }
@@ -1161,7 +1148,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
             if (detail?['pending']?['id'] != d['pending']?['id']) {
               answers.clear();
             }
-            detail = d;
+            detail = pendingMessages.merge(d);
             connectionCheck++;
             online = true;
             error = '';
@@ -1177,6 +1164,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     }
   }
 
+  final pendingMessages = PendingMessages();
   String? uncertainSendKey;
   String? uncertainSendId;
   Future<bool> control(String action, [Json extra = const {}]) async {
@@ -1189,23 +1177,45 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       return false;
     }
     final token = generation;
-    final fingerprint = jsonEncode({'session': d['id'], ...extra});
+    final fingerprint = action == 'send'
+        ? jsonEncode({'session': d['id'], ...extra})
+        : '';
     final operationId = action == 'send' && uncertainSendKey == fingerprint
         ? uncertainSendId!
         : requestId();
+    if (action == 'send') {
+      pendingMessages.add(
+        d['id'],
+        operationId,
+        '${extra['text'] ?? ''}',
+        d['events'] ?? [],
+        attachments: (extra['attachments'] as List? ?? []).isNotEmpty,
+      );
+    }
     setState(() {
       busy = true;
       error = '';
+      if (action == 'send') detail = pendingMessages.merge(d);
     });
+    if (action == 'send') bottom();
     try {
-      await widget.api.call(controlPath(d), {
+      final receipt = await widget.api.call(controlPath(d), {
         'action': action,
         'requestId': operationId,
         ...extra,
       });
+      if (action == 'send') {
+        pendingMessages.update(
+          d['id'],
+          operationId,
+          'sent',
+          turnId: receipt is Map ? receipt['turnId'] as String? : null,
+        );
+      }
       if (mounted && token == generation) {
         setState(() {
           if (action == 'send') {
+            detail = pendingMessages.merge(detail!);
             draft.clear();
             uncertainSendKey = null;
             uncertainSendId = null;
@@ -1220,7 +1230,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
             );
             if (mounted && token == generation) {
               setState(() {
-                detail = updated;
+                detail = pendingMessages.merge(updated);
                 error = '';
                 online = true;
                 connectionCheck++;
@@ -1247,6 +1257,14 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
             e.status == 0 ||
             e.status >= 500 ||
             RegExp('结果未知|结果可能未知|已提交|超时').hasMatch('$e');
+        if (action == 'send') {
+          pendingMessages.update(
+            d['id'],
+            operationId,
+            uncertain ? 'unknown' : 'failed',
+          );
+          setState(() => detail = pendingMessages.merge(detail!));
+        }
         if (action == 'send' && uncertain) {
           uncertainSendKey = fingerprint;
           uncertainSendId = operationId;
@@ -1288,10 +1306,20 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     }
     final text = draft.text;
     final token = generation;
+    final operationId = (d['id'] as String).substring(6);
+    pendingMessages.add(
+      d['id'],
+      operationId,
+      text,
+      [],
+      attachments: ids.isNotEmpty,
+    );
     setState(() {
       busy = true;
       error = '';
+      detail = pendingMessages.merge(d);
     });
+    bottom();
     try {
       final result = await widget.api.call('/sessions', {
         'agent': d['agent'],
@@ -1301,12 +1329,23 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         'attachments': ids,
         'requestId': (d['id'] as String).substring(6),
       });
+      pendingMessages.move(d['id'], result['id']);
+      pendingMessages.update(
+        result['id'],
+        operationId,
+        'sent',
+        turnId: result['turnId'] as String?,
+      );
       if (mounted && token == generation) {
         await open(result['id']);
         await load();
       }
       return true;
     } catch (e) {
+      pendingMessages.update(d['id'], operationId, 'unknown');
+      if (mounted && token == generation) {
+        setState(() => detail = pendingMessages.merge(detail!));
+      }
       // Keep the draft and its request id: an uncertain submission must not replay.
       if (mounted && token == generation) setState(() => error = '$e');
       return false;
@@ -1350,11 +1389,62 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              p['kind'] == 'approval' ? '需要你的审批' : '需要你的回答',
+              p['kind'] == 'approval'
+                  ? '需要你的批准'
+                  : p['kind'] == 'secret'
+                  ? '需要安全输入'
+                  : '需要你的回答',
               style: Theme.of(context).textTheme.titleMedium,
             ),
             if (params['command'] != null)
               SelectableText('${params['command']}'),
+            if (params['reason'] != null) Text('${params['reason']}'),
+            if (p['kind'] == 'secret') ...[
+              Text('${params['prompt'] ?? '请输入所需内容'}'),
+              TextField(
+                key: ValueKey('secret:${p['id']}'),
+                controller: answerControllers.putIfAbsent(
+                  'secret:${p['id']}',
+                  () => TextEditingController(),
+                ),
+                obscureText: true,
+                enableSuggestions: false,
+                autocorrect: false,
+                enabled: enabled,
+              ),
+              Wrap(
+                spacing: 12,
+                children: [
+                  FilledButton(
+                    onPressed: enabled
+                        ? () async {
+                            final controller =
+                                answerControllers['secret:${p['id']}']!;
+                            final value = controller.text;
+                            controller.clear();
+                            await control('answer', {
+                              'pendingId': p['id'],
+                              'value': value,
+                            });
+                          }
+                        : null,
+                    child: const Text('提交'),
+                  ),
+                  OutlinedButton(
+                    onPressed: enabled
+                        ? () async {
+                            answerControllers['secret:${p['id']}']?.clear();
+                            await control('answer', {
+                              'pendingId': p['id'],
+                              'value': '',
+                            });
+                          }
+                        : null,
+                    child: const Text('取消本次请求'),
+                  ),
+                ],
+              ),
+            ],
             if (p['kind'] == 'approval')
               Wrap(
                 spacing: 12,
@@ -1419,8 +1509,8 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
                 child: const Text('提交回答'),
               ),
             ],
-            if (!['approval', 'question'].contains(p['kind']))
-              const Text('此请求请在电脑端处理'),
+            if (!['approval', 'question', 'secret'].contains(p['kind']))
+              const Text('此请求类型尚未适配手机操作，可停止任务或在电脑查看具体要求。'),
           ],
         ),
       ),

@@ -27,11 +27,11 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('新建定时消息'));
+      await tester.tap(find.text('新建定时任务'));
       await tester.pumpAndSettle();
       expect(find.text('新建会话（默认）'), findsOneWidget);
       await tester.enterText(find.byType(TextField), '1');
-      await tester.tap(find.text('保存定时消息'));
+      await tester.tap(find.text('保存定时任务'));
       await tester.pumpAndSettle();
       expect(api.writes.single['session'], 'new');
       expect(api.writes.single['text'], '1');
