@@ -12,6 +12,22 @@ bool allowedAuthorizationUrl(String value) {
       uri.userInfo.isEmpty;
 }
 
+class AuthorizationCompletion {
+  bool pendingObserved = false;
+  int confirmed = 0;
+  bool observe(Map<String, dynamic> state) {
+    final running = state['state'] == 'Running';
+    final waiting = '${state['authURL'] ?? ''}'.isNotEmpty;
+    if (!running || waiting) {
+      pendingObserved = true;
+      confirmed = 0;
+      return false;
+    }
+    if (!pendingObserved) return false;
+    return ++confirmed >= 2;
+  }
+}
+
 class NetworkAuthorizationPage extends StatefulWidget {
   final Uri url;
   const NetworkAuthorizationPage({super.key, required this.url});
@@ -24,6 +40,7 @@ class _NetworkAuthorizationPageState extends State<NetworkAuthorizationPage> {
   late final WebViewController controller;
   Timer? timer;
   bool checking = false;
+  final completion = AuthorizationCompletion();
   int progress = 0;
   String error = '';
   @override
@@ -60,7 +77,7 @@ class _NetworkAuthorizationPageState extends State<NetworkAuthorizationPage> {
     checking = true;
     try {
       final state = await NativeBridge.network('Status');
-      if (state['state'] == 'Running' && mounted) Navigator.pop(context, true);
+      if (completion.observe(state) && mounted) Navigator.pop(context, true);
     } catch (_) {
     } finally {
       checking = false;

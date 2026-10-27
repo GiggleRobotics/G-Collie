@@ -1056,7 +1056,7 @@ class _CollieShellState extends State<CollieShell> {
             const SizedBox(height: 12),
             const Text('G-Collie', style: TextStyle(fontSize: 25)),
             const Text('工作在电脑，掌控在手边。'),
-            muted(ctx, '内测版 0.1.14 · By Giggle'),
+            muted(ctx, '内测版 0.1.15 · By Giggle'),
             const SizedBox(height: 20),
             const Text(
               'G-Collie 是连接手机与电脑的 AI 助手工作台，将 Codex、Hermes 和 Claude Code 汇集在一起，方便你在手机上查看会话、发送消息、跟进任务。',
@@ -3098,7 +3098,7 @@ class _NetworkPaneState extends State<NetworkPane> {
 
   Json? state;
   String error = '';
-  bool busy = false, loginRequested = false, authorizing = false;
+  bool busy = false, loginRequested = false;
   Timer? poller;
   @override
   void initState() {
@@ -3130,11 +3130,6 @@ class _NetworkPaneState extends State<NetworkPane> {
           MaterialPageRoute(builder: (_) => NetworkAuthorizationPage(url: url)),
         );
         if (authorized == true) NativeBridge.onNetworkReady?.call();
-        authorizing = false;
-      }
-      if (authorizing && s['state'] == 'Running') {
-        authorizing = false;
-        NativeBridge.onNetworkReady?.call();
       }
       if (mounted) {
         setState(() {
@@ -3180,7 +3175,6 @@ class _NetworkPaneState extends State<NetworkPane> {
         outlineAction('登录 / 授权入网', () async {
           try {
             loginRequested = true;
-            authorizing = true;
             await NativeBridge.network('Login');
             await refresh();
           } catch (e) {

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
@@ -62,6 +63,64 @@ void main() {
       ]) {
         expect(allowedAuthorizationUrl(u), isFalse);
       }
+    },
+  );
+  test(
+    'cancelling a stalled network test closes the pending transport',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final received = Completer<void>();
+      server.listen((request) {
+        if (!received.isCompleted) received.complete();
+      });
+      final api = CollieApi(Uri.parse('http://127.0.0.1:${server.port}'));
+      final test = ConnectionTest(api);
+      try {
+        final result = test.run((_) {});
+        final rejected = expectLater(result, throwsA(anything));
+        await received.future;
+        test.cancel();
+        await rejected;
+        expect(test.cancelled, isTrue);
+      } finally {
+        api.close();
+        await server.close(force: true);
+      }
+    },
+  );
+  test(
+    'authorization does not close on preexisting Running or while a login URL remains',
+    () {
+      final completion = AuthorizationCompletion();
+      expect(completion.observe({'state': 'Running'}), isFalse);
+      expect(completion.observe({'state': 'Running'}), isFalse);
+      expect(
+        completion.observe({
+          'state': 'Running',
+          'authURL': 'https://login.tailscale.com/a/test',
+        }),
+        isFalse,
+      );
+      expect(
+        completion.observe({
+          'state': 'Running',
+          'authURL': 'https://login.tailscale.com/a/test',
+        }),
+        isFalse,
+      );
+      expect(completion.observe({'state': 'Running'}), isFalse);
+      expect(completion.observe({'state': 'Running'}), isTrue);
+    },
+  );
+  test(
+    'authorization completion requires stable recovery after a pending state',
+    () {
+      final completion = AuthorizationCompletion();
+      expect(completion.observe({'state': 'NeedsLogin'}), isFalse);
+      expect(completion.observe({'state': 'Running'}), isFalse);
+      expect(completion.observe({'state': 'NeedsMachineAuth'}), isFalse);
+      expect(completion.observe({'state': 'Running'}), isFalse);
+      expect(completion.observe({'state': 'Running'}), isTrue);
     },
   );
 }
