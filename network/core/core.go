@@ -40,13 +40,14 @@ type Gateway struct {
 	RemoteOrigin string `json:"remoteOrigin"`
 }
 type Node struct {
-	ts       *tsnet.Server
-	mu       sync.Mutex
-	listener net.Listener
-	gateway  *http.Server
-	server   *http.Server
-	address  string
-	closed   bool
+	ts          *tsnet.Server
+	mu          sync.Mutex
+	listener    net.Listener
+	gateway     *http.Server
+	gatewayInfo Gateway
+	server      *http.Server
+	address     string
+	closed      bool
 }
 
 func New(dir, hostname string) (*Node, error) {
@@ -114,6 +115,7 @@ func (n *Node) Logout() error {
 	if n.gateway != nil {
 		n.gateway.Close()
 		n.gateway = nil
+		n.gatewayInfo = Gateway{}
 	}
 	if n.server != nil {
 		n.server.Close()
@@ -294,6 +296,27 @@ func (n *Node) Open(raw string) (Gateway, error) {
 	if e := probe(n.ts.HTTPClient(), target); e != nil {
 		return Gateway{}, e
 	}
+	return n.openGateway(target, n.ts.HTTPClient().Transport)
+}
+
+func (n *Node) openGateway(target *url.URL, transport http.RoundTripper) (Gateway, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.closed {
+		return Gateway{}, errors.New("网络模块已关闭")
+	}
+	suffix := target.RequestURI()
+	if suffix == "" {
+		suffix = "/"
+	}
+	if target.Fragment != "" {
+		suffix += "#" + target.EscapedFragment()
+	}
+	if n.gateway != nil && n.gatewayInfo.RemoteOrigin == Origin(target) {
+		info := n.gatewayInfo
+		info.URL += suffix
+		return info, nil
+	}
 	upstream := *target
 	upstream.Path = ""
 	upstream.RawQuery = ""
@@ -309,28 +332,16 @@ func (n *Node) Open(raw string) (Gateway, error) {
 		return Gateway{}, e
 	}
 	token := hex.EncodeToString(secret)
-	transport := n.ts.HTTPClient().Transport
 	gateway := &http.Server{Handler: GatewayHandler(&upstream, token, origin, transport), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
-	n.mu.Lock()
-	if n.closed {
-		n.mu.Unlock()
-		listener.Close()
-		return Gateway{}, errors.New("网络模块已关闭")
-	}
 	if n.gateway != nil {
 		n.gateway.Close()
 	}
 	n.gateway = gateway
-	n.mu.Unlock()
+	n.gatewayInfo = Gateway{URL: origin, Token: token, RemoteOrigin: Origin(target)}
 	go gateway.Serve(listener)
-	suffix := target.RequestURI()
-	if suffix == "" {
-		suffix = "/"
-	}
-	if target.Fragment != "" {
-		suffix += "#" + target.EscapedFragment()
-	}
-	return Gateway{URL: origin + suffix, Token: token, RemoteOrigin: Origin(target)}, nil
+	info := n.gatewayInfo
+	info.URL += suffix
+	return info, nil
 }
 func (n *Node) Serve(port int) error {
 	listener, e := n.ts.Listen("tcp", fmt.Sprintf(":%d", port))

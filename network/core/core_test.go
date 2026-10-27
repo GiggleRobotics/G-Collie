@@ -1,10 +1,12 @@
 package core
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -92,5 +94,94 @@ func TestServiceProbe(t *testing.T) {
 				t.Fatalf("probe: %v", err)
 			}
 		})
+	}
+}
+
+func TestSameTargetReconnectPreservesInFlightDownload(t *testing.T) {
+	release := make(chan struct{})
+	var once sync.Once
+	finish := func() { once.Do(func() { close(release) }) }
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "65536")
+		w.Write([]byte("x"))
+		w.(http.Flusher).Flush()
+		<-release
+		w.Write(make([]byte, 65535))
+	}))
+	defer upstream.Close()
+	defer finish()
+	target, _ := url.Parse(upstream.URL)
+	node := &Node{}
+	defer func() {
+		if node.gateway != nil {
+			node.gateway.Close()
+		}
+	}()
+	first, err := node.openGateway(target, http.DefaultTransport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, _ := http.NewRequest("GET", first.URL+"/download", nil)
+	request.AddCookie(&http.Cookie{Name: gateCookie, Value: first.Token})
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	second, err := node.openGateway(target, http.DefaultTransport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finish()
+	body, err := io.ReadAll(response.Body)
+	if err != nil || len(body) != 65536 {
+		t.Fatalf("same-target reconnect truncated active download: bytes=%d err=%v", len(body), err)
+	}
+	if first != second {
+		t.Fatal("same-target reconnect replaced gateway address or credential")
+	}
+}
+
+func TestConcurrentReconnectAndTargetSwitch(t *testing.T) {
+	node := &Node{}
+	defer func() {
+		if node.gateway != nil {
+			node.gateway.Close()
+		}
+	}()
+	target, _ := url.Parse("http://100.64.0.1:4310/")
+	first, err := node.openGateway(target, http.DefaultTransport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var group sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			next, err := node.openGateway(target, http.DefaultTransport)
+			if err != nil || next != first {
+				t.Errorf("reconnect changed gateway: %v", err)
+			}
+		}()
+	}
+	group.Wait()
+	other, _ := url.Parse("http://100.64.0.2:4310/")
+	next, err := node.openGateway(other, http.DefaultTransport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Token == first.Token || next.URL == first.URL {
+		t.Fatal("target switch reused old gateway")
+	}
+	req, _ := http.NewRequest("GET", next.URL, nil)
+	req.AddCookie(&http.Cookie{Name: gateCookie, Value: first.Token})
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("old credential accepted: %d", response.StatusCode)
 	}
 }

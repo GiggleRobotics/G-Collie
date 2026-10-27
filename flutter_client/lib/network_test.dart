@@ -3,13 +3,18 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'api.dart';
+import 'diagnostic_log.dart';
 
 class ConnectionTest {
   final CollieApi api;
   final HttpClient client = HttpClient()
     ..connectionTimeout = const Duration(seconds: 6);
   bool cancelled = false;
-  ConnectionTest(this.api);
+  final Uri endpoint;
+  final String cookie;
+  ConnectionTest(this.api)
+    : endpoint = api.endpoint,
+      cookie = api.requestCookie;
   void cancel() {
     cancelled = true;
     client.close(force: true);
@@ -17,31 +22,56 @@ class ConnectionTest {
 
   Future<List<int>> transfer(String path, {List<int>? body}) async {
     if (cancelled) throw ApiException('测试已取消');
-    final r = await client
-        .openUrl(
-          body == null ? 'GET' : 'POST',
-          api.endpoint.resolve('/api$path'),
-        )
-        .timeout(const Duration(seconds: 6));
-    if (api.requestCookie.isNotEmpty) {
-      r.headers.set(HttpHeaders.cookieHeader, api.requestCookie);
+    final correlation = requestId();
+    final elapsed = Stopwatch()..start();
+    int? status;
+    bool completed = false;
+    try {
+      final r = await client
+          .openUrl(body == null ? 'GET' : 'POST', endpoint.resolve('/api$path'))
+          .timeout(const Duration(seconds: 6));
+      if (cookie.isNotEmpty) {
+        r.headers.set(HttpHeaders.cookieHeader, cookie);
+      }
+      r.headers.set('x-gcollie-request-id', correlation);
+      if (body != null) {
+        r.headers.contentType = ContentType.binary;
+        r.contentLength = body.length;
+        r.add(body);
+      }
+      final response = await r.close().timeout(const Duration(seconds: 8));
+      status = response.statusCode;
+      final bytes = <int>[];
+      await for (final chunk in response.timeout(const Duration(seconds: 8))) {
+        bytes.addAll(chunk);
+        if (bytes.length > 1100000) throw ApiException('测试响应超过限制');
+      }
+      if (response.statusCode != 200) {
+        final d = jsonDecode(utf8.decode(bytes));
+        throw ApiException('${d['error'] ?? '连接测试失败'}', response.statusCode);
+      }
+      completed = true;
+      return bytes;
+    } finally {
+      unawaited(
+        DiagnosticLog.record(
+          api.base.host,
+          path,
+          cancelled
+              ? 'network-test-cancelled'
+              : status == 200
+              ? completed
+                    ? 'network-test-response'
+                    : 'network-test-body-interrupted'
+              : status == null
+              ? 'network-test-transport-error'
+              : 'network-test-http-error',
+          requestId: correlation,
+          durationMs: elapsed.elapsedMilliseconds,
+          status: status,
+        ).catchError((_) {}),
+      );
     }
-    if (body != null) {
-      r.headers.contentType = ContentType.binary;
-      r.contentLength = body.length;
-      r.add(body);
-    }
-    final response = await r.close().timeout(const Duration(seconds: 8));
-    final bytes = <int>[];
-    await for (final chunk in response.timeout(const Duration(seconds: 8))) {
-      bytes.addAll(chunk);
-      if (bytes.length > 1100000) throw ApiException('测试响应超过限制');
-    }
-    if (response.statusCode != 200) {
-      final d = jsonDecode(utf8.decode(bytes));
-      throw ApiException('${d['error'] ?? '连接测试失败'}', response.statusCode);
-    }
-    return bytes;
   }
 
   Future<Map<String, dynamic>> run(void Function(String) progress) async {

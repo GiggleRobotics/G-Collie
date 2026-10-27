@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'network_authorization.dart';
 import 'profile.dart';
 import 'network_test.dart';
@@ -1063,7 +1064,7 @@ class _CollieShellState extends State<CollieShell> {
             const SizedBox(height: 12),
             const Text('G-Collie', style: TextStyle(fontSize: 25)),
             const Text('工作在电脑，掌控在手边。'),
-            muted(ctx, '内测版 0.1.16 · By Giggle'),
+            muted(ctx, '内测版 0.1.17 · By Giggle'),
             const SizedBox(height: 20),
             const Text(
               'G-Collie 是连接手机与电脑的 AI 助手工作台，将 Codex、Hermes 和 Claude Code 汇集在一起，方便你在手机上查看会话、发送消息、跟进任务。',
@@ -3095,7 +3096,11 @@ class _NetworkPaneState extends State<NetworkPane> {
         setState(
           () => testStatus = current.cancelled
               ? '测试已取消或达到 20 秒上限'
-              : '$testStatus\n${e is TimeoutException ? '此阶段超时，请检查当前连接后重试' : '测试失败：$e'}',
+              : '$testStatus\n${e is TimeoutException
+                    ? '此阶段超时，请检查当前连接后重试'
+                    : e is IOException
+                    ? '连接在测试中中断，请等待连接恢复后重试'
+                    : '测试失败：$e'}',
         );
       }
     } finally {

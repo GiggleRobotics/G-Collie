@@ -8,6 +8,36 @@ import 'package:g_collie_flutter/network_authorization.dart';
 
 void main() {
   test(
+    'network test keeps its gateway and credential together during reconnect',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((r) async {
+        expect(
+          r.headers.value(HttpHeaders.cookieHeader),
+          'gcollie_gateway=first',
+        );
+        r.response.write('ok');
+        await r.response.close();
+      });
+      final api = CollieApi(Uri.parse('http://100.64.0.1:4310'));
+      api.endpoint = Uri.parse('http://127.0.0.1:${server.port}');
+      api.gatewayCookie = 'gcollie_gateway=first';
+      final test = ConnectionTest(api);
+      api.endpoint = Uri.parse('http://127.0.0.1:1');
+      api.gatewayCookie = 'gcollie_gateway=second';
+      try {
+        expect(
+          utf8.decode(await test.transfer('/diagnostics/network/sample/ping')),
+          'ok',
+        );
+      } finally {
+        test.cancel();
+        api.close();
+        await server.close(force: true);
+      }
+    },
+  );
+  test(
     'consecutive network tests use fresh IDs and server-advertised transfer sizes',
     () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
