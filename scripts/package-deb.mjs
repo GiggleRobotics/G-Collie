@@ -5,6 +5,12 @@ execFileSync('npm',['run','build'],{stdio:'inherit'});
 const bundled=await build({metafile:true,entryPoints:['server/index.ts'],bundle:true,platform:'node',format:'esm',target:'node22',outfile:join(app,'server.mjs'),external:['vite'],banner:{js:"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"}});
 for(const [src,dest]of [['dist','dist'],['scripts/read-local.py','scripts/read-local.py'],['scripts/message_display.py','scripts/message_display.py'],['scripts/process_records.py','scripts/process_records.py'],['scripts/read-usage.py','scripts/read-usage.py'],['scripts/installed-launcher.mjs','launcher.mjs']]){await mkdir(join(app,dest,'..'),{recursive:true});await cp(src,join(app,dest),{recursive:true});}
 await mkdir(join(app,'preview-assets'),{recursive:true});for(const name of ['pdf.mjs','pdf.worker.mjs'])await cp(join('node_modules/pdfjs-dist/legacy/build',name),join(app,'preview-assets',name));
+await cp('.tools/ffmpeg/ffmpeg',join(app,'ffmpeg'));await chmod(join(app,'ffmpeg'),0o755);
+await mkdir(join(stage,'usr/share/doc/g-collie/ffmpeg'),{recursive:true});
+await cp('/usr/share/common-licenses/GPL-3',join(stage,'usr/share/doc/g-collie/ffmpeg/COPYING'));
+await cp('.tools/ffmpeg/LICENSE',join(stage,'usr/share/doc/g-collie/ffmpeg/imageio-LICENSE'));
+await cp('.tools/ffmpeg/source.json',join(stage,'usr/share/doc/g-collie/ffmpeg/binary-source.json'));
+await writeFile(join(stage,'usr/share/doc/g-collie/ffmpeg/README'),'FFmpeg 7.0.2 static GPLv3 build. Upstream binary publisher and source archive index: https://johnvansickle.com/ffmpeg/ (release-source/). FFmpeg upstream source: https://ffmpeg.org/releases/ffmpeg-7.0.2.tar.xz . Build configuration: run bundled ffmpeg -version. Binary obtained through imageio-ffmpeg 0.6.0; provenance in binary-source.json. This executable is a separate program invoked by the service.\n');
 await mkdir(join(app,'runtime'),{recursive:true});await cp('.tools/node-v22.22.1-linux-x64/bin/node',join(app,'runtime/node'));await chmod(join(app,'runtime/node'),0o755);
 const files={
  'DEBIAN/control':`Package: g-collie\nVersion: ${version}\nSection: utils\nPriority: optional\nArchitecture: amd64\nMaintainer: Giggle\nDepends: libc6 (>= 2.28), libstdc++6, python3, systemd, xdg-utils\nDescription: Personal mobile console for local AI agents\n G-Collie desktop service and web interface. Developer beta.\n`,

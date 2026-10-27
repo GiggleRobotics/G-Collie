@@ -1,6 +1,6 @@
 """Read-only, allowlisted session projection. Never exports settings or credentials."""
 import json,sqlite3,pathlib,sys,datetime,re,os,hashlib,base64
-from message_display import display_text, hermes_message, codex_created_input
+from message_display import display_text, hermes_message, codex_created_input, codex_generated_image, group_generated_images
 from process_records import ProcessRecords
 HOME=pathlib.Path.home()
 def db(path):
@@ -101,6 +101,7 @@ else:
   if not row:raise ValueError('会话不存在')
   row=dict(row);result=summary('Codex',row);path=pathlib.Path(row['rollout_path']).resolve();allowed=[(HOME/'.codex/sessions').resolve(),(HOME/'.codex/archived_sessions').resolve()]
   if not any(path.is_relative_to(root) for root in allowed):raise ValueError('会话文件超出允许范围')
+  generated_seen=set()
   with path.open() as f:
    for index,line in enumerate(f):
     try:d=json.loads(line)
@@ -109,6 +110,12 @@ else:
     created_input=codex_created_input(kind,p)
     if created_input is not None:
      events.append(dict(id=p.get('id') or str(index),role='user',text=created_input,media=[],time=ms(d.get('timestamp')),turnId=(p.get('internal_chat_message_metadata_passthrough') or {}).get('turn_id')));continue
+    generated=codex_generated_image(kind,p,HOME,native)
+    if generated:
+     if generated not in generated_seen:
+      generated_seen.add(generated)
+      events.append(dict(id='generated:'+str((p.get('item') or {}).get('id',index)),role='assistant',text='',media=[generated],time=ms(d.get('timestamp')),turnId=p.get('turn_id')))
+     continue
     if process.feed(kind,p,ms(d.get('timestamp')),index):continue
     if kind=='response_item':
      t=p.get('type')
@@ -180,5 +187,6 @@ else:
     for call in calls if isinstance(calls,list) else []:
      f=call.get('function') or {};process.start(call.get('id') or call.get('call_id'),f.get('name','工具'),f.get('arguments',''),ms(r['timestamp']),str(r['id'])+':'+str(call.get('id')))
  else:raise ValueError('未知 Agent')
+ if agent=='codex':events=group_generated_images(events)
  result.update(events=events[-200:],usage=usage,historyLimit=200,latestProcessTurnId=process.turn)
 print(json.dumps(result,ensure_ascii=False))

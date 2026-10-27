@@ -267,3 +267,119 @@ class _SessionImageState extends State<SessionImage> {
     );
   }
 }
+
+class SessionGallery extends StatefulWidget {
+  final SessionResources resources;
+  final List<String> sources;
+  const SessionGallery({
+    super.key,
+    required this.resources,
+    required this.sources,
+  });
+  @override
+  State<SessionGallery> createState() => _SessionGalleryState();
+}
+
+class _SessionGalleryState extends State<SessionGallery> {
+  String? selected;
+  final thumbnails = <String, Future<Uint8List>>{};
+  @override
+  void didUpdateWidget(covariant SessionGallery oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.resources != widget.resources) thumbnails.clear();
+    thumbnails.removeWhere((key, value) => !widget.sources.contains(key));
+    if (!widget.sources.contains(selected)) selected = null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.sources.isEmpty) return const SizedBox.shrink();
+    final current = selected ?? widget.sources.first;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: AspectRatio(
+              aspectRatio: 1.5,
+              child: SessionImage(
+                key: ValueKey(current),
+                resources: widget.resources,
+                source: current,
+                alt: '查看选中图片',
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 52,
+            height: (widget.sources.length * 60 - 8).clamp(52, 280).toDouble(),
+            child: ListView.separated(
+              primary: false,
+              itemCount: widget.sources.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 8),
+              itemBuilder: (context, index) {
+                final ref = widget.sources[index];
+                return Semantics(
+                  label: '选择第 ${index + 1} 张图片',
+                  selected: current == ref,
+                  button: true,
+                  child: InkWell(
+                    onTap: () => setState(() => selected = ref),
+                    child: Container(
+                      height: 52,
+                      padding: const EdgeInsets.all(2),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: current == ref
+                              ? Theme.of(context).colorScheme.primary
+                              : Colors.grey.shade300,
+                          width: current == ref ? 2 : 1,
+                        ),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(5),
+                        child: FutureBuilder<Uint8List>(
+                          future: thumbnails.putIfAbsent(
+                            ref,
+                            () => widget.resources.image(ref),
+                          ),
+                          builder: (context, value) => value.hasData
+                              ? Image.memory(
+                                  value.data!,
+                                  fit: BoxFit.cover,
+                                  excludeFromSemantics: true,
+                                  errorBuilder: (_, _, _) => const Icon(
+                                    Icons.broken_image_outlined,
+                                    size: 18,
+                                  ),
+                                )
+                              : value.hasError
+                              ? const Icon(
+                                  Icons.broken_image_outlined,
+                                  size: 18,
+                                )
+                              : const Center(
+                                  child: SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 1.5,
+                                    ),
+                                  ),
+                                ),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

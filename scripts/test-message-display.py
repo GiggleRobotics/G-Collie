@@ -5,6 +5,29 @@ spec=importlib.util.spec_from_file_location('display',pathlib.Path(__file__).wit
 display=importlib.util.module_from_spec(spec);spec.loader.exec_module(display)
 
 class DisplayTests(unittest.TestCase):
+    def test_generated_gallery_groups_only_same_turn_and_preserves_final_text(self):
+        events=[{'id':'generated:a','role':'assistant','turnId':'a','media':['a.png']}, {'id':'comment','role':'assistant','turnId':'a','text':'生成中'}, {'id':'generated:b','role':'assistant','turnId':'a','media':['b.png']}, {'id':'final','role':'assistant','turnId':'a','text':'完成'}, {'id':'generated:c','role':'assistant','turnId':'b','media':['c.png']}]
+        result=display.group_generated_images(events)
+        final=next(e for e in result if e['id']=='final')
+        self.assertEqual(final['media'],['a.png','b.png'])
+        self.assertEqual(final['text'],'完成')
+        self.assertEqual(next(e for e in result if e['id']=='generated:c')['media'],['c.png'])
+        self.assertFalse(any(e['id'] in ['generated:a','generated:b'] for e in result))
+
+    def test_generated_images_are_thread_bound_native_extensions(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)/'.codex/generated_images/thread-a'
+            root.mkdir(parents=True)
+            path=root/'image.png'
+            event={'type':'item_completed','item':{'type':'Extension','kind':'image_gen.generation','status':'completed','savedPath':str(path)}}
+            self.assertEqual(display.codex_generated_image('event_msg',event,folder,'thread-a'),str(path))
+            self.assertIsNone(display.codex_generated_image('event_msg',event,folder,'thread-b'))
+            self.assertIsNone(display.codex_generated_image('response_item',event,folder,'thread-a'))
+            self.assertIsNone(display.codex_generated_image('event_msg',{**event,'item':{**event['item'],'status':'failed'}},folder,'thread-a'))
+            self.assertIsNone(display.codex_generated_image('event_msg',{**event,'item':{**event['item'],'savedPath':str(root/'../../credentials.png')}},folder,'thread-a'))
+
     def test_codex_creation_receipt_is_user_input_only_for_exact_envelope(self):
         p = {'type':'function_call_output','name':'create_thread','output':'<codex_delegation>\n<source_thread_id>source</source_thread_id>\n<input>首条消息</input>\n</codex_delegation>'}
         self.assertEqual(display.codex_created_input('response_item',p),'首条消息')

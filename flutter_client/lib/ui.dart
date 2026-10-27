@@ -288,12 +288,19 @@ class _CollieShellState extends State<CollieShell> {
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       if ('${e['text'] ?? ''}'.isNotEmpty) markdown('${e['text']}'),
-      for (final ref in e['media'] ?? [])
-        SessionImage(
-          key: ValueKey('${widget.detail?['id']}:$ref'),
+      if ((e['media'] as List? ?? []).length > 1)
+        SessionGallery(
+          key: ValueKey('${widget.detail?['id']}:${e['id']}:gallery'),
           resources: resources,
-          source: '$ref',
-        ),
+          sources: List<String>.from(e['media']),
+        )
+      else
+        for (final ref in e['media'] ?? [])
+          SessionImage(
+            key: ValueKey('${widget.detail?['id']}:$ref'),
+            resources: resources,
+            source: '$ref',
+          ),
     ],
   );
   final scaffold = GlobalKey<ScaffoldState>();
@@ -1056,7 +1063,7 @@ class _CollieShellState extends State<CollieShell> {
             const SizedBox(height: 12),
             const Text('G-Collie', style: TextStyle(fontSize: 25)),
             const Text('工作在电脑，掌控在手边。'),
-            muted(ctx, '内测版 0.1.15 · By Giggle'),
+            muted(ctx, '内测版 0.1.16 · By Giggle'),
             const SizedBox(height: 20),
             const Text(
               'G-Collie 是连接手机与电脑的 AI 助手工作台，将 Codex、Hermes 和 Claude Code 汇集在一起，方便你在手机上查看会话、发送消息、跟进任务。',

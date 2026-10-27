@@ -31,3 +31,15 @@ test('photos are native image input; video contributes timed frames and original
  assert.ok(view.events[0].media.every((m:string)=>m.startsWith('data:image/jpeg;base64,')));
  }finally{await rm(dir,{recursive:true,force:true})}
 });
+
+test('installed-directory image conversion does not depend on repository or system PATH',{skip:!existsSync(ffmpeg)},async()=>{
+ const {symlink,writeFile}=await import('node:fs/promises');const {ffmpeg:findFfmpeg}=await import('./claude-media.js');
+ const dir=await mkdtemp(join(tmpdir(),'gcollie-installed-media-')),previous=process.cwd(),savedPath=process.env.PATH;
+ try{
+  await symlink(ffmpeg,join(dir,'ffmpeg'));
+  const png=await readFile(resolve('public/brand/collie-mark-v2.png'));await mkdir(join(dir,'upload'));await writeFile(join(dir,'upload/photo.png'),png);
+  process.chdir(dir);process.env.PATH='';assert.equal(findFfmpeg(),join(dir,'ffmpeg'));
+  const input=await claudeMediaInput('截图',[{id:'image',device:'phone',session:'codex:test',name:'screen.png',path:join(dir,'upload/photo.png'),mime:'image/png',image:true,size:png.length,createdAt:Date.now()}]);
+  assert.equal(input.message.content.filter(p=>p.type==='image').length,1);
+ }finally{process.chdir(previous);process.env.PATH=savedPath;await rm(dir,{recursive:true,force:true})}
+});

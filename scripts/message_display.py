@@ -91,3 +91,35 @@ def codex_created_input(kind, payload):
         return None
     match = re.fullmatch(r'\s*<codex_delegation>\s*<source_thread_id>[^<]+</source_thread_id>\s*<input>(.*?)</input>\s*</codex_delegation>\s*', payload['output'], re.S)
     return match[1] if match else None
+
+
+def codex_generated_image(kind, payload, home, thread_id):
+    """Only completed native image generation records from this thread."""
+    from pathlib import Path
+    if kind != 'event_msg' or payload.get('type') != 'item_completed':
+        return None
+    item = payload.get('item') or {}
+    if item.get('type') != 'Extension' or item.get('kind') != 'image_gen.generation' or item.get('status') != 'completed':
+        return None
+    saved = item.get('savedPath')
+    if not isinstance(saved, str):
+        return None
+    root = (Path(home) / '.codex/generated_images' / thread_id).resolve()
+    path = Path(saved).resolve()
+    if not path.is_relative_to(root) or path.suffix.lower() not in {'.png', '.jpg', '.jpeg', '.webp'}:
+        return None
+    return str(path)
+
+
+def group_generated_images(events):
+    groups = {}
+    for event in events:
+        if str(event.get('id', '')).startswith('generated:') and event.get('turnId'):
+            groups.setdefault(event['turnId'], []).append(event)
+    removed = set()
+    for turn, images in groups.items():
+        candidates = [e for e in events if e.get('role') == 'assistant' and e.get('turnId') == turn and e not in images and e.get('text')]
+        target = candidates[-1] if candidates else images[0]
+        target['media'] = list(dict.fromkeys((target.get('media') or []) + [ref for image in images for ref in image.get('media', [])]))
+        removed.update(id(e) for e in images if e is not target)
+    return [e for e in events if id(e) not in removed]

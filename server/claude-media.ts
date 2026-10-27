@@ -5,7 +5,9 @@ import {readFile,mkdir,stat} from 'node:fs/promises';
 import {join,dirname} from 'node:path';
 import type {Attachment} from './attachments.js';
 const exec=promisify(execFile);
-const ffmpeg=()=>process.env.GCOLLIE_FFMPEG||(existsSync(join(process.cwd(),'.tools/ffmpeg/ffmpeg'))?join(process.cwd(),'.tools/ffmpeg/ffmpeg'):existsSync('/usr/lib/g-collie/ffmpeg')?'/usr/lib/g-collie/ffmpeg':'ffmpeg');
+export const ffmpeg=()=>process.env.GCOLLIE_FFMPEG||[join(process.cwd(),'ffmpeg'),join(process.cwd(),'.tools/ffmpeg/ffmpeg'),'/usr/lib/g-collie/ffmpeg'].find(existsSync)||'ffmpeg';
+async function convert(args:string[],timeout:number){try{return await exec(ffmpeg(),args,{timeout,maxBuffer:1024*1024})}catch(e:any){if(e.code==='ENOENT')throw Error('电脑服务缺少图片／视频处理组件，请更新或修复安装包后重试');throw e}}
+
 async function image(path:string){const data=await readFile(path);if(!data.length||data.length>5*1024*1024)throw Error('图片转换后仍超过 5 MB，请压缩后重试');return{type:'image',_path:path,source:{type:'base64',media_type:'image/jpeg',data:data.toString('base64')}}}
 export async function claudeMediaInput(text:string,files:Attachment[]=[]){
  if(typeof text!=='string'||text.length>4000||(!text.trim()&&!files.length))throw Error('请输入消息或添加附件');
@@ -14,7 +16,7 @@ export async function claudeMediaInput(text:string,files:Attachment[]=[]){
  for(const file of files){
   if(!file.image&&!file.video){content.push({type:'text',text:`用户主动附加的文件：${JSON.stringify({name:file.name,path:file.path})}`});continue}
   const cache=join(dirname(file.path),'media');await mkdir(cache,{recursive:true,mode:0o700});
-  const run=(args:string[])=>exec(ffmpeg(),['-hide_banner','-loglevel','error','-nostdin','-threads','1',...args],{timeout:Math.max(1,Math.min(10000,deadline-Date.now())),maxBuffer:1024*1024});
+  const run=(args:string[])=>convert(['-hide_banner','-loglevel','error','-nostdin','-threads','1',...args],Math.max(1,Math.min(10000,deadline-Date.now())));
   if(file.image){
    const output=join(cache,'image.jpg');if(!existsSync(output))await run(['-i',file.path,'-frames:v','1','-vf','scale=2048:2048:force_original_aspect_ratio=decrease','-q:v','3','-y',output]);
    content.push(await image(output));
