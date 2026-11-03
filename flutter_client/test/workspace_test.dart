@@ -77,7 +77,49 @@ class FakeApi extends CollieApi {
   }
 }
 
+class LongHistoryApi extends FakeApi {
+  @override
+  Future<dynamic> call(String path, [Json? body]) async {
+    final value = await super.call(path, body);
+    if (path == '/local/codex%3Aone') {
+      value['events'] = List.generate(
+        60,
+        (i) => {
+          'id': '$i',
+          'role': 'assistant',
+          'text': 'Message $i\nLong conversation history',
+        },
+      );
+    }
+    return value;
+  }
+}
+
 void main() {
+  testWidgets('jump to latest appears above history and returns to bottom', (
+    tester,
+  ) async {
+    final api = LongHistoryApi();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Workspace(api: api, role: 'control'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Example session'));
+    await tester.pumpAndSettle();
+    final list = find.byType(ListView).last;
+    await tester.drag(list, const Offset(0, 600));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('跳到最新消息'), findsOneWidget);
+    await tester.tap(find.byTooltip('跳到最新消息'));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('跳到最新消息'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    api.close();
+  });
+
   testWidgets(
     'running composer accepts text; empty draft stops, content sends',
     (tester) async {
@@ -239,14 +281,31 @@ void main() {
       expect(tester.takeException(), isNull);
       await tester.tap(find.byTooltip('添加附件'));
       await tester.pumpAndSettle();
-      for (final action in ['添加照片', '添加视频', '上传文件']) {
+      for (final action in ['添加照片', '添加视频', '手机文件', '引用电脑目录']) {
+        expect(
+          tester.widget<ListTile>(find.widgetWithText(ListTile, action)).onTap,
+          isNotNull,
+        );
+      }
+      expect(
+        find.text('添加网址'),
+        agent == 'Hermes' ? findsOneWidget : findsNothing,
+      );
+      if (agent == 'Hermes') {
+        await tester.tap(find.text('添加网址'));
+        await tester.pumpAndSettle();
+        await tester.enterText(
+          find.byType(TextField).last,
+          'https://example.com/help',
+        );
+        await tester.tap(find.text('插入草稿'));
+        await tester.pumpAndSettle();
         expect(
           tester
-              .widget<PopupMenuItem<String>>(
-                find.widgetWithText(PopupMenuItem<String>, action),
-              )
-              .enabled,
-          true,
+              .widget<TextField>(find.byType(TextField).last)
+              .controller!
+              .text,
+          contains('https://example.com/help'),
         );
       }
       await tester.pumpWidget(const SizedBox());

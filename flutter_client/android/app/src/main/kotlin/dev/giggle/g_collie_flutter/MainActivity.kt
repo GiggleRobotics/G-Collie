@@ -23,6 +23,26 @@ import dev.giggle.gcollie.TaskNotifications
 class MainActivity : FlutterActivity() {
     private val worker = Executors.newSingleThreadExecutor()
     private var networkStarted = false
+    private var noStateSince = 0L
+    private var lastNetworkRecovery = 0L
+    private fun networkStatus(): String {
+        var raw = NativeNetwork.status()
+        val state = JSONObject(raw).optString("state")
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (state == "NoState") {
+            if (noStateSince == 0L) noStateSince = now
+            if (now - noStateSince >= 20000L && (lastNetworkRecovery == 0L || now - lastNetworkRecovery >= 120000L)) {
+                lastNetworkRecovery = now
+                android.util.Log.w("GCollieNetwork", "Recovering uninitialized backend after 20 seconds")
+                NativeNetwork.stop()
+                networkStarted = false
+                startNetwork()
+                noStateSince = now
+                raw = NativeNetwork.status()
+            }
+        } else noStateSince = 0L
+        return raw
+    }
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onLinkPropertiesChanged(network: Network, link: LinkProperties) {
             if (networkStarted && !worker.isShutdown) worker.execute { try { startNetwork() } catch (_: Throwable) {} }
@@ -157,7 +177,7 @@ class MainActivity : FlutterActivity() {
                             "networkLogin" -> NativeNetwork.login()
                             "networkLogout" -> NativeNetwork.logout()
                             "networkOpen" -> NativeNetwork.open(call.argument<String>("remote") ?: "")
-                            else -> NativeNetwork.status()
+                            else -> networkStatus()
                         }
                         val value = checked(raw)
                         runOnUiThread { result.success(value) }

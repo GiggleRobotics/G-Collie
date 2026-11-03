@@ -88,11 +88,18 @@ Future<void> showPreviewComputers(
   isScrollControlled: true,
   useSafeArea: true,
   showDragHandle: true,
+  backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+  constraints: BoxConstraints(
+    maxHeight: MediaQuery.sizeOf(context).height * .82,
+  ),
+  shape: const RoundedRectangleBorder(
+    borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+  ),
   builder: (ctx) => AnimatedBuilder(
     animation: previewComputers,
     builder: (ctx, _) => SafeArea(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+        padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -112,6 +119,7 @@ Future<void> showPreviewComputers(
                 ),
               ],
             ),
+            const SizedBox(height: 16),
             const Text(
               '选择要查看的电脑，切换不会停止其他电脑上的任务。',
               style: TextStyle(fontSize: 12, height: 1.6, color: Colors.grey),

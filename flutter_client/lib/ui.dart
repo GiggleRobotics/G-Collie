@@ -1,3 +1,4 @@
+import 'session_video.dart';
 import 'dart:io';
 import 'network_authorization.dart';
 import 'profile.dart';
@@ -86,14 +87,16 @@ Widget muted(BuildContext c, String value, {double size = 12}) => Text(
   value,
   style: TextStyle(fontSize: size, color: mutedColor(c), height: 1.7),
 );
-Widget outlineAction(String text, VoidCallback? action) => OutlinedButton(
-  onPressed: action,
-  style: OutlinedButton.styleFrom(
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-    foregroundColor: ink,
-    side: const BorderSide(color: Color(0xffdddddd)),
+Widget outlineAction(String text, VoidCallback? action) => Padding(
+  padding: const EdgeInsets.symmetric(vertical: 4),
+  child: OutlinedButton(
+    onPressed: action,
+    style: OutlinedButton.styleFrom(
+      minimumSize: const Size(0, 44),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    ),
+    child: Text(text),
   ),
-  child: Text(text),
 );
 Future<T?> collieSheet<T>(
   BuildContext context,
@@ -109,22 +112,18 @@ Future<T?> collieSheet<T>(
     borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
   ),
   builder: (ctx) => Padding(
-    padding: EdgeInsets.fromLTRB(
-      24,
-      0,
-      24,
-      28 + MediaQuery.viewInsetsOf(ctx).bottom,
-    ),
+    padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
     child: ConstrainedBox(
       constraints: BoxConstraints(
         maxHeight: MediaQuery.sizeOf(ctx).height * .82,
       ),
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 16, 16),
+            child: Row(
               children: [
                 Expanded(
                   child: Text(
@@ -135,13 +134,25 @@ Future<T?> collieSheet<T>(
                     ),
                   ),
                 ),
-                iconAction('X', '关闭$title', () => Navigator.pop(ctx)),
+                IconButton(
+                  tooltip: '关闭$title',
+                  onPressed: () => Navigator.pop(ctx),
+                  icon: const Icon(Icons.close),
+                  constraints: const BoxConstraints(
+                    minWidth: 48,
+                    minHeight: 48,
+                  ),
+                ),
               ],
             ),
-            const SizedBox(height: 18),
-            content(ctx),
-          ],
-        ),
+          ),
+          Flexible(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
+              child: content(ctx),
+            ),
+          ),
+        ],
       ),
     ),
   ),
@@ -289,19 +300,32 @@ class _CollieShellState extends State<CollieShell> {
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       if ('${e['text'] ?? ''}'.isNotEmpty) markdown('${e['text']}'),
-      if ((e['media'] as List? ?? []).length > 1)
+      if ((e['media'] as List? ?? [])
+              .where((r) => !isSessionVideo('$r'))
+              .length >
+          1)
         SessionGallery(
           key: ValueKey('${widget.detail?['id']}:${e['id']}:gallery'),
           resources: resources,
-          sources: List<String>.from(e['media']),
+          sources: List<String>.from(
+            e['media'],
+          ).where((r) => !isSessionVideo(r)).toList(),
         )
       else
-        for (final ref in e['media'] ?? [])
+        for (final ref in (e['media'] ?? []).where(
+          (r) => !isSessionVideo('$r'),
+        ))
           SessionImage(
             key: ValueKey('${widget.detail?['id']}:$ref'),
             resources: resources,
             source: '$ref',
           ),
+      for (final ref in (e['media'] ?? []).where((r) => isSessionVideo('$r')))
+        SessionVideo(
+          key: ValueKey('media-video:$ref'),
+          resources: resources,
+          source: '$ref',
+        ),
     ],
   );
   final scaffold = GlobalKey<ScaffoldState>();
@@ -523,16 +547,6 @@ class _CollieShellState extends State<CollieShell> {
                       ),
                     ),
                   ),
-                  iconAction(
-                    'SquarePen',
-                    '新建会话',
-                    widget.role == 'view' || widget.busy
-                        ? null
-                        : () {
-                            Navigator.pop(context);
-                            create();
-                          },
-                  ),
                 ],
               ),
               const SizedBox(height: 14),
@@ -602,7 +616,7 @@ class _CollieShellState extends State<CollieShell> {
                     vertical: 4,
                   ),
                   decoration: BoxDecoration(
-                    color: const Color(0xffe7f0eb),
+                    color: panelColor(context),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Row(
@@ -699,8 +713,8 @@ class _CollieShellState extends State<CollieShell> {
                       Container(
                         width: 39,
                         height: 39,
-                        decoration: const BoxDecoration(
-                          color: Color(0xffe5eee8),
+                        decoration: BoxDecoration(
+                          color: panelColor(context),
                           shape: BoxShape.circle,
                         ),
                         child: workspaceAvatar(size: 35),
@@ -928,17 +942,37 @@ class _CollieShellState extends State<CollieShell> {
       (ctx) => Column(
         children: [
           for (final item in [
-            ['Monitor', '电脑与连接'],
             ['User', '工作台资料'],
+            ['Monitor', '电脑与连接'],
             ['Bell', '通知'],
             ['Palette', '外观'],
             ['Info', '关于 G-Collie'],
             ['LogOut', '解除当前电脑配对'],
           ])
-            navRow(item[0], item[1], () {
-              Navigator.pop(ctx);
-              settings(item[1]);
-            }),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 0,
+                    vertical: 4,
+                  ),
+                  leading: glyph(item[0], size: 20),
+                  title: Text(item[1], style: const TextStyle(fontSize: 14)),
+                  trailing: const Icon(Icons.chevron_right, size: 20),
+                  onTap: () async {
+                    await settings(item[1]);
+                    if (ctx.mounted) (ctx as Element).markNeedsBuild();
+                  },
+                ),
+                if (item[0] != 'LogOut')
+                  Divider(
+                    height: 1,
+                    thickness: .5,
+                    color: Theme.of(ctx).dividerColor.withValues(alpha: .2),
+                  ),
+              ],
+            ),
         ],
       ),
     );
@@ -1424,109 +1458,175 @@ class _CollieShellState extends State<CollieShell> {
         );
       });
 
-  Widget welcome() {
-    final landscape =
-        MediaQuery.orientationOf(context) == Orientation.landscape;
-    return RefreshIndicator(
-      onRefresh: widget.onRefresh,
-      child: ListView(
-        key: const PageStorageKey("home-content"),
-        padding: EdgeInsets.fromLTRB(22, landscape ? 4 : 16, 22, 25),
-        physics: const AlwaysScrollableScrollPhysics(),
-        children: [
-          Image.asset(
-            'assets/collie-companion-v2.png',
-            width: 205,
-            height: 140,
-            fit: BoxFit.contain,
-          ),
-          const SizedBox(height: 17),
-          const Text(
-            '今天想继续哪项工作？',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 23,
-              fontWeight: FontWeight.w500,
-              height: 1.5,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Center(child: muted(context, '工作在电脑，掌控在手边。', size: 13)),
-          const SizedBox(height: 26),
-          assistantCards(
-            context,
-            onSelect: (name) => create(name),
-            enabled: widget.role != 'view' && !widget.busy,
-          ),
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              Expanded(child: muted(context, '最近使用', size: 13)),
-              TextButton(
-                onPressed: () {
-                  setState(() {
-                    agent = 'all';
-                    project = '';
-                    query = '';
-                  });
-                  scaffold.currentState?.openDrawer();
-                },
-                child: const Text('查看全部会话'),
+  String? homeAgent;
+  Widget welcome() => LayoutBuilder(
+    builder: (context, constraints) {
+      final compact = constraints.maxHeight < 560;
+      final rows = widget.sessions
+          .where(
+            (s) =>
+                s['archived'] != true &&
+                (homeAgent == null || s['agent'] == homeAgent),
+          )
+          .toList();
+      int updated(dynamic s) => int.tryParse('${s['updatedAt']}') ?? 0;
+      rows.sort((a, b) => updated(b).compareTo(updated(a)));
+      final recent = rows.take(4).toList();
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(22, 8, 22, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (!compact) ...[
+              Image.asset(
+                'assets/collie-companion-v2.png',
+                height: (constraints.maxHeight * .16).clamp(70, 120).toDouble(),
+                fit: BoxFit.contain,
               ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          for (final s in widget.sessions.take(5))
-            InkWell(
-              onTap: () => open(s['id']),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  vertical: 15,
-                  horizontal: 2,
+              const SizedBox(height: 8),
+              const Text(
+                '今天想继续哪项工作？',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w500,
+                  height: 1.4,
                 ),
-                decoration: BoxDecoration(
-                  border: Border(
-                    bottom: BorderSide(
-                      color: Theme.of(
-                        context,
-                      ).dividerColor.withValues(alpha: .15),
-                    ),
+              ),
+              const SizedBox(height: 6),
+              Center(child: muted(context, '工作在电脑，掌控在手边。', size: 13)),
+              const SizedBox(height: 16),
+            ],
+            assistantCards(
+              context,
+              selected: homeAgent,
+              onSelect: (name) => setState(() => homeAgent = name),
+              enabled: !widget.busy,
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: muted(
+                    context,
+                    homeAgent == null ? '最近使用' : '$homeAgent · 最近会话',
+                    size: 13,
                   ),
                 ),
-                child: Row(
-                  children: [
-                    agentLogo(s['agent'], size: 24),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '${s['managed'] == true ? '[独立测试] ' : ''}${s['title']}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 13),
-                          ),
-                          const SizedBox(height: 6),
-                          muted(
-                            context,
-                            '${s['agent']} · ${s['project'] ?? '无项目'}',
-                            size: 11,
-                          ),
-                        ],
-                      ),
-                    ),
-                    glyph('ChevronRight', size: 17, color: mutedColor(context)),
-                  ],
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      agent = homeAgent ?? 'all';
+                      project = '';
+                      query = '';
+                    });
+                    scaffold.currentState?.openDrawer();
+                  },
+                  child: const Text('查看全部会话'),
                 ),
-              ),
+              ],
             ),
-        ],
-      ),
+            Expanded(
+              child: recent.isEmpty
+                  ? Center(
+                      child: muted(
+                        context,
+                        homeAgent == null ? '暂无会话，点击右上角新建' : '$homeAgent 暂无会话',
+                        size: 13,
+                      ),
+                    )
+                  : LayoutBuilder(
+                      builder: (context, area) {
+                        final height = math.min(64.0, area.maxHeight / 4);
+                        return Column(
+                          children: [
+                            for (final s in recent)
+                              SizedBox(
+                                key: ValueKey('home-recent:${s['id']}'),
+                                height: height,
+                                child: InkWell(
+                                  onTap: () => open(s['id']),
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      border: Border(
+                                        bottom: BorderSide(
+                                          color: Theme.of(
+                                            context,
+                                          ).dividerColor.withValues(alpha: .15),
+                                        ),
+                                      ),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 2,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        agentLogo(s['agent'], size: 24),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Column(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                '${s['managed'] == true ? '[独立测试] ' : ''}${s['title']}',
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                  fontSize: 13,
+                                                ),
+                                              ),
+                                              if (height >= 46) ...[
+                                                const SizedBox(height: 4),
+                                                muted(
+                                                  context,
+                                                  '${s['agent']} · ${s['project'] ?? '无项目'}',
+                                                  size: 11,
+                                                ),
+                                              ],
+                                            ],
+                                          ),
+                                        ),
+                                        glyph(
+                                          'ChevronRight',
+                                          size: 17,
+                                          color: mutedColor(context),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      );
+    },
+  );
+
+  Widget markdown(String text, {bool compact = false}) {
+    final videos = sessionVideoReferences(text);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        markdownText(text, compact: compact),
+        for (final ref in videos)
+          SessionVideo(
+            key: ValueKey('video:$ref'),
+            resources: resources,
+            source: ref,
+          ),
+      ],
     );
   }
 
-  Widget markdown(String text, {bool compact = false}) => MarkdownBody(
+  Widget markdownText(String text, {bool compact = false}) => MarkdownBody(
     data: text,
     selectable: true,
     styleSheet: MarkdownStyleSheet(
@@ -1548,12 +1648,14 @@ class _CollieShellState extends State<CollieShell> {
       ),
       codeblockPadding: const EdgeInsets.all(16),
     ),
-    imageBuilder: (uri, title, alt) => SessionImage(
-      key: ValueKey('${widget.detail?['id']}:$uri'),
-      resources: resources,
-      source: uri.toString(),
-      alt: alt,
-    ),
+    imageBuilder: (uri, title, alt) => isSessionVideo(uri.toString())
+        ? SessionVideo(resources: resources, source: uri.toString())
+        : SessionImage(
+            key: ValueKey('${widget.detail?['id']}:$uri'),
+            resources: resources,
+            source: uri.toString(),
+            alt: alt,
+          ),
     onTapLink: (label, href, _) {
       if (href == null) return;
       final uri = Uri.tryParse(href);
@@ -2104,6 +2206,109 @@ class _CollieShellState extends State<CollieShell> {
     );
   }
 
+  Future<void> attachmentMenu() async {
+    final kind = await collieSheet<String>(
+      context,
+      '添加',
+      (ctx) => Column(
+        children: [
+          for (final entry in [
+            ['image', '添加照片', Icons.image_outlined],
+            ['video', '添加视频', Icons.video_library_outlined],
+            ['file', '手机文件', Icons.attach_file],
+            ['folder', '引用电脑目录', Icons.folder_outlined],
+            if (widget.detail?['agent'] == 'Hermes') ...[
+              ['url', '添加网址', Icons.link],
+              ['snippet', '提示词片段', Icons.short_text],
+            ],
+          ])
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(entry[2] as IconData, size: 22),
+              title: Text(entry[1] as String),
+              onTap: () => Navigator.pop(ctx, entry[0] as String),
+            ),
+        ],
+      ),
+    );
+    if (kind == null || !mounted) return;
+    if (['image', 'video', 'file'].contains(kind)) {
+      await upload(kind);
+      return;
+    }
+    if (kind == 'folder') {
+      final folder = await Navigator.of(context).push<Json>(
+        MaterialPageRoute(
+          builder: (_) => ComputerFolders(api: widget.api, create: false),
+        ),
+      );
+      if (folder != null && mounted) appendContext('电脑目录：${folder['path']}');
+      return;
+    }
+    final field = TextEditingController();
+    final value = await collieSheet<String>(
+      context,
+      kind == 'url' ? '添加网址' : '提示词片段',
+      (ctx) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: field,
+            autofocus: true,
+            minLines: 1,
+            maxLines: kind == 'url' ? 1 : 6,
+            decoration: InputDecoration(
+              hintText: kind == 'url'
+                  ? 'https://example.com'
+                  : '输入常用提示词，插入后仍可编辑',
+            ),
+          ),
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, field.text.trim()),
+            child: const Text('插入草稿'),
+          ),
+        ],
+      ),
+    );
+    if (mounted && value != null && value.isNotEmpty) {
+      final uri = Uri.tryParse(value);
+      if (kind == 'url' &&
+          (uri == null ||
+              !['http', 'https'].contains(uri.scheme) ||
+              uri.host.isEmpty)) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('请输入完整 http 或 https 网址')));
+      } else {
+        appendContext(value);
+      }
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 350));
+    field.dispose();
+  }
+
+  void appendContext(String value) {
+    final text = widget.draft.text;
+    final selection = widget.draft.selection;
+    final start = selection.isValid ? selection.start : text.length;
+    final end = selection.isValid ? selection.end : text.length;
+    final insert = '${start > 0 ? '\n' : ''}$value';
+    final result = text.replaceRange(start, end, insert);
+    if (result.length > 4000) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('消息超过 4000 字，请精简后添加')));
+      return;
+    }
+    widget.draft.value = TextEditingValue(
+      text: result,
+      selection: TextSelection.collapsed(offset: start + insert.length),
+    );
+    widget.onDraft();
+    setState(() {});
+  }
+
   Widget composer() {
     final d = widget.detail;
     final quotaBlocked = this.quotaBlocked && d?['agent'] == 'Codex';
@@ -2116,7 +2321,7 @@ class _CollieShellState extends State<CollieShell> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            padding: const EdgeInsets.fromLTRB(14, 13, 14, 9),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
               color: panelColor(context),
               borderRadius: BorderRadius.circular(26),
@@ -2215,108 +2420,64 @@ class _CollieShellState extends State<CollieShell> {
                     uploadError,
                     style: const TextStyle(fontSize: 11, color: Colors.red),
                   ),
-                TextField(
-                  controller: widget.draft,
-                  enabled:
-                      widget.role != 'view' &&
-                      !widget.busy &&
-                      !widget.loading &&
-                      widget.detail != null,
-                  minLines: 1,
-                  maxLines: 6,
-                  maxLength: 4000,
-                  onChanged: (_) => widget.onDraft(),
-                  style: const TextStyle(fontSize: 14, height: 1.6),
-                  decoration: InputDecoration(
-                    hintText: quotaBlocked
-                        ? '额度恢复后可继续，草稿会保留'
-                        : !widget.online
-                        ? '离线草稿，连接后由你确认发送'
-                        : widget.loading
-                        ? '正在加载历史会话…'
-                        : d?['archived'] == true
-                        ? '会话已归档，暂时只读'
-                        : (widget.enabled && !quotaBlocked)
-                        ? '向 ${d?['agent']} 发送消息…'
-                        : d == null
-                        ? '选择会话查看进展'
-                        : '只读 · 暂不能发送消息',
-                    border: InputBorder.none,
-                    enabledBorder: InputBorder.none,
-                    focusedBorder: InputBorder.none,
-                    focusedErrorBorder: InputBorder.none,
-                    errorBorder: InputBorder.none,
-                    disabledBorder: InputBorder.none,
-                    filled: false,
-                    isDense: true,
-                    counterText: '',
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 4,
-                      vertical: 5,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
                 Row(
                   children: [
-                    PopupMenuButton<String>(
+                    IconButton(
                       tooltip: '添加附件',
-                      enabled:
-                          (widget.enabled && !quotaBlocked) &&
-                          !uploading &&
-                          widget.detail?['managed'] != true,
+                      onPressed:
+                          widget.enabled &&
+                              !quotaBlocked &&
+                              !uploading &&
+                              widget.detail?['managed'] != true
+                          ? attachmentMenu
+                          : null,
                       icon: glyph('Plus', size: 23),
-                      onSelected: upload,
-                      itemBuilder: (_) => [
-                        PopupMenuItem(
-                          value: 'image',
-                          child: Row(
-                            children: [
-                              glyph('Image', size: 19),
-                              const SizedBox(width: 12),
-                              const Text('添加照片'),
-                            ],
-                          ),
-                        ),
-                        PopupMenuItem(
-                          value: 'video',
-                          child: Row(
-                            children: [
-                              const Icon(
-                                Icons.video_library_outlined,
-                                size: 19,
-                              ),
-                              const SizedBox(width: 12),
-                              const Text('添加视频'),
-                            ],
-                          ),
-                        ),
-                        PopupMenuItem(
-                          value: 'file',
-                          child: Row(
-                            children: [
-                              glyph('Paperclip', size: 19),
-                              const SizedBox(width: 12),
-                              const Text('上传文件'),
-                            ],
-                          ),
-                        ),
-                      ],
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 4),
                     Expanded(
-                      child: muted(
-                        context,
-                        (widget.enabled && !quotaBlocked)
-                            ? (widget.running ? '桌面正在执行' : '发送到电脑上的同一会话')
-                            : quotaBlocked
-                            ? '等待额度恢复'
-                            : !widget.online
-                            ? '等待电脑连接'
-                            : '只读预览',
-                        size: 10,
+                      child: TextField(
+                        controller: widget.draft,
+                        enabled:
+                            widget.role != 'view' &&
+                            !widget.busy &&
+                            !widget.loading &&
+                            widget.detail != null,
+                        minLines: 1,
+                        maxLines: 1,
+                        maxLength: 4000,
+                        onChanged: (_) => widget.onDraft(),
+                        style: const TextStyle(fontSize: 14, height: 1.6),
+                        decoration: InputDecoration(
+                          hintText: quotaBlocked
+                              ? '额度恢复后可继续，草稿会保留'
+                              : !widget.online
+                              ? '离线草稿，连接后由你确认发送'
+                              : widget.loading
+                              ? '正在加载历史会话…'
+                              : d?['archived'] == true
+                              ? '会话已归档，暂时只读'
+                              : (widget.enabled && !quotaBlocked)
+                              ? '向 ${d?['agent']} 发送消息…'
+                              : d == null
+                              ? '选择会话查看进展'
+                              : '只读 · 暂不能发送消息',
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          focusedErrorBorder: InputBorder.none,
+                          errorBorder: InputBorder.none,
+                          disabledBorder: InputBorder.none,
+                          filled: false,
+                          isDense: true,
+                          counterText: '',
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 5,
+                          ),
+                        ),
                       ),
                     ),
+                    const SizedBox(width: 8),
                     IconButton(
                       tooltip: showStop ? '停止当前轮' : '发送',
                       onPressed:
@@ -2358,8 +2519,6 @@ class _CollieShellState extends State<CollieShell> {
               ],
             ),
           ),
-          const SizedBox(height: 8),
-          muted(context, 'G-Collie · 工作在电脑执行，手机查看真实记录。', size: 8),
         ],
       ),
     );
@@ -2603,7 +2762,47 @@ class _CollieShellState extends State<CollieShell> {
                     )
                   : d == null
                   ? welcome()
-                  : conversation(d),
+                  : Stack(
+                      children: [
+                        Positioned.fill(child: conversation(d)),
+                        Positioned(
+                          right: 16,
+                          bottom: 12,
+                          child: AnimatedBuilder(
+                            animation: widget.scroll,
+                            builder: (context, _) =>
+                                widget.scroll.hasClients &&
+                                    widget
+                                        .scroll
+                                        .position
+                                        .hasContentDimensions &&
+                                    widget.scroll.position.extentAfter > 160
+                                ? Material(
+                                    elevation: 2,
+                                    shape: const CircleBorder(),
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.surface,
+                                    child: IconButton(
+                                      tooltip: '跳到最新消息',
+                                      icon: const Icon(
+                                        Icons.arrow_downward,
+                                        size: 21,
+                                      ),
+                                      onPressed: () => widget.scroll.animateTo(
+                                        widget.scroll.position.maxScrollExtent,
+                                        duration: const Duration(
+                                          milliseconds: 250,
+                                        ),
+                                        curve: Curves.easeOut,
+                                      ),
+                                    ),
+                                  )
+                                : const SizedBox.shrink(),
+                          ),
+                        ),
+                      ],
+                    ),
             ),
             if (page == 'chat' && d?['agent'] == 'Codex')
               CodexQuotaNotice(
@@ -2767,14 +2966,31 @@ class UsagePage extends StatefulWidget {
   State<UsagePage> createState() => _UsagePageState();
 }
 
-class _UsagePageState extends State<UsagePage> {
+class _UsagePageState extends State<UsagePage> with WidgetsBindingObserver {
+  Timer? refreshTimer;
   Json? data;
   String agent = 'Codex', scope = 'account', tab = 'daily', error = '';
   bool busy = false;
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     load();
+    refreshTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (!busy) load();
+    });
+  }
+
+  @override
+  void dispose() {
+    refreshTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && !busy) load();
   }
 
   Future<void> load() async {
@@ -3394,7 +3610,9 @@ class _CollieCalendarState extends State<CollieCalendar> {
                             decoration: BoxDecoration(
                               color: n == null
                                   ? null
-                                  : const Color(0xff2f8761).withValues(
+                                  : Theme.of(
+                                      context,
+                                    ).colorScheme.onSurface.withValues(
                                       alpha: .08 + .55 * math.sqrt(n / max),
                                     ),
                               border: selected == date

@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'downloads.dart';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'session_web.dart';
 import 'api.dart';
 import 'preview.dart';
 import 'native.dart';
@@ -107,8 +107,11 @@ class SessionResources {
 
       final uri = Uri.tryParse(ref);
       if (uri != null && ['http', 'https'].contains(uri.scheme)) {
-        if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-          throw ApiException('无法打开浏览器');
+        if (!sessionWebUrl(uri)) throw ApiException('不支持此链接');
+        if (context.mounted) {
+          await Navigator.of(context).push(
+            MaterialPageRoute<void>(builder: (_) => SessionWebPage(url: uri)),
+          );
         }
         return;
       }

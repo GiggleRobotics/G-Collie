@@ -1,3 +1,4 @@
+import 'request_input.dart';
 import 'offline_assets.dart';
 import 'profile.dart';
 import 'diagnostic_sync.dart';
@@ -21,7 +22,7 @@ Future<void> main() async {
 const storage = FlutterSecureStorage(
   aOptions: AndroidOptions(encryptedSharedPreferences: true),
 );
-const green = Color(0xff216957);
+const green = Color(0xff333333);
 
 final appTheme = ValueNotifier<ThemeMode>(ThemeMode.system);
 final appLarge = ValueNotifier<bool>(false);
@@ -43,7 +44,68 @@ class CollieApp extends StatelessWidget {
             onPrimary: dark ? ink : Colors.white,
             secondary: dark ? Colors.white : ink,
             surfaceTint: Colors.transparent,
+            errorContainer: dark
+                ? const Color(0xff303030)
+                : const Color(0xfff4f4f4),
+            onErrorContainer: dark
+                ? const Color(0xffffb4ab)
+                : const Color(0xff93000a),
+            onSecondary: dark ? ink : Colors.white,
+            primaryContainer: dark
+                ? const Color(0xff363636)
+                : const Color(0xffeeeeee),
+            onPrimaryContainer: dark ? Colors.white : ink,
+            secondaryContainer: dark
+                ? const Color(0xff363636)
+                : const Color(0xffeeeeee),
+            onSecondaryContainer: dark ? Colors.white : ink,
+            tertiary: dark ? Colors.white : ink,
+            onTertiary: dark ? ink : Colors.white,
+            tertiaryContainer: dark
+                ? const Color(0xff363636)
+                : const Color(0xffeeeeee),
+            onTertiaryContainer: dark ? Colors.white : ink,
+            surfaceDim: dark
+                ? const Color(0xff171717)
+                : const Color(0xffdddddd),
+            surfaceBright: dark ? const Color(0xff383838) : Colors.white,
+            surfaceContainerLowest: dark
+                ? const Color(0xff171717)
+                : Colors.white,
+            surfaceContainerLow: dark
+                ? const Color(0xff242424)
+                : const Color(0xfff9f9f9),
+            surfaceContainer: dark
+                ? const Color(0xff292929)
+                : const Color(0xfff4f4f4),
+            surfaceContainerHigh: dark
+                ? const Color(0xff303030)
+                : const Color(0xffeeeeee),
+            surfaceContainerHighest: dark
+                ? const Color(0xff363636)
+                : const Color(0xffe7e7e7),
+            onSurface: dark ? const Color(0xffeeeeee) : ink,
+            onSurfaceVariant: dark
+                ? const Color(0xffaaaaaa)
+                : const Color(0xff666666),
+            outline: dark ? const Color(0xff888888) : const Color(0xff777777),
+            outlineVariant: dark
+                ? const Color(0xff454545)
+                : const Color(0xffdddddd),
           ),
+      popupMenuTheme: PopupMenuThemeData(
+        color: dark ? const Color(0xff292929) : Colors.white,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+      dropdownMenuTheme: DropdownMenuThemeData(
+        menuStyle: MenuStyle(
+          backgroundColor: WidgetStatePropertyAll(
+            dark ? const Color(0xff292929) : Colors.white,
+          ),
+          surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+        ),
+      ),
       bottomSheetTheme: BottomSheetThemeData(
         backgroundColor: dark ? const Color(0xff212121) : Colors.white,
         surfaceTintColor: Colors.transparent,
@@ -492,9 +554,16 @@ class _ConnectionState extends State<ConnectionPage> {
       showDragHandle: true,
       useSafeArea: true,
       isScrollControlled: true,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * .82,
+      ),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
       builder: (ctx) => SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 28),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -826,6 +895,7 @@ class Workspace extends StatefulWidget {
   final CollieApi api;
   final String role;
   final String? initialSession;
+  final Json? initialData;
   final String? computerName;
   final VoidCallback? onManageComputers;
   final VoidCallback? onPairingInvalid;
@@ -834,6 +904,7 @@ class Workspace extends StatefulWidget {
     required this.api,
     required this.role,
     this.initialSession,
+    this.initialData,
     this.computerName,
     this.onManageComputers,
     this.onPairingInvalid,
@@ -956,10 +1027,20 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     draft.addListener(draftChanged);
-    load();
-    restoreWorkspace().then((_) {
+    final seed = widget.initialData;
+    if (seed != null) {
+      sessions = seed['sessions'] ?? [];
+      projects = seed['projects'] ?? [];
+      detail = seed['detail'];
+      online = seed['online'] == true;
+    }
+    final initialLoad = load();
+    restoreWorkspace().then((_) async {
+      // Connection state must be established before opening the initial chat.
+      // Otherwise fast cache restoration can open an empty offline placeholder.
+      await initialLoad;
       if (!mounted) return;
-      if (widget.initialSession != null) open(widget.initialSession!);
+      if (widget.initialSession != null && seed == null) open(widget.initialSession!);
     });
     NativeBridge.invoke<bool>('notificationEnabled')
         .then((enabled) {
@@ -1081,6 +1162,8 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     }
   }
 
+  DateTime nextConnectionAttempt = DateTime.fromMillisecondsSinceEpoch(0);
+
   Future<void> loadCurrent() async {
     if (leaving) return;
     if (mounted) setState(() => refreshingConnection = true);
@@ -1145,6 +1228,9 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     } catch (e) {
       failure(e);
     } finally {
+      if (!online) {
+        nextConnectionAttempt = DateTime.now().add(const Duration(seconds: 10));
+      }
       if (mounted) setState(() => refreshingConnection = false);
     }
   }
@@ -1261,7 +1347,13 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     final token = generation;
     final current = detail;
     try {
-      if (!online || ++ticks % 8 == 0) await load();
+      if (!online) {
+        if (DateTime.now().isBefore(nextConnectionAttempt)) return;
+        await load();
+        if (!online) return;
+      } else if (++ticks % 8 == 0) {
+        await load();
+      }
       if (current != null && current['draft'] != true) {
         final d = await widget.api.call(
           '/local/${Uri.encodeComponent(current['id'])}',
@@ -1510,138 +1602,19 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   }
 
   Widget pendingPanel(Json p, bool enabled) {
-    final params = (p['params'] as Map?) ?? {};
-    return Card(
+    if (['secret', 'question', 'approval'].contains(p['kind'])) {
+      return RequestInputCard(
+        key: ValueKey('input-request:${p['id']}'),
+        request: p,
+        enabled: enabled,
+        onSubmit: (answer) =>
+            control('answer', {'pendingId': p['id'], ...answer}),
+      );
+    }
+    return const Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              p['kind'] == 'approval'
-                  ? '需要你的批准'
-                  : p['kind'] == 'secret'
-                  ? '需要安全输入'
-                  : '需要你的回答',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            if (params['command'] != null)
-              SelectableText('${params['command']}'),
-            if (params['reason'] != null) Text('${params['reason']}'),
-            if (p['kind'] == 'secret') ...[
-              Text('${params['prompt'] ?? '请输入所需内容'}'),
-              TextField(
-                key: ValueKey('secret:${p['id']}'),
-                controller: answerControllers.putIfAbsent(
-                  'secret:${p['id']}',
-                  () => TextEditingController(),
-                ),
-                obscureText: true,
-                enableSuggestions: false,
-                autocorrect: false,
-                enabled: enabled,
-              ),
-              Wrap(
-                spacing: 12,
-                children: [
-                  FilledButton(
-                    onPressed: enabled
-                        ? () async {
-                            final controller =
-                                answerControllers['secret:${p['id']}']!;
-                            final value = controller.text;
-                            controller.clear();
-                            await control('answer', {
-                              'pendingId': p['id'],
-                              'value': value,
-                            });
-                          }
-                        : null,
-                    child: const Text('提交'),
-                  ),
-                  OutlinedButton(
-                    onPressed: enabled
-                        ? () async {
-                            answerControllers['secret:${p['id']}']?.clear();
-                            await control('answer', {
-                              'pendingId': p['id'],
-                              'value': '',
-                            });
-                          }
-                        : null,
-                    child: const Text('取消本次请求'),
-                  ),
-                ],
-              ),
-            ],
-            if (p['kind'] == 'approval')
-              Wrap(
-                spacing: 12,
-                children: [
-                  for (final choice in ['accept', 'decline'])
-                    if (params['availableDecisions'] == null ||
-                        (params['availableDecisions'] as List).isEmpty ||
-                        (params['availableDecisions'] as List).contains(choice))
-                      OutlinedButton(
-                        onPressed: enabled
-                            ? () => control('answer', {
-                                'pendingId': p['id'],
-                                'decision': choice,
-                              })
-                            : null,
-                        child: Text(choice == 'accept' ? '批准一次' : '拒绝'),
-                      ),
-                ],
-              ),
-            if (p['kind'] == 'question') ...[
-              for (final q in params['questions'] ?? []) ...[
-                const SizedBox(height: 12),
-                Text('${q['question'] ?? q['header'] ?? ''}'),
-                if (q['options'] is List)
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      for (final o in q['options'])
-                        ActionChip(
-                          label: Text('${o['label']}'),
-                          onPressed: enabled
-                              ? () => setState(() {
-                                  answers['${q['id']}'] = '${o['label']}';
-                                  answerControllers['${p['id']}:${q['id']}']
-                                          ?.text =
-                                      '${o['label']}';
-                                })
-                              : null,
-                        ),
-                    ],
-                  ),
-                TextFormField(
-                  key: ValueKey('${p['id']}:${q['id']}'),
-                  controller: answerControllers.putIfAbsent(
-                    '${p['id']}:${q['id']}',
-                    () => TextEditingController(
-                      text: answers['${q['id']}'] ?? '',
-                    ),
-                  ),
-                  enabled: enabled,
-                  maxLength: 4000,
-                  onChanged: (v) => answers['${q['id']}'] = v,
-                ),
-              ],
-              FilledButton(
-                onPressed: enabled
-                    ? () => control('answer', {
-                        'pendingId': p['id'],
-                        'answers': Map<String, String>.from(answers),
-                      })
-                    : null,
-                child: const Text('提交回答'),
-              ),
-            ],
-            if (!['approval', 'question', 'secret'].contains(p['kind']))
-              const Text('此请求类型尚未适配手机操作，可停止任务或在电脑查看具体要求。'),
-          ],
-        ),
+        padding: EdgeInsets.all(16),
+        child: Text('此请求类型尚未适配手机操作，可在电脑查看具体要求。'),
       ),
     );
   }

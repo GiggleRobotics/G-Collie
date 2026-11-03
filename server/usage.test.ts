@@ -10,3 +10,14 @@ test('exhausted windows require actual Codex limits and preserve missing data',a
  assert.deepEqual(exhaustedCodexWindows({limits:[{id:'code-review',windows:[{windowMinutes:300,usedPercent:100}]}]}),[]);
  assert.deepEqual(exhaustedCodexWindows({limits:[{id:'codex',windows:[{windowMinutes:300,usedPercent:99},{windowMinutes:10080,usedPercent:100}]}]}),[{windowMinutes:10080,usedPercent:100}]);
 });
+
+test('account limits do not wait for unavailable token statistics and classify expired login',async()=>{
+ const {UsageService}=await import('./usage.js');
+ const dir=(await import('node:fs')).mkdtempSync('/tmp/gcollie-usage-isolation-');
+ const service=new UsageService(dir,async()=>({accountKey:'test',rateLimits:{primary:{usedPercent:100,windowDurationMins:300}}}),()=>new Promise(()=>{}));
+ const result=await Promise.race([service.readAccount(),new Promise<never>((_,reject)=>{const t=setTimeout(()=>reject(Error('limits blocked by token usage')),1000);t.unref()})]);
+ assert.equal(result.codexAccount.limits[0].windows[0].usedPercent,100);
+ assert.equal(result.codexAccount.usageLoading,true);
+ const failed=new UsageService(dir,async()=>{throw Error('401 token_revoked')},async()=>({}));
+ const snapshot=await failed.readAccount();assert.equal(snapshot.codexAccount.limitsErrorCode,'auth_expired');assert.deepEqual(snapshot.codexAccount.limits,[]);
+});

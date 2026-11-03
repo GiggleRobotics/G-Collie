@@ -3,6 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'api.dart';
 
+String resetCreditTime(num seconds) {
+  final d = DateTime.fromMillisecondsSinceEpoch(
+    seconds.toInt() * 1000,
+  ).toLocal();
+  return '${d.year}/${d.month}/${d.day} ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+}
+
 class ResetCredits extends StatefulWidget {
   final Json? account;
   final CollieApi api;
@@ -156,7 +163,7 @@ class _ResetCreditsState extends State<ResetCredits> {
                             style: const TextStyle(fontSize: 14),
                           ),
                           subtitle: Text(
-                            '${card['description'] ?? (card['resetType'] == 'codexRateLimits' ? '每周 + 5 小时' : '范围以上游信息为准')}\n${card['expiresAt'] is num ? '到期：${DateTime.fromMillisecondsSinceEpoch((card['expiresAt'] as num).toInt() * 1000).toLocal()}' : '未提供到期时间'}',
+                            '${card['description'] ?? (card['resetType'] == 'codexRateLimits' ? '每周 + 5 小时' : '范围以上游信息为准')}\n${card['expiresAt'] is num ? '到期：${resetCreditTime(card['expiresAt'] as num)}' : '未提供到期时间'}',
                             style: const TextStyle(fontSize: 12, height: 1.6),
                           ),
                         ),
@@ -171,7 +178,7 @@ class _ResetCreditsState extends State<ResetCredits> {
                       ),
                     const SizedBox(height: 16),
                     Text(
-                      '可用 ${account['resetCredits']?['availableCount'] ?? '未知'} 次 · 使用后会消耗一张卡，具体结果以 Codex 返回为准。',
+                      '可用 ${account['resetCredits']?['availableCount'] ?? '未知'} 次 → 使用后剩余 ${((account['resetCredits']?['availableCount'] as num? ?? 1) - 1).clamp(0, 999)} 次。具体结果以 Codex 返回为准。',
                       style: const TextStyle(fontSize: 12),
                     ),
                     const SizedBox(height: 20),
@@ -236,7 +243,9 @@ class _ResetCreditsState extends State<ResetCredits> {
   @override
   Widget build(BuildContext context) {
     final summary = widget.account?['resetCredits'];
-    final disabledReason = !restored
+    final disabledReason = widget.account?['limitsError'] != null
+        ? '请先刷新并确认账号额度'
+        : !restored
         ? '正在读取重置记录；若长时间未恢复，请重新进入此页面'
         : busy
         ? '正在处理重置，请稍候'
@@ -269,7 +278,7 @@ class _ResetCreditsState extends State<ResetCredits> {
           for (final card in summary?['credits'] ?? [])
             if (card['status'] == 'available')
               Text(
-                '${card['title'] ?? '额度重置卡'} · ${card['expiresAt'] == null ? '未提供到期时间' : '有效期至 ${DateTime.fromMillisecondsSinceEpoch((card['expiresAt'] as num).toInt() * 1000).toLocal()}'}',
+                '${card['title'] ?? '额度重置卡'} · ${card['expiresAt'] == null ? '未提供到期时间' : '有效期至 ${resetCreditTime(card['expiresAt'] as num)}'}',
               ),
         ],
         SizedBox(

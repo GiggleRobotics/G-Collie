@@ -49,7 +49,11 @@ bool isActive(Json d) =>
 // Preview-only in-memory transport. No HTTP client or real credentials.
 class CollieApi {
   Future<bool> reachable() async => !previewOffline;
-  Future<void> recordFailure(String path, String reason, [String? correlation]) async {}
+  Future<void> recordFailure(
+    String path,
+    String reason, [
+    String? correlation,
+  ]) async {}
 
   final Uri base;
   final String previewName, previewComputerId;
@@ -93,7 +97,81 @@ class CollieApi {
         previewComputerId == 'desktop' ? '整理项目开发流程' : '$previewName · 项目进展',
       );
     }
+    for(final agent in ['Codex','Hermes','Claude Code']) {
+      final prefix = agent == 'Claude Code' ? 'claude' : agent.toLowerCase();
+      for(var i=2;i<=5;i++) {
+        final id = '$prefix:demo-$i';
+        sessions[id]=detail(id,agent,'$agent · 第 $i 个最近会话')..['updatedAt']=1792719660000-i*60000;
+      }
+    }
+    configurePreviewScenario();
   }
+  void configurePreviewScenario() {
+    final page = Uri.base.queryParameters['page'];
+    final focus = Uri.base.queryParameters['detail'];
+    final demo = sessions['hermes:demo'];
+    if (demo == null) return;
+    if (page == 'video')
+      demo['events'] = [
+        {
+          'id': 'video-title',
+          'role': 'assistant',
+          'text': '示例视频：播放前显示真实首帧，点击原位播放，右上角可全屏。',
+        },
+        {
+          'id': 'video-demo',
+          'role': 'assistant',
+          'text': '[示例视频](/demo/preview.mp4)',
+        },
+      ];
+    if (['gallery', 'gallery-preview', 'single-image', 'media-failure', 'media-loading'].contains(focus)) {
+      demo['events'] = [
+        {'id':'media-note','role':'assistant','text':'图片演示：完整主图、侧边缩略图、点击在 App 内预览。'},
+        {'id':'images','role':'assistant','media': focus == 'single-image' ? ['/demo/image-1.jpg'] : ['/demo/image-1.jpg','/demo/image-2.jpg','/demo/image-3.jpg']},
+      ];
+    }
+    if (focus == 'long-history') {
+      demo['events'] = List.generate(35, (i) => {'id':'history-$i','role':i.isEven?'user':'assistant','text':'第 ${i+1} 条演示记录\n向上滑查看历史，右下角显示跳到最新消息箭头。'});
+    }
+    if (focus == 'tool-records') {
+      demo['events'] = [
+        for (final state in ['completed','pending','failed'])
+          {'id':'tool-$state','role':'tool','name':'终端','status':state,'input':'printf "仅演示，不执行"','text':state == 'failed'?'示例：命令未成功，请检查参数':'示例输出：未执行真实命令','durationMs':3200},
+      ];
+    }
+    if (focus == 'session-menu') demo['managed'] = false;
+    if (['approval', 'question', 'secret'].contains(page)) {
+      demo['events'] = [
+        {'id':'request-context','role':'assistant','text':page=='question' ? '继续整理之前，先确认你希望的输出方式。' : page=='secret' ? '这一步需要补充访问口令，请在下方单独填写。原型中请勿输入真实信息。' : '继续前需要你确认这次操作；原型不会执行真实命令。'},
+      ];
+      demo['status'] = 'waiting';
+      demo['pending'] = {
+        'id': 'preview-request',
+        'kind': page,
+        'params': page == 'approval'
+            ? {
+                'command': 'printf "示例命令"',
+                'reason': '助手希望执行下方命令，请确认后继续。',
+                'availableDecisions': ['accept', 'decline'],
+              }
+            : page == 'question'
+            ? {
+                'questions': [
+                  {
+                    'id': 'answer',
+                    'question': '请选择演示输出方式',
+                    'options': [
+                      {'label': '简洁', 'description': '只保留结论与必要步骤'},
+                      {'label': '详细', 'description': '包含原因、步骤和验证方式'},
+                    ],
+                  },
+                ],
+              }
+            : {'prompt': '演示安全输入，不使用真实密码', 'secretType': 'secret'},
+      };
+    }
+  }
+
   Json detail(String id, String agent, String title) => {
     'id': id,
     'nativeId': id.split(':').last,
@@ -119,11 +197,21 @@ class CollieApi {
     ],
   };
   void close() {}
-  Future<Uri> browserPreview(String path) async =>
-      throw ApiException('Android 文件阅读器未在浏览器实现，请在真机验收');
-  Future<List<int>> imageBytes(String path) async =>
-      (await rootBundle.load('assets/collie-companion-v2.png')).buffer
-          .asUint8List();
+  Future<Uri> browserPreview(String path) async {
+    if (path == '/preview/demo/view')
+      return Uri.base.resolve(Uri.base.queryParameters['detail']=='video-portrait' ? 'assets/assets/ui/demo-portrait.mp4' : 'assets/assets/ui/demo-video.mp4');
+    throw ApiException('此原生文件能力需在 Android 真机验收');
+  }
+
+  Future<List<int>> imageBytes(String path) async {
+    if (Uri.base.queryParameters['detail'] == 'media-loading') await Future<void>.delayed(const Duration(seconds: 6));
+    if (Uri.base.queryParameters['detail'] == 'media-failure') throw ApiException('演示：媒体加载失败');
+    return (await rootBundle.load(
+    path.endsWith('/poster')
+        ? (Uri.base.queryParameters['detail']=='video-portrait' ? 'assets/ui/demo-portrait-poster.jpg' : 'assets/ui/demo-video-poster.jpg')
+        : path.contains('image-2') ? 'assets/ui/demo-video-poster.jpg' : path.contains('image-3') ? 'assets/collie-mark-v2.png' : 'assets/collie-companion-v2.png',
+  )).buffer.asUint8List();
+  }
   Future<Json> uploadVideo(
     String session,
     String name,
@@ -158,8 +246,30 @@ class CollieApi {
     if (path.startsWith('/local/')) {
       final parts = path.substring(7).split('/');
       final id = Uri.decodeComponent(parts.first);
-      if (parts.length > 1 && parts[1] == 'resources') return {'resources': []};
+      if (parts.length > 1 && parts[1] == 'resources') {
+        if(parts.last=='preview' && Uri.base.queryParameters['detail']=='video-failure') throw ApiException('演示：视频文件不可用，请重试');
+        if (parts.last == 'preview') return {'path': '/preview/demo/view'};
+        return {
+          'resources': [
+            for (var i=1;i<=3;i++) {'id':'image-$i','name':'示例图片-$i.jpg','ref':'/demo/image-$i.jpg','image':true},
+            {
+              'id': 'preview-video',
+              'name': '示例视频.mp4',
+              'ref': '/demo/preview.mp4',
+              'image': false,
+            },
+          ],
+        };
+      }
       return sessions[id] ?? (throw ApiException('会话不存在'));
+    }
+    if (path.startsWith('/share/')) return {'url':'/share/preview-only','key':'preview-only'};
+    if (path.startsWith('/hermes/')) {
+      final nativeId=Uri.decodeComponent(path.substring('/hermes/'.length));
+      final demo=sessions.values.firstWhere((d)=>d['nativeId']==nativeId);
+      if(body?['action']=='rename') demo['title']=body?['title'];
+      if(body?['action']=='archive') demo['archived']=true;
+      return {'ok':true};
     }
     if (path == '/sessions') {
       final id =
@@ -176,6 +286,11 @@ class CollieApi {
       final id = Uri.decodeComponent(path.substring(9));
       final d = sessions[id];
       if (d == null) throw ApiException('会话不存在');
+      if (body?['action'] == 'answer') {
+        d.remove('pending');
+        d['status'] = 'idle';
+        return {'ok': true};
+      }
       if (body?['action'] == 'send') {
         (d['events'] as List).add({
           'role': 'user',
@@ -197,11 +312,9 @@ class CollieApi {
     }
     if (path.startsWith('/folders'))
       return {
-        'path': '/demo',
-        'parent': null,
-        'folders': [
-          {'name': 'G-Collie', 'path': '/demo/G-Collie'},
-        ],
+        'path': Uri.parse(path).queryParameters['path'] ?? '/demo',
+        'parent': Uri.parse(path).queryParameters['path'] == null ? null : '/demo',
+        'folders': Uri.parse(path).queryParameters['path'] == null ? [{'name': 'G-Collie', 'path': '/demo/G-Collie'}] : [],
       };
     if (path == '/projects') {
       final p = {

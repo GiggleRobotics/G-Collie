@@ -273,36 +273,30 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     api.close();
   });
-  testWidgets('landscape home scrolls to assistants and recent sessions', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(890, 400);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    final api = FakeApi();
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Workspace(api: api, role: 'control'),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
-    await tester.scrollUntilVisible(
-      find.text('Example session'),
-      220,
-      scrollable: find.descendant(
-        of: find.byKey(const PageStorageKey('home-content')),
-        matching: find.byType(Scrollable),
-      ),
-    );
-    await tester.tap(find.text('Example session'));
-    await tester.pumpAndSettle();
-    expect(find.text('Hello from computer'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-    await tester.pumpWidget(const SizedBox());
-    api.close();
-  });
+  testWidgets(
+    'landscape home shows assistants and recent sessions without scrolling',
+    (tester) async {
+      tester.view.physicalSize = const Size(890, 400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = FakeApi();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Workspace(api: api, role: 'control'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('Example session').hitTestable(), findsOneWidget);
+      await tester.tap(find.text('Example session'));
+      await tester.pumpAndSettle();
+      expect(find.text('Hello from computer'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      api.close();
+    },
+  );
 
   testWidgets(
     'refresh retains conversation, draft, toolbar and lifecycle connection',

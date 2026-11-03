@@ -20,6 +20,13 @@ class SchedulePreview extends StatefulWidget {
 }
 
 class _SchedulePreviewState extends State<SchedulePreview> {
+  @override
+  void initState() {
+    super.initState();
+    if(Uri.base.queryParameters['detail']=='schedule-new') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {if(mounted) edit();});
+    }
+  }
   Future<void> edit([Map<String, dynamic>? old]) async {
     final sessions = widget.sessions
         .where((s) => s['agent'] == 'Codex')

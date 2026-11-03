@@ -9,7 +9,8 @@ typedef Json = Map<String, dynamic>;
 class ApiException implements Exception {
   final String message;
   final int status;
-  ApiException(this.message, [this.status = 0]);
+  final String? code;
+  ApiException(this.message, [this.status = 0, this.code]);
   @override
   String toString() => message;
 }
@@ -264,16 +265,18 @@ class CollieApi {
       unawaited(
         recordFailure(
           path,
-          e.status == 0 ? 'transport-or-invalid-response' : 'http-${e.status}',
+          e.status == 0
+              ? 'transport-or-invalid-response'
+              : 'http-${e.status}${e.code == null ? '' : '-${e.code}'}',
           correlation,
         ).catchError((_) {}),
       );
       rethrow;
-    } catch (_) {
+    } catch (error) {
       unawaited(
         recordFailure(
           path,
-          'transport-timeout',
+          error is TimeoutException ? 'transport-timeout' : 'transport-error',
           correlation,
         ).catchError((_) {}),
       );
@@ -288,6 +291,7 @@ class CollieApi {
       body == null ? 'GET' : 'POST',
       endpoint.resolve('/api$path'),
     );
+    request.persistentConnection = false;
     request.headers.set('x-gcollie-request-id', correlation);
     request.headers.set('x-gcollie-media', 'references');
     request.followRedirects = false;
@@ -317,6 +321,7 @@ class CollieApi {
       throw ApiException(
         data is Map ? '${data['error'] ?? '请求失败'}' : '请求失败',
         response.statusCode,
+        data is Map && data['code'] is String ? data['code'] : null,
       );
     }
     return data;

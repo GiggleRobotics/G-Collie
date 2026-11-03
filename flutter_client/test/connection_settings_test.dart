@@ -124,6 +124,7 @@ void main() {
       final field = find.byKey(const ValueKey('secret:secure-test'));
       expect(tester.widget<TextField>(field).obscureText, isTrue);
       await tester.enterText(field, 'test-password');
+      await tester.pump();
       await tester.ensureVisible(find.text('提交'));
       await tester.tap(find.text('提交'));
       await tester.pumpAndSettle();

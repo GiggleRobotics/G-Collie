@@ -16,9 +16,10 @@ export function references(d:any):Resource[]{
  const refs=new Set<string>();const media=new Set<string>();
  for(const e of d.events||[]){if(!['user','assistant'].includes(e.role))continue;
   for(const r of e.media||[])if(typeof r==='string'){refs.add(r);media.add(r);}
+  for(const m of String(e.text||'').matchAll(/^MEDIA:[ \t]*(.+)$/gm)){const r=m[1].trim().replace(/^"|"$/g,'');if(/\.(mp4|mov|m4v|webm)$/i.test(r))refs.add(r)}
   for(const m of String(e.text||'').matchAll(/!?\[[^\]]*\]\(\s*(<[^>]+>|[^\n]*?)\s*\)/g)){let r=m[1];if(r.startsWith('<'))r=r.slice(1,-1);else r=r.replace(/\s+"[^"]*"$/,'');refs.add(r);}
  }
- return [...refs].filter(r=>(!/^https?:|^data:/i.test(r)&&(extensions.has(extname(r.split(/[?#]/)[0]).toLowerCase())||media.has(r)||/\/uploads\/[a-f0-9-]{36}\/content$/.test(r)))||/^data:image\/(png|jpeg|gif|webp);base64,/i.test(r)).map(ref=>({id:createHash('sha256').update(d.id+'\0'+ref).digest('hex').slice(0,32),ref,name:ref.startsWith('data:')?'会话图片.png':basename(ref.replace(/^file:\/\//,'')),image:media.has(ref)||ref.startsWith('data:')||images.has(extname(ref).toLowerCase())}));
+ return [...refs].filter(r=>(!/^https?:|^data:/i.test(r)&&(extensions.has(extname(r.split(/[?#]/)[0]).toLowerCase())||media.has(r)||/\/uploads\/[a-f0-9-]{36}\/content$/.test(r)))||/^data:image\/(png|jpeg|gif|webp);base64,/i.test(r)).map(ref=>({id:createHash('sha256').update(d.id+'\0'+ref).digest('hex').slice(0,32),ref,name:ref.startsWith('data:')?'会话图片.png':basename(ref.replace(/^file:\/\//,'')),image:ref.startsWith('data:')||images.has(extname(ref).toLowerCase())}));
 }
 // Compact responses keep image bytes behind the existing session-scoped resource checks.
 export function compactReferences(d:any){return references(d).map(r=>r.ref.startsWith('data:')?{...r,ref:'gcollie-resource:'+r.id}:r)}
@@ -33,7 +34,7 @@ export async function resourceFile(d:any,id:string){
  const uploads=resolve(process.env.GCOLLIE_DATA_DIR||resolve('.data'),'uploads');const storedAttachment=path.startsWith(uploads+'/')&&/\/uploads\/[a-f0-9-]{36}\/(content|media\/(image|frame-\d+)\.jpg)$/.test(path);
  if((!storedAttachment&&path.split('/').some(p=>p.startsWith('.')&&!['.codex','.hermes'].includes(p)))||/(^|\/)(access-token|credentials|auth|settings|secrets)(\.|\/|$)/i.test(path)||(!storedAttachment&&!extensions.has(extname(path).toLowerCase())))throw Error('此文件不允许预览');
  if(storedAttachment){const derived=/\/media\/(image|frame-\d+)\.jpg$/.test(path);const meta=JSON.parse(await readFile(derived?resolve(path,'..','..','meta.json'):resolve(path,'..','meta.json'),'utf8'));if(meta.session!==d.id||(derived&&!meta.image&&!meta.video))throw Error('附件不属于此会话');const extension=derived?'.jpg':extname(meta.name).toLowerCase();if(!extensions.has(extension))throw Error('附件格式不支持');const st=await stat(path);if(!st.isFile()||st.size>(derived?5:100)*1024*1024||(!derived&&st.size!==meta.size))throw Error('附件文件已变化');const image=derived||meta.image===true;return {...r,name:meta.name,image,path,data:undefined as Buffer|undefined,mime:derived?'image/jpeg':meta.mime,size:st.size,mtime:st.mtimeMs,extension};}
- const st=await stat(path);if(!st.isFile()||st.size>50*1024*1024)throw Error('文件不存在或超过 50 MB');
+ const st=await stat(path);if(!st.isFile()||st.size>(['.mp4','.mov','.m4v','.webm'].includes(extname(path).toLowerCase())?100:50)*1024*1024)throw Error('文件不存在或超过 50 MB');
  return {...r,path,data:undefined as Buffer|undefined,mime:'',size:st.size,mtime:st.mtimeMs,extension:extname(path).toLowerCase()};
 }
 const esc=(s:string)=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
@@ -56,6 +57,9 @@ export function installPreviews(app:Express,read:(id:string)=>Promise<any>,autho
   else if(file.extension==='.docx'){if(file.size>15*1024*1024)throw Error('Word 预览最大支持 15 MB');const r=await mammoth.convertToHtml({buffer:await readFile(file.path)},{externalFileAccess:false});body='<div class="notice">阅读模式 · 原文件排版可下载查看</div>'+safe(r.value);}
   else if(['.md','.txt','.csv'].includes(file.extension)){if(file.size>2*1024*1024)throw Error('文本预览最大支持 2 MB');const text=await readFile(file.path,'utf8');body=file.extension==='.md'?safe(await marked(text)):`<pre>${esc(text)}</pre>`;}
   else body='<p>此格式请下载后使用手机上的应用打开。</p>';
+  if(['.mp4','.mov','.m4v','.webm'].includes(file.extension)){
+   res.type('html').send(`<!doctype html><html><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;width:100%;height:100%;background:#000;overflow:hidden}video{display:block;width:100%;height:100%;object-fit:contain}p{color:white;font:14px sans-serif;position:absolute;top:40%;width:100%;text-align:center}</style><video controls ${req.query.autoplay==='1'?'autoplay':''} playsinline preload="metadata" src="./content" onerror="document.querySelector('p').hidden=false"></video><p hidden>视频加载失败或格式暂不支持，请返回重试。</p></html>`);return;
+  }
   res.type('html').send(page(file.name,body,req.query.embedded==='1',file.extension==='.pdf'));
  }catch{res.status(404).type('html').send(page('文件暂时无法预览','文件可能已移动、删除、格式不受支持或超过预览大小限制。请返回 App 重试，或联系电脑端检查文件。'));}});
  return issue;

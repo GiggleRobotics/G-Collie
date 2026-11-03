@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/services.dart';
 import 'api.dart';
@@ -7,8 +8,16 @@ class NativeBridge {
   static void Function(String)? onLink;
   static void Function()? onNetworkReady;
   static const channel = MethodChannel('dev.giggle.gcollie/native');
-  static Future<T?> invoke<T>(String method, [Json? args]) =>
-      channel.invokeMethod<T>(method, args);
+  static Future<T?> invoke<T>(String method, [Json? args]) {
+    final result = channel.invokeMethod<T>(method, args);
+    return method.startsWith('network')
+        ? result.timeout(
+            const Duration(seconds: 20),
+            onTimeout: () => throw ApiException('内置网络响应超时，请重新连接'),
+          )
+        : result;
+  }
+
   static Future<Json> network(String action, [String? remote]) async {
     if (!Platform.isAndroid) throw ApiException('内置网络仅支持 Android');
     final raw = await invoke<String>(

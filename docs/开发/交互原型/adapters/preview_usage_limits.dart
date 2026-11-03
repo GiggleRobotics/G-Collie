@@ -1,3 +1,5 @@
+import 'preview_issue_states.dart';
+
 import 'package:flutter/material.dart';
 
 import 'api.dart';
@@ -17,6 +19,13 @@ class PreviewUsageLimits extends StatefulWidget {
 }
 
 class _PreviewUsageLimitsState extends State<PreviewUsageLimits> {
+  @override
+  void initState() {
+    super.initState();
+    if(Uri.base.queryParameters['detail']=='reset-confirm') {
+      WidgetsBinding.instance.addPostFrameCallback((_) { if(mounted) reset(0); });
+    }
+  }
   bool expanded = true;
   Set<int> get used => widget.api.previewUsedResetCards;
   Future<void> reset(int index) async {
@@ -24,7 +33,9 @@ class _PreviewUsageLimitsState extends State<PreviewUsageLimits> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('使用这次重置？'),
-        content: const Text('完全重置每周和 5 小时使用限额。\n\n此处仅演示，不消耗真实账户的重置机会。'),
+        content: Text(
+          '演示账号 · Codex Plus\n完全重置：每周 + 5 小时\n卡片到期：${index == 0 ? '11月7日 08:31' : '11月14日 06:50'}\n可用 ${widget.api.credits} 次 → ${widget.api.credits - 1} 次\n\n此处仅演示，不消耗真实账户的重置机会。',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -103,6 +114,11 @@ class _PreviewUsageLimitsState extends State<PreviewUsageLimits> {
   );
   @override
   Widget build(BuildContext context) {
+    final unavailable = [
+      'quota-error',
+      'codex-auth',
+      'codex-timeout',
+    ].contains(Uri.base.queryParameters['state']);
     final exhausted =
         Uri.base.queryParameters['state'] == 'quota' && used.isEmpty;
     return Column(
@@ -118,24 +134,26 @@ class _PreviewUsageLimitsState extends State<PreviewUsageLimits> {
           style: TextStyle(fontSize: 11, color: Colors.grey),
         ),
         const SizedBox(height: 14),
-        Container(
-          decoration: box,
-          child: Column(
-            children: [
-              limit(
-                '5 小时使用限额',
-                '将于 20:01 重置',
-                used.isNotEmpty
-                    ? 1
-                    : exhausted
-                    ? 0
-                    : .48,
-              ),
-              line,
-              limit('每周使用限额', '将于 10月31日 重置', used.isNotEmpty ? 1 : .76),
-            ],
+        const PreviewIssueNotice(usage: true),
+        if (!unavailable)
+          Container(
+            decoration: box,
+            child: Column(
+              children: [
+                limit(
+                  '5 小时使用限额',
+                  '将于 20:01 重置',
+                  used.isNotEmpty
+                      ? 1
+                      : exhausted
+                      ? 0
+                      : .48,
+                ),
+                line,
+                limit('每周使用限额', '6 天 17 小时后重置', used.isNotEmpty ? 1 : .76),
+              ],
+            ),
           ),
-        ),
         const SizedBox(height: 16),
         Container(
           decoration: box,
@@ -157,14 +175,15 @@ class _PreviewUsageLimitsState extends State<PreviewUsageLimits> {
                           vertical: 4,
                         ),
                         decoration: BoxDecoration(
-                          color: const Color(0xffd9f3e6),
+                          color: Theme.of(context).colorScheme.onSurface
+                              .withValues(alpha: .08),
                           borderRadius: BorderRadius.circular(20),
                         ),
                         child: Text(
                           '可用 ${widget.api.credits} 次',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 12,
-                            color: Color(0xff216957),
+                            color: Theme.of(context).colorScheme.onSurface,
                           ),
                         ),
                       ),
@@ -197,7 +216,7 @@ class _PreviewUsageLimitsState extends State<PreviewUsageLimits> {
                               ),
                               const SizedBox(height: 5),
                               Text(
-                                '将于 ${i == 0 ? '10/30 08:31' : '11/7 06:50'} 到期',
+                                '将于 ${i == 0 ? '11/7 08:31' : '11/14 06:50'} 到期',
                                 style: const TextStyle(
                                   fontSize: 11,
                                   color: Colors.grey,
@@ -223,6 +242,7 @@ class _PreviewUsageLimitsState extends State<PreviewUsageLimits> {
                           ),
                           onPressed:
                               widget.readOnly ||
+                                  unavailable ||
                                   used.contains(i) ||
                                   widget.api.credits <= 0
                               ? null

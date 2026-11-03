@@ -1,3 +1,4 @@
+import 'status_notice.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'api.dart';
@@ -52,7 +53,8 @@ class CodexQuotaNotice extends StatefulWidget {
   State<CodexQuotaNotice> createState() => _CodexQuotaNoticeState();
 }
 
-class _CodexQuotaNoticeState extends State<CodexQuotaNotice> {
+class _CodexQuotaNoticeState extends State<CodexQuotaNotice>
+    with WidgetsBindingObserver {
   Json? account;
   Timer? timer;
   bool loading = false;
@@ -60,7 +62,8 @@ class _CodexQuotaNoticeState extends State<CodexQuotaNotice> {
   @override
   void initState() {
     super.initState();
-    load();
+    WidgetsBinding.instance.addObserver(this);
+    load(force: true);
     timer = Timer.periodic(const Duration(seconds: 30), (_) => load());
   }
 
@@ -74,8 +77,14 @@ class _CodexQuotaNoticeState extends State<CodexQuotaNotice> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     timer?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) load(force: true);
   }
 
   Future<void> load({bool force = false}) async {
@@ -95,9 +104,15 @@ class _CodexQuotaNoticeState extends State<CodexQuotaNotice> {
       final value = data['codexAccount'];
       setState(() {
         account = value is Map ? Map<String, dynamic>.from(value) : null;
-        loadError = null;
+        loadError = account?['limitsError'] == null
+            ? null
+            : account?['limitsErrorCode'] == 'auth_expired'
+            ? 'Codex 登录已失效，请在电脑重新登录后刷新'
+            : '电脑已连接，Codex 额度查询失败，请重试';
       });
-      widget.onBlocked(quotaExhausted(account));
+      if (account?['limitsError'] == null) {
+        widget.onBlocked(quotaExhausted(account));
+      }
     } catch (_) {
       if (mounted) setState(() => loadError = '额度暂时无法更新，请稍后重试');
     } finally {
@@ -152,7 +167,22 @@ class _CodexQuotaNoticeState extends State<CodexQuotaNotice> {
       r'额度.*(用完|耗尽|上限)|usage.limit|rate.limit|quota',
       caseSensitive: false,
     ).hasMatch(widget.error);
-    if (!quotaExhausted(account) && !explicit) return const SizedBox.shrink();
+    if (!quotaExhausted(account) && !explicit && loadError == null) {
+      return const SizedBox.shrink();
+    }
+    if (windows.isEmpty && loadError != null) {
+      final auth = account?['limitsErrorCode'] == 'auth_expired';
+      return StatusNotice(
+        title: auth ? '需要重新登录 Codex' : '暂时无法获取额度',
+        message: auth ? '请在电脑端完成登录，再回到这里检查。' : '本次没有取得额度信息，请重新检查。你的草稿已保留。',
+        icon: auth ? Icons.lock_outline : Icons.info_outline,
+        connection: widget.online ? '电脑连接正常' : '电脑连接中断',
+        primaryLabel: '重新检查',
+        checking: loading,
+        onPrimary: widget.online ? () => load(force: true) : null,
+        onSecondary: widget.onUsage,
+      );
+    }
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
       padding: const EdgeInsets.all(16),
@@ -207,7 +237,7 @@ class _CodexQuotaNoticeState extends State<CodexQuotaNotice> {
                   api: widget.api,
                   readOnly: widget.readOnly || !widget.online,
                   onRefresh: () async {
-                    await load();
+                    await load(force: true);
                     await widget.onRefresh();
                   },
                 ),

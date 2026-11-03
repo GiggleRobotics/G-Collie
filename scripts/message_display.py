@@ -50,7 +50,7 @@ def display_text(text, role='user', has_media=False, photo_names=()):
             # Keep non-image attachments actionable after removing the envelope.
             links = []
             for name, path in re.findall(r'^## (.+?): (.+)$', envelope['files'], re.M):
-                if PurePath(path).suffix.lower() in {'.pdf','.docx','.doc','.md','.txt','.csv','.xlsx','.pptx','.zip'} and path not in text:
+                if PurePath(path).suffix.lower() in {'.pdf','.docx','.doc','.md','.txt','.csv','.xlsx','.pptx','.zip','.mp4','.mov','.m4v','.webm'} and path not in text:
                     label = name.replace('[', r'\[').replace(']', r'\]')
                     links.append(f'[{label}](<{quote(path, safe="/")}>)')
             if links:

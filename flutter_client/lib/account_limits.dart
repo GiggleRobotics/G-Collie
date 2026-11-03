@@ -48,6 +48,14 @@ class _AccountLimitsState extends State<AccountLimits> {
           style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
         ),
         const SizedBox(height: 12),
+        if (widget.account?['limitsError'] != null) ...[
+          Text(
+            widget.account?['limitsErrorCode'] == 'auth_expired'
+                ? 'Codex 登录已失效，请在电脑重新登录后刷新'
+                : '电脑已连接，额度查询失败，当前额度未知',
+          ),
+          TextButton(onPressed: widget.onRefresh, child: const Text('刷新额度')),
+        ],
         Container(
           decoration: decoration,
           child: Column(
@@ -128,9 +136,9 @@ class _AccountLimitsState extends State<AccountLimits> {
                   children: [
                     Text(
                       '可用 ${summary?['availableCount'] ?? '未知'} 次',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
-                        color: Color(0xff216957),
+                        color: Theme.of(context).colorScheme.onSurface,
                       ),
                     ),
                     Icon(

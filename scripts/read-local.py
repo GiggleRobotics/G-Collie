@@ -174,7 +174,7 @@ else:
     if r['role']=='assistant' and isinstance(content,str):
      def assistant_media(match):
       value=match[1].strip().strip('\"')
-      if pathlib.Path(value).is_absolute() and pathlib.Path(value).suffix.lower() in {'.png','.jpg','.jpeg','.gif','.webp'}:
+      if pathlib.Path(value).is_absolute() and pathlib.Path(value).suffix.lower() in {'.png','.jpg','.jpeg','.gif','.webp','.mp4','.mov','.m4v','.webm'}:
        media.append(value);return ''
       return match[0]
      content=re.sub(r'(?m)^MEDIA:[ \t]*([^\r\n]+)$',assistant_media,content)

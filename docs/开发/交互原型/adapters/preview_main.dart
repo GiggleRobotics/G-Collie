@@ -1,3 +1,7 @@
+import 'dart:convert';
+// Browser-only fixture navigation; the Flutter engine stays loaded.
+// ignore: deprecated_member_use
+import 'dart:html' as html;
 import 'package:flutter/material.dart';
 
 import 'main.dart' as product;
@@ -26,6 +30,10 @@ ThemeData previewTheme(Brightness brightness) {
   );
   return base.copyWith(
     colorScheme: scheme,
+    textTheme: base.textTheme.apply(fontFamilyFallback: const ['PrototypeCJK']),
+    primaryTextTheme: base.primaryTextTheme.apply(
+      fontFamilyFallback: const ['PrototypeCJK'],
+    ),
     bottomSheetTheme: BottomSheetThemeData(
       backgroundColor: surface,
       modalBackgroundColor: surface,
@@ -60,13 +68,35 @@ ThemeData previewTheme(Brightness brightness) {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  html.window.onMessage.listen((event) {
+    if (event.origin != html.window.location.origin || event.data is! String) return;
+    final message = jsonDecode(event.data as String);
+    if (message is! Map || message['type'] != 'prototype:navigate') return;
+    final query = message['query'];
+    if (query is! String) return;
+    html.window.history.replaceState(null, '', '?$query');
+    startPreview();
+  });
+  await startPreview();
+  html.window.parent?.postMessage('prototype:ready', html.window.location.origin);
+}
+
+Future<void> startPreview() async {
+  previewComputers.current['online'] = true;
   await previewComputers.restore();
+  // Restarting a fixture must not restore another scenario's draft/history.
+  // These keys exist only on the prototype origin and synthetic computer.
+  try {
+    await product.storage.delete(key: 'workspace-drafts:http://preview.invalid');
+    await product.storage.delete(key: 'workspace-cache:http://preview.invalid');
+  } catch (_) {}
   final params = Uri.base.queryParameters;
   product.appTheme.value = params['theme'] == 'dark'
       ? ThemeMode.dark
       : ThemeMode.light;
   runApp(
     ValueListenableBuilder<ThemeMode>(
+      key: UniqueKey(),
       valueListenable: product.appTheme,
       builder: (_, mode, __) => MaterialApp(
         title: 'G-Collie · 同源 Flutter 原型',
@@ -110,13 +140,31 @@ class _PreviewComputerWorkspaceState extends State<PreviewComputerWorkspace> {
         session['desktopControl'] = !api.previewOffline;
       }
       final params = Uri.base.queryParameters;
+      final initialSession = [
+              'hermes',
+              'video',
+              'approval',
+              'question',
+              'secret',
+            ].contains(params['page'])
+            ? 'hermes:demo'
+            : params['page'] == 'claude'
+            ? 'claude:demo'
+            : (['chat', 'attachments'].contains(params['page']) ||
+                  params['state'] == 'quota')
+            ? 'codex:demo'
+            : null;
       return product.Workspace(
         key: ValueKey(id),
         api: api,
         role: 'control',
-        initialSession: (params['page'] == 'chat' || params['state'] == 'quota')
-            ? 'codex:demo'
-            : null,
+        initialSession: initialSession,
+        initialData: {
+          'sessions': params['state'] == 'empty' ? [] : api.sessions.values.toList(),
+          'projects': api.projects,
+          'detail': api.sessions[initialSession],
+          'online': !api.previewOffline,
+        },
       );
     },
   );

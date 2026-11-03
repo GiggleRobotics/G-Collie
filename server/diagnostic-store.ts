@@ -6,7 +6,7 @@ const week=7*86400000;
 const identifier=(v:any)=>typeof v==='string'&&/^[a-zA-Z0-9_.:/-]{1,180}$/.test(v)?v:undefined;
 export function diagnosticRows(rows:any){
  if(!Array.isArray(rows)||rows.length>1000)throw Error('诊断记录数量超过限制');
- return rows.map(e=>{const time=Date.parse(e?.time);if(!Number.isFinite(time)||time<Date.now()-week||time>Date.now()+60000)throw Error('日志时间超出最近 7 天');return{time:new Date(time).toISOString(),route:identifier(e.route)||'unknown',category:identifier(e.category)||'unknown',requestId:identifier(e.requestId),durationMs:typeof e.durationMs==='number'?Math.max(0,Math.min(120000,e.durationMs)):undefined,status:Number.isInteger(e.status)?e.status:undefined}});
+ return rows.map(e=>{const time=Date.parse(e?.time);if(!Number.isFinite(time)||time<Date.now()-week||time>Date.now()+60000)throw Error('日志时间超出最近 7 天');return{time:new Date(time).toISOString(),route:identifier(typeof e.route==='string'?e.route.split('?')[0]:e.route)||'unknown',category:identifier(e.category)||'unknown',requestId:identifier(e.requestId),durationMs:typeof e.durationMs==='number'?Math.max(0,Math.min(120000,e.durationMs)):undefined,status:Number.isInteger(e.status)?e.status:undefined}});
 }
 export function diagnosticRange(body:any){const from=Date.parse(body.from),to=Date.parse(body.to);if(!Number.isFinite(from)||!Number.isFinite(to)||from>to||from<Date.now()-week||to>Date.now()+60000)throw Error('请选择最近 7 天内的有效时间段');return{from,to}}
 export class DiagnosticStore{

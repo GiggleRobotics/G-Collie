@@ -1,3 +1,4 @@
+import 'ui.dart' show collieSheet;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'dart:math' as math;
@@ -55,154 +56,133 @@ Future<void> editPreviewWorkspace(
   final name = TextEditingController(text: previewWorkspaceName);
   Uint8List? avatar = previewAvatar;
   String error = '';
-  await showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
-    builder: (ctx) => StatefulBuilder(
-      builder: (ctx, change) => Padding(
-        padding: EdgeInsets.fromLTRB(
-          24,
-          24,
-          24,
-          24 + MediaQuery.viewInsetsOf(ctx).bottom,
-        ),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+  await collieSheet<void>(
+    context,
+    first ? '设置你的工作台' : '工作台资料',
+    (ctx) => StatefulBuilder(
+      builder: (ctx, change) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ClipOval(
+            child: avatar == null
+                ? Image.asset(
+                    'assets/collie-mark-v2.png',
+                    width: 80,
+                    height: 80,
+                    fit: BoxFit.cover,
+                  )
+                : Image.memory(
+                    avatar!,
+                    width: 80,
+                    height: 80,
+                    fit: BoxFit.cover,
+                  ),
+          ),
+          Wrap(
+            alignment: WrapAlignment.center,
             children: [
-              Text(
-                first ? '设置你的工作台' : '工作台资料',
-                style: const TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 20),
-              ClipOval(
-                child: avatar == null
-                    ? Image.asset(
-                        'assets/collie-mark-v2.png',
-                        width: 80,
-                        height: 80,
-                        fit: BoxFit.cover,
-                      )
-                    : Image.memory(
-                        avatar!,
-                        width: 80,
-                        height: 80,
-                        fit: BoxFit.cover,
+              TextButton(
+                onPressed: () async {
+                  final file = await openFile(
+                    acceptedTypeGroups: [
+                      const XTypeGroup(
+                        label: '头像',
+                        extensions: ['png', 'jpg', 'jpeg', 'webp'],
                       ),
+                    ],
+                  );
+                  if (file == null) return;
+                  try {
+                    final bytes = await file.readAsBytes();
+                    if (bytes.length > 5 * 1024 * 1024) {
+                      throw Exception('请选择不超过 5 MB 的图片');
+                    }
+                    final codec = await ui.instantiateImageCodec(
+                      bytes,
+                      targetWidth: 512,
+                    );
+                    final image = (await codec.getNextFrame()).image;
+                    final side = math.min(image.width, image.height).toDouble();
+                    final recorder = ui.PictureRecorder();
+                    final canvas = Canvas(recorder);
+                    canvas.drawImageRect(
+                      image,
+                      Rect.fromLTWH(
+                        (image.width - side) / 2,
+                        (image.height - side) / 2,
+                        side,
+                        side,
+                      ),
+                      const Rect.fromLTWH(0, 0, 256, 256),
+                      Paint(),
+                    );
+                    final picture = recorder.endRecording();
+                    final cropped = await picture.toImage(256, 256);
+                    final data = await cropped.toByteData(
+                      format: ui.ImageByteFormat.png,
+                    );
+                    image.dispose();
+                    codec.dispose();
+                    cropped.dispose();
+                    picture.dispose();
+                    if (ctx.mounted) {
+                      change(() {
+                        avatar = data!.buffer.asUint8List();
+                        error = '';
+                      });
+                    }
+                  } catch (e) {
+                    if (ctx.mounted) {
+                      change(() => error = '图片无法读取，请选择有效且不超过 5 MB 的图片');
+                    }
+                  }
+                },
+                child: const Text('更换头像'),
               ),
-              Wrap(
-                alignment: WrapAlignment.center,
-                children: [
-                  TextButton(
-                    onPressed: () async {
-                      final file = await openFile(
-                        acceptedTypeGroups: [
-                          const XTypeGroup(
-                            label: '头像',
-                            extensions: ['png', 'jpg', 'jpeg', 'webp'],
-                          ),
-                        ],
-                      );
-                      if (file == null) return;
-                      try {
-                        final bytes = await file.readAsBytes();
-                        if (bytes.length > 5 * 1024 * 1024) {
-                          throw Exception('请选择不超过 5 MB 的图片');
-                        }
-                        final codec = await ui.instantiateImageCodec(
-                          bytes,
-                          targetWidth: 512,
-                        );
-                        final image = (await codec.getNextFrame()).image;
-                        final side = math
-                            .min(image.width, image.height)
-                            .toDouble();
-                        final recorder = ui.PictureRecorder();
-                        final canvas = Canvas(recorder);
-                        canvas.drawImageRect(
-                          image,
-                          Rect.fromLTWH(
-                            (image.width - side) / 2,
-                            (image.height - side) / 2,
-                            side,
-                            side,
-                          ),
-                          const Rect.fromLTWH(0, 0, 256, 256),
-                          Paint(),
-                        );
-                        final picture = recorder.endRecording();
-                        final cropped = await picture.toImage(256, 256);
-                        final data = await cropped.toByteData(
-                          format: ui.ImageByteFormat.png,
-                        );
-                        image.dispose();
-                        codec.dispose();
-                        cropped.dispose();
-                        picture.dispose();
-                        if (ctx.mounted) {
-                          change(() {
-                            avatar = data!.buffer.asUint8List();
-                            error = '';
-                          });
-                        }
-                      } catch (e) {
-                        if (ctx.mounted) {
-                          change(() => error = '图片无法读取，请选择有效且不超过 5 MB 的图片');
-                        }
-                      }
-                    },
-                    child: const Text('更换头像'),
-                  ),
-                  TextButton(
-                    onPressed: () => change(() => avatar = null),
-                    child: const Text('恢复默认'),
-                  ),
-                ],
-              ),
-              TextField(
-                controller: name,
-                maxLength: 30,
-                decoration: const InputDecoration(
-                  labelText: '工作台名称',
-                  hintText: '我的工作台',
-                ),
-              ),
-              if (error.isNotEmpty)
-                Text(error, style: const TextStyle(color: Colors.red)),
-              const Text(
-                '资料保存在本手机，切换电脑不影响。头像将居中裁切为圆形。',
-                style: TextStyle(fontSize: 12),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      child: Text(first ? '暂时跳过' : '取消'),
-                    ),
-                  ),
-                  Expanded(
-                    child: FilledButton(
-                      onPressed: () {
-                        previewWorkspaceName = name.text.trim().isEmpty
-                            ? '我的工作台'
-                            : name.text.trim();
-                        previewAvatar = avatar;
-                        Navigator.pop(ctx);
-                      },
-                      child: Text(first ? '进入工作台' : '保存'),
-                    ),
-                  ),
-                ],
+              TextButton(
+                onPressed: () => change(() => avatar = null),
+                child: const Text('恢复默认'),
               ),
             ],
           ),
-        ),
+          TextField(
+            controller: name,
+            maxLength: 30,
+            decoration: const InputDecoration(
+              labelText: '工作台名称',
+              hintText: '我的工作台',
+            ),
+          ),
+          if (error.isNotEmpty)
+            Text(error, style: const TextStyle(color: Colors.red)),
+          const Text(
+            '资料保存在本手机，切换电脑不影响。头像将居中裁切为圆形。',
+            style: TextStyle(fontSize: 12),
+          ),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              Expanded(
+                child: TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: Text(first ? '暂时跳过' : '取消'),
+                ),
+              ),
+              Expanded(
+                child: FilledButton(
+                  onPressed: () {
+                    previewWorkspaceName = name.text.trim().isEmpty
+                        ? '我的工作台'
+                        : name.text.trim();
+                    previewAvatar = avatar;
+                    Navigator.pop(ctx);
+                  },
+                  child: Text(first ? '进入工作台' : '保存'),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     ),
   );

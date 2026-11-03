@@ -52,7 +52,7 @@ class _ProcessRecordState extends State<ProcessRecord> {
         : '$verb ${command.isEmpty ? name : command}';
     final muted = Theme.of(context).brightness == Brightness.dark
         ? const Color(0xffaaaaaa)
-        : const Color(0xff7e8581);
+        : const Color(0xff818181);
     final detail = <String>[
       if (commands.isNotEmpty)
         for (var i = 0; i < commands.length; i++)
@@ -134,8 +134,8 @@ class _ProcessRecordState extends State<ProcessRecord> {
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: Theme.of(context).brightness == Brightness.dark
-                    ? const Color(0xff252825)
-                    : const Color(0xfff5f7f5),
+                    ? const Color(0xff272727)
+                    : const Color(0xfff6f6f6),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: ConstrainedBox(
