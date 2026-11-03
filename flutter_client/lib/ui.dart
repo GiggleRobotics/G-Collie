@@ -1,3 +1,6 @@
+import 'sketch.dart';
+import 'codex_capabilities.dart';
+import 'snippets.dart';
 import 'session_video.dart';
 import 'dart:io';
 import 'network_authorization.dart';
@@ -292,6 +295,26 @@ class _CollieShellState extends State<CollieShell> {
       id,
       () => SessionResources(widget.api, id),
     );
+    final refs = <String>{};
+    for (final event in widget.detail?['events'] as List? ?? []) {
+      if (!['user', 'assistant'].contains(event['role'])) continue;
+      for (final ref in event['media'] as List? ?? []) {
+        if (ref is String) refs.add(ref);
+      }
+      for (final m in RegExp(
+        r'!?\[[^\]]*\]\(([^\s)]+)\)',
+      ).allMatches('${event['text'] ?? ''}')) {
+        final ref = m[1]!;
+        if (isSessionVideo(ref) ||
+            RegExp(
+              r'\.(png|jpe?g|gif|webp)([?#].*)?$',
+              caseSensitive: false,
+            ).hasMatch(ref)) {
+          refs.add(ref);
+        }
+      }
+    }
+    value.scopeReferences = refs.toList();
     value.offline = !widget.online;
     return value;
   }
@@ -363,28 +386,35 @@ class _CollieShellState extends State<CollieShell> {
   }
 
   Future<void> upload(String kind) async {
-    final image = kind == 'image';
+    final image = kind == 'image' || kind == 'clipboard';
     final video = kind == 'video';
     if (uploading || !widget.enabled) return;
     final id = widget.detail?['id'];
+    String? temporaryClipboard;
     try {
-      final files = await openFiles(
-        acceptedTypeGroups: image
-            ? [
-                const XTypeGroup(
-                  label: '照片',
-                  extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
-                ),
-              ]
-            : video
-            ? [
-                const XTypeGroup(
-                  label: '视频',
-                  extensions: ['mp4', 'mov', 'm4v', 'webm'],
-                ),
-              ]
-            : [],
-      );
+      final clipboardPath = kind == 'clipboard'
+          ? await NativeBridge.invoke<String>('clipboardImage')
+          : null;
+      temporaryClipboard = clipboardPath;
+      final files = kind == 'clipboard'
+          ? (clipboardPath == null ? <XFile>[] : [XFile(clipboardPath)])
+          : await openFiles(
+              acceptedTypeGroups: image
+                  ? [
+                      const XTypeGroup(
+                        label: '照片',
+                        extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
+                      ),
+                    ]
+                  : video
+                  ? [
+                      const XTypeGroup(
+                        label: '视频',
+                        extensions: ['mp4', 'mov', 'm4v', 'webm'],
+                      ),
+                    ]
+                  : [],
+            );
       if (files.length + uploads.length > 5) {
         throw ApiException('每条消息最多添加 5 个附件');
       }
@@ -422,12 +452,22 @@ class _CollieShellState extends State<CollieShell> {
                 'image': image,
                 'data': base64Encode(await f.readAsBytes()),
               });
+        if (kind == 'clipboard') {
+          try {
+            await File(f.path).delete();
+          } catch (_) {}
+        }
         if (!mounted || widget.detail?['id'] != id) return;
         setState(() => uploads.add(Map<String, dynamic>.from(value)));
       }
     } catch (e) {
       if (mounted) setState(() => uploadError = '$e');
     } finally {
+      if (temporaryClipboard != null) {
+        try {
+          await File(temporaryClipboard).delete();
+        } catch (_) {}
+      }
       if (mounted) setState(() => uploading = false);
     }
   }
@@ -1480,7 +1520,9 @@ class _CollieShellState extends State<CollieShell> {
             if (!compact) ...[
               Image.asset(
                 'assets/collie-companion-v2.png',
-                height: (constraints.maxHeight * .16).clamp(70, 120).toDouble(),
+                height: (constraints.maxHeight * .22)
+                    .clamp(100, 160)
+                    .toDouble(),
                 fit: BoxFit.contain,
               ),
               const SizedBox(height: 8),
@@ -1537,7 +1579,7 @@ class _CollieShellState extends State<CollieShell> {
                     )
                   : LayoutBuilder(
                       builder: (context, area) {
-                        final height = math.min(64.0, area.maxHeight / 4);
+                        final height = area.maxHeight / 4;
                         return Column(
                           children: [
                             for (final s in recent)
@@ -2217,9 +2259,14 @@ class _CollieShellState extends State<CollieShell> {
             ['video', '添加视频', Icons.video_library_outlined],
             ['file', '手机文件', Icons.attach_file],
             ['folder', '引用电脑目录', Icons.folder_outlined],
+            if (widget.detail?['agent'] == 'Codex')
+              ['codex-capabilities', '目标、计划与插件', Icons.tune],
+            if (widget.detail?['agent'] == 'Codex')
+              ['sketch', 'Sketch 草图', Icons.draw_outlined],
             if (widget.detail?['agent'] == 'Hermes') ...[
               ['url', '添加网址', Icons.link],
               ['snippet', '提示词片段', Icons.short_text],
+              ['clipboard', '粘贴图片', Icons.content_paste],
             ],
           ])
             ListTile(
@@ -2232,8 +2279,71 @@ class _CollieShellState extends State<CollieShell> {
       ),
     );
     if (kind == null || !mounted) return;
-    if (['image', 'video', 'file'].contains(kind)) {
+    if (['image', 'video', 'file', 'clipboard'].contains(kind)) {
       await upload(kind);
+      return;
+    }
+    if (kind == 'codex-capabilities') {
+      final selection = await Navigator.of(context).push<Json>(
+        MaterialPageRoute(
+          builder: (_) => CodexCapabilities(
+            api: widget.api,
+            session: '${widget.detail!['id']}',
+            enabled: widget.enabled,
+          ),
+        ),
+      );
+      if (selection != null && mounted) {
+        if (uploads.length >= 5) {
+          setState(() => uploadError = '每条消息最多添加 5 个附件或技能');
+        } else {
+          setState(
+            () => uploads.add({
+              'id': 'skill:${selection['skillId']}',
+              'name': selection['name'],
+              'mime': 'application/x-codex-skill',
+              'size': 0,
+              'image': false,
+            }),
+          );
+        }
+      }
+      return;
+    }
+    if (kind == 'sketch') {
+      final id = widget.detail?['id'];
+      final bytes = await Navigator.of(
+        context,
+      ).push<Uint8List>(MaterialPageRoute(builder: (_) => const SketchPage()));
+      if (bytes != null &&
+          mounted &&
+          widget.enabled &&
+          widget.detail?['id'] == id) {
+        try {
+          if (uploads.length >= 5) throw ApiException('每条消息最多添加 5 个附件');
+          setState(() => uploading = true);
+          final result = await widget.api.call('/attachments', {
+            'session': id,
+            'name': 'sketch.png',
+            'image': true,
+            'data': base64Encode(bytes),
+          });
+          if (mounted && widget.detail?['id'] == id) {
+            setState(() => uploads.add(Map<String, dynamic>.from(result)));
+          }
+        } catch (e) {
+          if (mounted) setState(() => uploadError = '$e');
+        } finally {
+          if (mounted) setState(() => uploading = false);
+        }
+      }
+      return;
+    }
+    if (kind == 'snippet') {
+      final value = await Navigator.of(
+        context,
+      ).push<String>(MaterialPageRoute(builder: (_) => const SnippetLibrary()));
+      if (mounted && value != null) appendContext(value);
       return;
     }
     if (kind == 'folder') {
@@ -2766,39 +2876,46 @@ class _CollieShellState extends State<CollieShell> {
                       children: [
                         Positioned.fill(child: conversation(d)),
                         Positioned(
-                          right: 16,
+                          left: 0,
+                          right: 0,
                           bottom: 12,
-                          child: AnimatedBuilder(
-                            animation: widget.scroll,
-                            builder: (context, _) =>
-                                widget.scroll.hasClients &&
-                                    widget
-                                        .scroll
-                                        .position
-                                        .hasContentDimensions &&
-                                    widget.scroll.position.extentAfter > 160
-                                ? Material(
-                                    elevation: 2,
-                                    shape: const CircleBorder(),
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.surface,
-                                    child: IconButton(
-                                      tooltip: '跳到最新消息',
-                                      icon: const Icon(
-                                        Icons.arrow_downward,
-                                        size: 21,
-                                      ),
-                                      onPressed: () => widget.scroll.animateTo(
-                                        widget.scroll.position.maxScrollExtent,
-                                        duration: const Duration(
-                                          milliseconds: 250,
+                          child: Center(
+                            child: AnimatedBuilder(
+                              animation: widget.scroll,
+                              builder: (context, _) =>
+                                  widget.scroll.hasClients &&
+                                      widget
+                                          .scroll
+                                          .position
+                                          .hasContentDimensions &&
+                                      widget.scroll.position.extentAfter > 160
+                                  ? Material(
+                                      elevation: 2,
+                                      shape: const CircleBorder(),
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.surface,
+                                      child: IconButton(
+                                        tooltip: '跳到最新消息',
+                                        icon: const Icon(
+                                          Icons.arrow_downward,
+                                          size: 21,
                                         ),
-                                        curve: Curves.easeOut,
+                                        onPressed: () =>
+                                            widget.scroll.animateTo(
+                                              widget
+                                                  .scroll
+                                                  .position
+                                                  .maxScrollExtent,
+                                              duration: const Duration(
+                                                milliseconds: 250,
+                                              ),
+                                              curve: Curves.easeOut,
+                                            ),
                                       ),
-                                    ),
-                                  )
-                                : const SizedBox.shrink(),
+                                    )
+                                  : const SizedBox.shrink(),
+                            ),
                           ),
                         ),
                       ],

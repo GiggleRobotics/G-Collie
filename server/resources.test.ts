@@ -35,3 +35,5 @@ test('compact history sends stable image handles without changing authenticated 
  assert.equal((await resourceFile(d,original.id)).data?.toString(),'image-bytes');
  await assert.rejects(resourceFile({...d,id:'codex:other'},original.id));
 });
+
+test('repeated video stays at its latest conversation occurrence',()=>{const d={id:'hermes:test',events:[{role:'assistant',media:['/clip.mp4']},{role:'assistant',media:['/one.png','/two.png']},{role:'assistant',media:['/clip.mp4'],text:'[视频](/clip.mp4)'}]};assert.deepEqual(references(d).map(r=>r.ref),['/one.png','/two.png','/clip.mp4']);assert.equal(references(d).length,3)});

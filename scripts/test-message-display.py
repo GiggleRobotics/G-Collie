@@ -5,6 +5,13 @@ spec=importlib.util.spec_from_file_location('display',pathlib.Path(__file__).wit
 display=importlib.util.module_from_spec(spec);spec.loader.exec_module(display)
 
 class DisplayTests(unittest.TestCase):
+    def test_hermes_native_compaction_is_not_a_chat_message(self):
+        marker='[CONTEXT COMPACTION — REFERENCE ONLY] historical summary'
+        self.assertTrue(display.hermes_internal_message(marker))
+        self.assertTrue(display.hermes_internal_message('native summary', compressed=True))
+        self.assertFalse(display.hermes_internal_message('用户引用：'+marker))
+        self.assertFalse(display.hermes_internal_message('Goal: 正常回答'))
+
     def test_generated_gallery_groups_only_same_turn_and_preserves_final_text(self):
         events=[{'id':'generated:a','role':'assistant','turnId':'a','media':['a.png']}, {'id':'comment','role':'assistant','turnId':'a','text':'生成中'}, {'id':'generated:b','role':'assistant','turnId':'a','media':['b.png']}, {'id':'final','role':'assistant','turnId':'a','text':'完成'}, {'id':'generated:c','role':'assistant','turnId':'b','media':['c.png']}]
         result=display.group_generated_images(events)

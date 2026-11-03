@@ -1,0 +1,3 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {ReadBudget} from '../web/readBudget.js';
+test('网页只读查询合并且不自动重试',async()=>{let calls=0;const budget=new ReadBudget();let finish!:(v:number)=>void;const read=()=>{calls++;return new Promise<number>(r=>{finish=r})};const a=budget.run('x',read),b=budget.run('x',read);await Promise.resolve();assert.equal(calls,1);finish(3);assert.equal(await a,3);assert.equal(await b,3)});
+test('网页遵守 Retry-After 并拒绝冷却期调用',async()=>{let now=100;const budget=new ReadBudget(()=>now);budget.failed('x','10');await assert.rejects(budget.run('x',async()=>1),/暂时受限/);assert.equal(budget.remaining('x'),10000);now+=10001;assert.equal(await budget.run('x',async()=>7),7);assert.equal(budget.remaining('x'),0)});

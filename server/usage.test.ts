@@ -21,3 +21,5 @@ test('account limits do not wait for unavailable token statistics and classify e
  const failed=new UsageService(dir,async()=>{throw Error('401 token_revoked')},async()=>({}));
  const snapshot=await failed.readAccount();assert.equal(snapshot.codexAccount.limitsErrorCode,'auth_expired');assert.deepEqual(snapshot.codexAccount.limits,[]);
 });
+
+test('manual account refresh honors failure cooldown and records merge metrics',async()=>{const{UsageService}=await import('./usage.js');const{mkdtempSync}=await import('node:fs');let calls=0;const service=new UsageService(mkdtempSync('/tmp/gcollie-backoff-'),async()=>{calls++;throw Error('429')},async()=>({}));await Promise.all([service.readAccount(true),service.readAccount(true)]);await service.readAccount(true);assert.equal(calls,1);assert.equal(service.metrics().failures,1);assert.ok(service.metrics().nextRetryAt!>Date.now());});

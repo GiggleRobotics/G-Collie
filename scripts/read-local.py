@@ -1,6 +1,6 @@
 """Read-only, allowlisted session projection. Never exports settings or credentials."""
 import json,sqlite3,pathlib,sys,datetime,re,os,hashlib,base64
-from message_display import display_text, hermes_message, codex_created_input, codex_generated_image, group_generated_images
+from message_display import display_text, hermes_internal_message, hermes_message, codex_created_input, codex_generated_image, group_generated_images
 from process_records import ProcessRecords
 HOME=pathlib.Path.home()
 def db(path):
@@ -139,9 +139,9 @@ else:
    row=c.execute('SELECT id,title,cwd,git_repo_root,git_branch,model,started_at,last_activity_at,archived,input_tokens,output_tokens,cache_read_tokens FROM sessions WHERE id=? AND hidden=0',(native,)).fetchone()
    if not row:raise ValueError('会话不存在')
    r=dict(row);result=summary('Hermes',r);usage={'input':r['input_tokens'],'output':r['output_tokens'],'cached':r['cache_read_tokens'],'semantics':'provider-reported'}
-   for row in reversed(list(c.execute("SELECT id,role,content,tool_name,tool_calls,tool_call_id,display_kind,timestamp FROM messages WHERE session_id=? AND role IN ('user','assistant','tool') ORDER BY id DESC LIMIT 200",(native,)))):
+   for row in reversed(list(c.execute("SELECT id,role,content,tool_name,tool_calls,tool_call_id,display_kind,_compressed_summary,timestamp FROM messages WHERE session_id=? AND role IN ('user','assistant','tool') ORDER BY id DESC LIMIT 200",(native,)))):
     r=dict(row);content=r['content'];media=[]
-    if r.get('display_kind') in ['hidden','internal_notification']:continue
+    if hermes_internal_message(content,r.get('display_kind'),r.get('_compressed_summary')):continue
     projected_role,content,background=hermes_message(content,r['role'],r.get('display_kind'))
     if background:
      followup=background.pop('followup','')

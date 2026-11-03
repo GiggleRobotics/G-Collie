@@ -14,10 +14,11 @@ export type Resource={id:string;name:string;image:boolean;ref:string};
 // Only references present in user/assistant messages become addressable resources.
 export function references(d:any):Resource[]{
  const refs=new Set<string>();const media=new Set<string>();
+ const add=(ref:string)=>{refs.delete(ref);refs.add(ref)};
  for(const e of d.events||[]){if(!['user','assistant'].includes(e.role))continue;
-  for(const r of e.media||[])if(typeof r==='string'){refs.add(r);media.add(r);}
-  for(const m of String(e.text||'').matchAll(/^MEDIA:[ \t]*(.+)$/gm)){const r=m[1].trim().replace(/^"|"$/g,'');if(/\.(mp4|mov|m4v|webm)$/i.test(r))refs.add(r)}
-  for(const m of String(e.text||'').matchAll(/!?\[[^\]]*\]\(\s*(<[^>]+>|[^\n]*?)\s*\)/g)){let r=m[1];if(r.startsWith('<'))r=r.slice(1,-1);else r=r.replace(/\s+"[^"]*"$/,'');refs.add(r);}
+  for(const r of e.media||[])if(typeof r==='string'){add(r);media.add(r);}
+  for(const m of String(e.text||'').matchAll(/^MEDIA:[ \t]*(.+)$/gm)){const r=m[1].trim().replace(/^"|"$/g,'');if(/\.(mp4|mov|m4v|webm)$/i.test(r))add(r)}
+  for(const m of String(e.text||'').matchAll(/!?\[[^\]]*\]\(\s*(<[^>]+>|[^\n]*?)\s*\)/g)){let r=m[1];if(r.startsWith('<'))r=r.slice(1,-1);else r=r.replace(/\s+"[^"]*"$/,'');add(r);}
  }
  return [...refs].filter(r=>(!/^https?:|^data:/i.test(r)&&(extensions.has(extname(r.split(/[?#]/)[0]).toLowerCase())||media.has(r)||/\/uploads\/[a-f0-9-]{36}\/content$/.test(r)))||/^data:image\/(png|jpeg|gif|webp);base64,/i.test(r)).map(ref=>({id:createHash('sha256').update(d.id+'\0'+ref).digest('hex').slice(0,32),ref,name:ref.startsWith('data:')?'会话图片.png':basename(ref.replace(/^file:\/\//,'')),image:ref.startsWith('data:')||images.has(extname(ref).toLowerCase())}));
 }

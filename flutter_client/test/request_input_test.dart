@@ -4,6 +4,51 @@ import 'package:g_collie_flutter/request_input.dart';
 import 'package:g_collie_flutter/api.dart';
 
 void main() {
+  testWidgets(
+    'multi-select submits native JSON array without duplicate custom field',
+    (tester) async {
+      Json? result;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: RequestInputCard(
+              enabled: true,
+              request: {
+                'id': 'multi',
+                'kind': 'question',
+                'params': {
+                  'questions': [
+                    {
+                      'id': 'q',
+                      'question': '选择颜色',
+                      'multiSelect': true,
+                      'options': [
+                        {'label': '蓝'},
+                        {'label': '绿'},
+                      ],
+                    },
+                  ],
+                },
+              },
+              onSubmit: (answer) async {
+                result = answer;
+                return true;
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('蓝'));
+      await tester.pump();
+      await tester.tap(find.text('绿'));
+      await tester.pump();
+      expect(find.text('填写其他回答'), findsNothing);
+      await tester.tap(find.text('提交回答'));
+      await tester.pump();
+      expect(result?['answers']['q'], '["蓝","绿"]');
+    },
+  );
+
   final request = <String, dynamic>{
     'id': 'q1',
     'kind': 'question',

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'api.dart';
 
@@ -183,6 +184,7 @@ class _RequestInputCardState extends State<RequestInputCard> {
     String? description,
     required bool selected,
     required VoidCallback onTap,
+    bool multiple = false,
   }) {
     final scheme = Theme.of(context).colorScheme;
     return Padding(
@@ -207,9 +209,13 @@ class _RequestInputCardState extends State<RequestInputCard> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Icon(
-                    selected
-                        ? Icons.radio_button_checked
-                        : Icons.radio_button_off,
+                    multiple
+                        ? (selected
+                              ? Icons.check_box
+                              : Icons.check_box_outline_blank)
+                        : (selected
+                              ? Icons.radio_button_checked
+                              : Icons.radio_button_off),
                     size: 20,
                     color: enabled ? scheme.onSurface : scheme.onSurfaceVariant,
                   ),
@@ -251,6 +257,10 @@ class _RequestInputCardState extends State<RequestInputCard> {
   Widget question(Map q, int index) {
     final id = questionId(q, index);
     final options = q['options'] as List? ?? [];
+    final multiple = q['multiSelect'] == true;
+    final picked = multiple && answers[id] != null
+        ? List<String>.from(jsonDecode(answers[id]!))
+        : <String>[];
     final controller = controllers.putIfAbsent(
       id,
       () => TextEditingController(),
@@ -278,13 +288,28 @@ class _RequestInputCardState extends State<RequestInputCard> {
             option(
               title: '${o['label']}',
               description: o['description'] as String?,
-              selected: !custom.contains(id) && answers[id] == '${o['label']}',
+              multiple: multiple,
+              selected: multiple
+                  ? picked.contains('${o['label']}')
+                  : !custom.contains(id) && answers[id] == '${o['label']}',
               onTap: () => setState(() {
                 custom.remove(id);
-                answers[id] = '${o['label']}';
+                if (multiple) {
+                  final value = '${o['label']}';
+                  picked.contains(value)
+                      ? picked.remove(value)
+                      : picked.add(value);
+                  if (picked.isEmpty) {
+                    answers.remove(id);
+                  } else {
+                    answers[id] = jsonEncode(picked);
+                  }
+                } else {
+                  answers[id] = '${o['label']}';
+                }
               }),
             ),
-          if (options.isNotEmpty && !custom.contains(id))
+          if (!multiple && options.isNotEmpty && !custom.contains(id))
             option(
               title: '填写其他回答',
               selected: false,

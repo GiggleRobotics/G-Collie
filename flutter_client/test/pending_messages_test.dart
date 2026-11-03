@@ -3,6 +3,20 @@ import 'package:g_collie_flutter/pending_messages.dart';
 
 void main() {
   test(
+    'retry replaces identical failed receipt but preserves unknown sends',
+    () {
+      final p = PendingMessages();
+      p.add('s', 'a', 'hello', [], attachments: true);
+      p.update('s', 'a', 'failed');
+      p.add('s', 'b', 'hello', [], attachments: true);
+      expect(p.sessions['s']!.length, 1);
+      p.update('s', 'b', 'unknown');
+      p.add('s', 'c', 'hello', [], attachments: true);
+      expect(p.sessions['s']!.length, 2);
+    },
+  );
+
+  test(
     'receipt survives stale reads and reconciles by turn without matching old identical text',
     () {
       final pending = PendingMessages();

@@ -16,10 +16,12 @@ bool isSessionVideo(String ref) => RegExp(
 class SessionVideo extends StatefulWidget {
   final SessionResources resources;
   final String source;
+  final bool showGalleryButton;
   const SessionVideo({
     super.key,
     required this.resources,
     required this.source,
+    this.showGalleryButton = true,
   });
   @override
   State<SessionVideo> createState() => _SessionVideoState();
@@ -149,34 +151,31 @@ class _SessionVideoState extends State<SessionVideo> {
     }
   }
 
-  Future<void> fullscreen() async {
+  @override
+  void dispose() {
     if (kIsWeb) {
-      if (browserUrl == null) await play();
-      if (mounted && browserUrl != null) {
-        await WidgetsBinding.instance.endOfFrame;
-        pauseBrowserVideos();
-        if (!mounted) return;
-        final url = browserUrl!;
-        await Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (_) => Scaffold(
-              appBar: AppBar(title: const Text('视频')),
-              body: ColoredBox(
-                color: Colors.black,
-                child: Center(
-                  child: AspectRatio(
-                    aspectRatio: aspectRatio,
-                    child: browserVideo(url),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      }
-    } else {
-      await widget.resources.open(context, widget.source);
+      pauseBrowserVideos();
     }
+    final player = controller;
+    if (player != null) {
+      player
+          .runJavaScript(
+            'document.querySelectorAll("video").forEach(v => { v.autoplay=false; v.pause(); });',
+          )
+          .catchError((_) {});
+    }
+    super.dispose();
+  }
+
+  Future<void> fullscreen() async {
+    if (kIsWeb) pauseBrowserVideos();
+    if (controller != null) {
+      await controller!.runJavaScript(
+        'document.querySelectorAll("video").forEach(v=>v.pause())',
+      );
+    }
+    if (!mounted) return;
+    await widget.resources.gallery(context, widget.source);
   }
 
   @override
@@ -258,19 +257,20 @@ class _SessionVideoState extends State<SessionVideo> {
                       ),
                     ),
                   ),
-                Positioned(
-                  top: 4,
-                  right: 4,
-                  child: IconButton(
-                    tooltip: '全屏播放',
-                    style: IconButton.styleFrom(
-                      backgroundColor: const Color(0x99000000),
-                      foregroundColor: Colors.white,
+                if (widget.showGalleryButton)
+                  Positioned(
+                    top: 4,
+                    right: 4,
+                    child: IconButton(
+                      tooltip: '全屏播放',
+                      style: IconButton.styleFrom(
+                        backgroundColor: const Color(0x99000000),
+                        foregroundColor: Colors.white,
+                      ),
+                      icon: const Icon(Icons.fullscreen, size: 22),
+                      onPressed: fullscreen,
                     ),
-                    icon: const Icon(Icons.fullscreen, size: 22),
-                    onPressed: fullscreen,
                   ),
-                ),
               ],
             ),
           ),

@@ -1,4 +1,6 @@
 window.prototypeDetails = [
+ {group:'工具与批准',page:'question',detail:'multi-select',label:'Hermes 多选问题',help:'多选至少一项，按原生数组字符串提交；不执行真实任务。',state:'normal'},
+
   {
     "group": "全局菜单",
     "page": "home",

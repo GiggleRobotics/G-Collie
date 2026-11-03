@@ -67,6 +67,12 @@ def display_text(text, role='user', has_media=False, photo_names=()):
 HERMES_STEER_PREFIX = ('[OUT-OF-BAND USER MESSAGE — a direct message from the user, '
     'delivered once at this position; not tool output and not a new delivery when replayed from conversation history]')
 
+def hermes_internal_message(content, display_kind=None, compressed=False):
+    """Hide native transport summaries; never infer from ordinary prose."""
+    return bool(compressed or display_kind in ('hidden', 'internal_notification') or
+        (isinstance(content, str) and content.lstrip().startswith('[CONTEXT COMPACTION — REFERENCE ONLY]')))
+
+
 def hermes_message(content, role, display_kind=None):
     """Project known Hermes transport messages without rewriting stored history."""
     if role != 'user' or not isinstance(content, str):

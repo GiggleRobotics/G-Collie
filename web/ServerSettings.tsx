@@ -1,0 +1,8 @@
+import React,{useState} from 'react';
+import {Monitor,Smartphone,Network,Activity} from 'lucide-react';
+import {DeviceSettings,NetworkSettings} from './DeviceSettings';
+import DeviceDiagnostics from './DeviceDiagnostics';
+export default function ServerSettings({api,role,online,onDiagnostics}:{api:(p:string,b?:any)=>Promise<any>;role:string;online:boolean;onDiagnostics:()=>void}){
+ const[tab,setTab]=useState('devices');const owner=role==='owner';
+ return <section className="chat-page server-settings"><header className="section-heading"><div><h1>{owner?'服务端管理':'电脑与连接'}</h1><p className="muted">{owner?'管理这台电脑的访问设备、手机配对和远程连接。':'查看当前电脑连接，管理配对请使用电脑管理端。'}</p></div><span className="server-role"><i className={online?'online-dot':'online-dot offline'}/>{owner?'电脑管理端':role==='view'?'只读设备':'控制设备'}</span></header><div className="server-summary"><Monitor size={22}/><div><strong>当前工作电脑</strong><p>{online?'本地服务已连接':'服务连接已中断，状态未知'}</p></div><button className="outlined-button" onClick={onDiagnostics}><Activity size={16}/>故障诊断</button></div><nav className="server-tabs" aria-label="服务端设置"><button aria-pressed={tab==='devices'} onClick={()=>setTab('devices')}><Smartphone size={17}/>{owner?'手机配对与设备':'设备权限'}</button>{owner&&<><button aria-pressed={tab==='network'} onClick={()=>setTab('network')}><Network size={17}/>网络与服务</button><button aria-pressed={tab==='logs'} onClick={()=>setTab('logs')}><Activity size={17}/>手机日志</button></>}</nav><div className="server-panel">{tab==='devices'?<DeviceSettings api={api} role={role}/>:tab==='network'&&owner?<NetworkSettings api={api}/>:owner?<DeviceDiagnostics api={api}/>:null}</div></section>
+}

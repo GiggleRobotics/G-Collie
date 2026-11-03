@@ -105,6 +105,10 @@ class CollieApi {
       }
     }
     configurePreviewScenario();
+    if (Uri.base.queryParameters['detail'] == 'multi-select') {
+      final pending = sessions['hermes:demo']?['pending'];
+      if (pending is Map) { for(final q in pending['params']['questions'] as List) { q['multiSelect'] = true; } }
+    }
   }
   void configurePreviewScenario() {
     final page = Uri.base.queryParameters['page'];
@@ -243,6 +247,8 @@ class CollieApi {
         'projects': projects,
         'warnings': [],
       };
+    if(path.endsWith('/codex-capabilities')) return {'mode':'default','modes':{'data':{'data':[{'mode':'plan'},{'mode':'default'}]}},'plugins':{'data':{'marketplaces':[]}},'skills':[{'id':'demo:documents','name':'documents','plugin':'Documents'}],'goal':{'data':{'goal':null}}};
+    if(path.endsWith('/goal')||path.endsWith('/mode')) return {'ok':true};
     if (path.startsWith('/local/')) {
       final parts = path.substring(7).split('/');
       final id = Uri.decodeComponent(parts.first);

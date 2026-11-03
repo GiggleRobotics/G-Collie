@@ -112,6 +112,7 @@ void main() {
     await tester.drag(list, const Offset(0, 600));
     await tester.pumpAndSettle();
     expect(find.byTooltip('跳到最新消息'), findsOneWidget);
+    expect(tester.getCenter(find.byTooltip('跳到最新消息')).dx, closeTo(tester.getCenter(list).dx, 1));
     await tester.tap(find.byTooltip('跳到最新消息'));
     await tester.pumpAndSettle();
     expect(find.byTooltip('跳到最新消息'), findsNothing);

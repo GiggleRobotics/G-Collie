@@ -13,6 +13,12 @@ class PendingMessages {
   }) {
     final rows = sessions.putIfAbsent(session, () => []);
     if (rows.any((e) => e['id'] == id)) return;
+    rows.removeWhere(
+      (e) =>
+          e['sendStatus'] == 'failed' &&
+          e['text'] == (text.isEmpty && attachments ? '附件消息' : text) &&
+          e['attachments'] == attachments,
+    );
     rows.add({
       'id': id,
       'role': 'user',

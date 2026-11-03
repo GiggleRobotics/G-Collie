@@ -19,3 +19,5 @@ test('independent creation never invokes cross-task create tool and deduplicates
  assert.deepEqual(await c.create(b),{id:'codex:direct',nativeId:'direct',turnId:'turn-direct'});assert.equal(calls,1);
  }finally{rmSync(root,{recursive:true,force:true})}
 });
+
+test('导航可使用目标会话作为调用上下文，不依赖保存的其他任务',async()=>{const root=mkdtempSync(join(tmpdir(),'gcollie-nav-'));try{const c:any=new DesktopCreator(root);c.runtime={};let params:any;c.rpc=async(_:string,p:any)=>{params=p;return{success:true,contentItems:[{type:'inputText',text:'{}'}]}};await c.load('target-thread');assert.equal(params.threadId,'target-thread');assert.equal(params.arguments.threadId,'target-thread');}finally{rmSync(root,{recursive:true,force:true})}});

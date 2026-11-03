@@ -7,8 +7,14 @@ class DiagnosticLog {
   );
   static Future<void> writes = Future.value();
   static final samples = <String, DateTime>{};
-  static String route(String path) =>
-      path.split('?').first.replaceAll(RegExp(r'[a-f0-9-]{16,}'), ':id');
+  static String route(String path) {
+    var value = path.split('?').first;
+    try {
+      value = Uri.decodeComponent(value);
+    } catch (_) {}
+    return value.replaceAll(RegExp(r'[a-f0-9-]{16,}'), ':id');
+  }
+
   static Future<void> record(
     String computer,
     String path,

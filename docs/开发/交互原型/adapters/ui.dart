@@ -1,3 +1,6 @@
+import 'sketch.dart';
+import 'codex_capabilities.dart';
+import 'snippets.dart';
 import 'session_video.dart';
 import 'computers.dart';
 import 'preview_pairing.dart';
@@ -711,9 +714,11 @@ class _CollieShellState extends State<CollieShell> {
             ['video', '添加视频', Icons.video_library_outlined],
             ['file', '手机文件', Icons.attach_file],
             ['folder', '引用电脑目录', Icons.folder_outlined],
+            if(widget.detail?['agent']=='Codex') ...[ ['codex-capabilities','目标、计划与插件',Icons.tune], ['sketch','Sketch 草图',Icons.draw_outlined] ],
             if (widget.detail?['agent'] == 'Hermes') ...[
               ['url', '添加网址', Icons.link],
               ['snippet', '提示词片段', Icons.short_text],
+              ['clipboard', '粘贴图片', Icons.content_paste],
             ],
           ])
             ListTile(
@@ -740,6 +745,48 @@ class _CollieShellState extends State<CollieShell> {
           'video': kind == 'video',
         }),
       );
+      return;
+    }
+    if (kind == 'clipboard') {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('浏览器原型不读取系统图片剪贴板，请在手机中验证')));
+      return;
+    }
+    if(kind=='codex-capabilities'){
+      final selection=await Navigator.of(context).push<Json>(MaterialPageRoute(builder:(_)=>CodexCapabilities(api:widget.api,session:'${widget.detail!['id']}',enabled:widget.enabled)));
+      if(selection!=null&&mounted){if(uploads.length>=5){setState(()=>uploadError='每条消息最多添加 5 个附件或技能');}else{setState(()=>uploads.add({'id':'skill:${selection['skillId']}','name':selection['name'],'mime':'application/x-codex-skill','size':0,'image':false}));}}return;
+    }
+    if (kind == 'sketch') {
+      final id = widget.detail?['id'];
+      final bytes = await Navigator.of(
+        context,
+      ).push<Uint8List>(MaterialPageRoute(builder: (_) => const SketchPage()));
+      if (bytes != null &&
+          mounted &&
+          widget.enabled &&
+          widget.detail?['id'] == id) {
+        try {
+          if (uploads.length >= 5) throw ApiException('每条消息最多添加 5 个附件');
+          setState(() => uploading = true);
+          final result = await widget.api.call('/attachments', {
+            'session': id,
+            'name': 'sketch.png',
+            'image': true,
+            'data': base64Encode(bytes),
+          });
+          if (mounted && widget.detail?['id'] == id) {
+            setState(() => uploads.add(Map<String, dynamic>.from(result)));
+          }
+        } catch (e) {
+          if (mounted) setState(() => uploadError = '$e');
+        } finally {
+          if (mounted) setState(() => uploading = false);
+        }
+      }
+      return;
+    }
+    if (kind == 'snippet') {
+      final value = await Navigator.of(context).push<String>(MaterialPageRoute(builder: (_) => const SnippetLibrary()));
+      if (mounted && value != null) appendContext(value);
       return;
     }
     if (kind == 'folder') {
@@ -1904,7 +1951,7 @@ class _CollieShellState extends State<CollieShell> {
       padding: const EdgeInsets.fromLTRB(22, 8, 22, 12),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         if (!compact) ...[
-          Image.asset('assets/collie-companion-v2.png', height: (constraints.maxHeight * .16).clamp(70, 120).toDouble(), fit: BoxFit.contain),
+          Image.asset('assets/collie-companion-v2.png', height: (constraints.maxHeight * .22).clamp(100, 160).toDouble(), fit: BoxFit.contain),
           const SizedBox(height: 8),
           const Text('今天想继续哪项工作？', textAlign: TextAlign.center, style: TextStyle(fontSize: 22, fontWeight: FontWeight.w500, height: 1.4)),
           const SizedBox(height: 6),
@@ -1921,7 +1968,7 @@ class _CollieShellState extends State<CollieShell> {
           }, child: const Text('查看全部会话')),
         ]),
         Expanded(child: recent.isEmpty ? Center(child: muted(context, homeAgent == null ? '暂无会话，点击右上角新建' : '$homeAgent 暂无会话', size: 13)) : LayoutBuilder(builder: (context, area) {
-          final height = math.min(64.0, area.maxHeight / 4);
+          final height = area.maxHeight / 4;
           return Column(children: [for (final s in recent) SizedBox(
             key: ValueKey('home-recent:${s['id']}'),
             height: height,
@@ -3009,9 +3056,10 @@ class _CollieShellState extends State<CollieShell> {
                       children: [
                         Positioned.fill(child: conversation(d)),
                         Positioned(
-                          right: 16,
+                          left: 0,
+                          right: 0,
                           bottom: 12,
-                          child: AnimatedBuilder(
+                          child: Center(child: AnimatedBuilder(
                             animation: widget.scroll,
                             builder: (context, _) =>
                                 widget.scroll.hasClients && widget.scroll.position.hasContentDimensions &&
@@ -3038,7 +3086,7 @@ class _CollieShellState extends State<CollieShell> {
                                     ),
                                   )
                                 : const SizedBox.shrink(),
-                          ),
+                          )),
                         ),
                       ],
                     ),

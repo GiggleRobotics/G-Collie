@@ -1,3 +1,4 @@
+import 'diagnostic_log.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
@@ -18,13 +19,44 @@ class NativeBridge {
         : result;
   }
 
+  static String networkComputer = 'embedded-network';
+  static String? lastNetworkState;
   static Future<Json> network(String action, [String? remote]) async {
     if (!Platform.isAndroid) throw ApiException('内置网络仅支持 Android');
     final raw = await invoke<String>(
       'network$action',
       remote == null ? null : {'remote': remote},
     );
-    return Map<String, dynamic>.from(jsonDecode(raw!));
+    final data = Map<String, dynamic>.from(jsonDecode(raw!));
+    final state = '${data['state']}';
+    if ([
+          'Running',
+          'Starting',
+          'Stopped',
+          'NoState',
+          'NeedsLogin',
+          'NeedsMachineAuth',
+        ].contains(state) &&
+        state != lastNetworkState) {
+      lastNetworkState = state;
+      unawaited(
+        DiagnosticLog.record(
+          networkComputer,
+          '/native/network',
+          'network-state-$state',
+        ).catchError((_) {}),
+      );
+    }
+    if (action != 'Status') {
+      unawaited(
+        DiagnosticLog.record(
+          networkComputer,
+          '/native/network',
+          'network-action-$action',
+        ).catchError((_) {}),
+      );
+    }
+    return data;
   }
 
   static bool embedded(Uri u) {
@@ -39,6 +71,7 @@ class NativeBridge {
 
   static Future<void> connect(CollieApi api) async {
     if (!embedded(api.base)) return;
+    networkComputer = api.base.host;
     // A system Tailscale VPN is also valid; do not force a second login.
     final probe = HttpClient()..connectionTimeout = const Duration(seconds: 3);
     try {

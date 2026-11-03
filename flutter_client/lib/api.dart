@@ -1,3 +1,4 @@
+import 'read_budget.dart';
 import 'diagnostic_log.dart';
 import 'dart:convert';
 import 'dart:async';
@@ -238,7 +239,18 @@ class CollieApi {
     }
   }
 
-  Future<dynamic> call(String path, [Json? body]) async {
+  final readBudget = ReadBudget();
+  Future<dynamic> call(String path, [Json? body]) {
+    if (body != null) return callOnce(path, body);
+    return readBudget.run(path, () async {
+      if (readBudget.remaining(path) > Duration.zero) {
+        throw ApiException('请求暂时受限，请稍后重试', 429, 'read_backoff');
+      }
+      return callOnce(path, null);
+    });
+  }
+
+  Future<dynamic> callOnce(String path, Json? body) async {
     final correlation = requestId();
     final began = Stopwatch()..start();
     try {
@@ -263,21 +275,32 @@ class CollieApi {
       return result;
     } on ApiException catch (e) {
       unawaited(
-        recordFailure(
+        DiagnosticLog.record(
+          base.host,
           path,
           e.status == 0
               ? 'transport-or-invalid-response'
               : 'http-${e.status}${e.code == null ? '' : '-${e.code}'}',
-          correlation,
+          requestId: correlation,
+          durationMs: began.elapsedMilliseconds,
+          status: e.status,
         ).catchError((_) {}),
       );
       rethrow;
     } catch (error) {
       unawaited(
-        recordFailure(
+        DiagnosticLog.record(
+          base.host,
           path,
-          error is TimeoutException ? 'transport-timeout' : 'transport-error',
-          correlation,
+          error is TimeoutException
+              ? 'transport-timeout'
+              : error is SocketException
+              ? 'transport-socket'
+              : error is TlsException
+              ? 'transport-tls'
+              : 'transport-error',
+          requestId: correlation,
+          durationMs: began.elapsedMilliseconds,
         ).catchError((_) {}),
       );
       throw ApiException(
@@ -309,6 +332,22 @@ class CollieApi {
         cookie = value.value.isEmpty ? '' : '${value.name}=${value.value}';
         await saveCookie?.call(cookie);
       }
+    }
+    if (body == null && [429, 502, 503, 504].contains(response.statusCode)) {
+      final raw = response.headers.value('retry-after');
+      Duration? delay;
+      if (raw != null) {
+        final seconds = int.tryParse(raw);
+        if (seconds != null) {
+          delay = Duration(seconds: seconds.clamp(0, 3600));
+        } else {
+          try {
+            final d = HttpDate.parse(raw).difference(DateTime.now());
+            if (!d.isNegative) delay = d;
+          } catch (_) {}
+        }
+      }
+      readBudget.failed(path, retryAfter: delay);
     }
     final text = await utf8.decoder.bind(response).join();
     dynamic data;

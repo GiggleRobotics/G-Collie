@@ -76,6 +76,29 @@ class MainActivity : FlutterActivity() {
         channel = MethodChannel(engine.dartExecutor.binaryMessenger, "dev.giggle.gcollie/native")
         channel!!.setMethodCallHandler { call, result ->
             when (call.method) {
+                "clipboardImage" -> {
+                    try {
+                        val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        val clip = clipboard.primaryClip
+                        val uri = if (clip != null && clip.itemCount > 0) clip.getItemAt(0).uri else null
+                        if (uri == null || uri.scheme != "content" || !(contentResolver.getType(uri) ?: "").startsWith("image/")) {
+                            result.error("no_image", "剪贴板中没有可读取的图片", null)
+                        } else {
+                            worker.execute {
+                                try {
+                                    val bytes = contentResolver.openInputStream(uri)?.use { val output = java.io.ByteArrayOutputStream(); val buffer = ByteArray(8192)
+                                        while (output.size() <= 10 * 1024 * 1024) { val n = it.read(buffer); if (n < 0) break; output.write(buffer, 0, n) }; output.toByteArray() } ?: throw IllegalArgumentException("无法读取剪贴板图片")
+                                    if (bytes.isEmpty() || bytes.size > 10 * 1024 * 1024) throw IllegalArgumentException("请选择不超过 10 MB 的图片")
+                                    val mime = contentResolver.getType(uri)
+                                    val ext = when (mime) { "image/png" -> "png"; "image/jpeg" -> "jpg"; "image/webp" -> "webp"; "image/gif" -> "gif"; else -> throw IllegalArgumentException("暂不支持该图片格式") }
+                                    val file = File(cacheDir, "clipboard-${System.currentTimeMillis()}.$ext")
+                                    file.writeBytes(bytes)
+                                    runOnUiThread { result.success(file.absolutePath) }
+                                } catch (e: Exception) { runOnUiThread { result.error("clipboard_read", "无法读取剪贴板图片，请重新复制后重试", null) } }
+                            }
+                        }
+                    } catch (e: Exception) { result.error("clipboard_read", "无法读取剪贴板图片，请重新复制后重试", null) }
+                }
                 "offlineDirectory" -> {
                     val directory = java.io.File(filesDir, "offline-images")
                     directory.mkdirs()
