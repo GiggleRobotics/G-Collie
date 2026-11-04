@@ -1,6 +1,6 @@
 """Read-only, allowlisted session projection. Never exports settings or credentials."""
 import json,sqlite3,pathlib,sys,datetime,re,os,hashlib,base64
-from message_display import display_text, hermes_internal_message, hermes_message, codex_created_input, codex_generated_image, group_generated_images
+from message_display import visible_user_media, display_text, hermes_internal_message, hermes_message, codex_created_input, codex_generated_image, group_generated_images
 from process_records import ProcessRecords
 HOME=pathlib.Path.home()
 def db(path):
@@ -132,6 +132,7 @@ else:
      modern_usage=True;u=p.get('thread_token_usage') or {};usage={'input':u.get('input_tokens'),'output':u.get('output_tokens'),'cached':u.get('cached_input_tokens'),'semantics':'includes-cache'}
     if kind=='event_msg' and p.get('type')=='token_count' and not modern_usage:
      u=(p.get('info') or {}).get('total_token_usage') or {};usage={'input':u.get('input_tokens'),'output':u.get('output_tokens'),'cached':u.get('cached_input_tokens'),'semantics':'includes-cache'}
+    if role=='user':text,media=visible_user_media(text,media)
     text=display_text(text,role,bool(media),photo_names(media,text))
     if text or media:events.append(dict(id=p.get('id') or str(index),role=role,text=text,media=media,phase=p.get('channel'),turnId=(p.get('internal_chat_message_metadata_passthrough') or {}).get('turn_id'),time=ms(d.get('timestamp'))))
  elif agent=='hermes':

@@ -107,7 +107,7 @@ class _CodexQuotaNoticeState extends State<CodexQuotaNotice>
         loadError = account?['limitsError'] == null
             ? null
             : account?['limitsErrorCode'] == 'auth_expired'
-            ? 'Codex 登录已失效，请在电脑重新登录后刷新'
+            ? '额度查询认证失败，请重新检查；这不代表聊天登录失效'
             : '电脑已连接，Codex 额度查询失败，请重试';
       });
       if (account?['limitsError'] == null) {
@@ -173,8 +173,10 @@ class _CodexQuotaNoticeState extends State<CodexQuotaNotice>
     if (windows.isEmpty && loadError != null) {
       final auth = account?['limitsErrorCode'] == 'auth_expired';
       return StatusNotice(
-        title: auth ? '需要重新登录 Codex' : '暂时无法获取额度',
-        message: auth ? '请在电脑端完成登录，再回到这里检查。' : '本次没有取得额度信息，请重新检查。你的草稿已保留。',
+        title: '暂时无法查询额度',
+        message: auth
+            ? '额度查询认证失败，不代表聊天不可用；请重新检查。'
+            : '本次没有取得额度信息，请重新检查。你的草稿已保留。',
         icon: auth ? Icons.lock_outline : Icons.info_outline,
         connection: widget.online ? '电脑连接正常' : '电脑连接中断',
         primaryLabel: '重新检查',

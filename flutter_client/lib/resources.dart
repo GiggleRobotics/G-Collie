@@ -354,10 +354,12 @@ class _SessionImageState extends State<SessionImage> {
 class SessionGallery extends StatefulWidget {
   final SessionResources resources;
   final List<String> sources;
+  final Set<String> videos;
   const SessionGallery({
     super.key,
     required this.resources,
     required this.sources,
+    this.videos = const {},
   });
   @override
   State<SessionGallery> createState() => _SessionGalleryState();
@@ -369,7 +371,18 @@ class _SessionGalleryState extends State<SessionGallery> {
   final ratios = <String, double>{};
   Future<Uint8List> galleryImage(String ref) =>
       thumbnails.putIfAbsent(ref, () async {
-        final bytes = await widget.resources.image(ref);
+        final Uint8List bytes;
+        if (widget.videos.contains(ref) || isSessionVideo(ref)) {
+          final file = await widget.resources.find(ref);
+          if (file == null) throw StateError('视频暂不可读');
+          bytes = Uint8List.fromList(
+            await widget.resources.api.imageBytes(
+              '${widget.resources.root}/${file['id']}/poster',
+            ),
+          );
+        } else {
+          bytes = await widget.resources.image(ref);
+        }
         final buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
         final descriptor = await ui.ImageDescriptor.encoded(buffer);
         final ratio = descriptor.width / descriptor.height;
@@ -409,13 +422,20 @@ class _SessionGalleryState extends State<SessionGallery> {
                 child: SizedBox(
                   width: double.infinity,
                   height: height,
-                  child: SessionImage(
-                    key: ValueKey(current),
-                    resources: widget.resources,
-                    source: current,
-                    alt: '查看选中图片',
-                    inset: false,
-                  ),
+                  child:
+                      widget.videos.contains(current) || isSessionVideo(current)
+                      ? SessionVideo(
+                          key: ValueKey(current),
+                          resources: widget.resources,
+                          source: current,
+                        )
+                      : SessionImage(
+                          key: ValueKey(current),
+                          resources: widget.resources,
+                          source: current,
+                          alt: '查看选中图片',
+                          inset: false,
+                        ),
                 ),
               ),
               const SizedBox(width: 8),

@@ -22,7 +22,7 @@ window.prototypeDetails = [
     "page": "hermes",
     "detail": "long-history",
     "label": "长会话与跳底箭头",
-    "help": "向上滑动历史，右下角出现箭头；点击回到底部后隐藏。",
+    "help": "演示 260 条历史，可回溯第 1 条；离底时输入框上方出现箭头，回到底部后隐藏。",
     "state": "normal"
   },
   {

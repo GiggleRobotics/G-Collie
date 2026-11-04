@@ -70,7 +70,12 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   html.window.onMessage.listen((event) {
     if (event.origin != html.window.location.origin || event.data is! String) return;
-    final message = jsonDecode(event.data as String);
+    dynamic message;
+    try {
+      message = jsonDecode(event.data as String);
+    } on FormatException {
+      return; // Readiness and other plain-text messages are not navigation.
+    }
     if (message is! Map || message['type'] != 'prototype:navigate') return;
     final query = message['query'];
     if (query is! String) return;

@@ -10,7 +10,17 @@ export class DesktopCreator {
  private async pipe(){if(this.runtime.pipe){try{const r=await this.rpcAt(this.runtime.pipe,'tools/list',{threadStartKind:'all'},1500);if(r.tools?.some((t:any)=>t.name==='create_thread'))return this.runtime.pipe}catch{}}if(this.discovering)return this.discovering;this.discovering=(async()=>{const directory='/tmp/codex-browser-use';let names:string[];try{const st=lstatSync(directory);if(st.uid!==process.getuid?.())throw Error('目录属主不匹配');names=readdirSync(directory).filter(n=>/^[a-f0-9-]+\.sock$/.test(n)).slice(0,30)}catch{throw Error('未找到桌面本地接口，请先启动 Codex 桌面 App')}const matches:string[]=[];for(const name of names){const path=join(directory,name);try{const r=await this.rpcAt(path,'tools/list',{threadStartKind:'all'},700);if(r.tools?.some((t:any)=>t.name==='create_thread'))matches.push(path)}catch{}}if(matches.length!==1)throw Error('未唯一发现 Codex 桌面接口，请在当前 Codex 环境重新运行后台安装命令');this.runtime.pipe=matches[0];writeFileSync(join(this.root,'desktop-runtime.json'),JSON.stringify(this.runtime),{mode:0o600});return matches[0]})();try{return await this.discovering}finally{this.discovering=undefined}}
  private async rpc(method:string,params:any){return this.rpcAt(await this.pipe(),method,params)}
  private async tool(tool:string,args:any){const threadId=(tool==='navigate_to_codex_page'?args.threadId:undefined)||this.runtime.context;if(!threadId)throw Error('缺少 Codex 桌面初始化信息，请先在 Codex 环境运行后台安装命令');const r=await this.rpc('tools/call',{namespace:'codex_app',tool,arguments:args,callerSource:'codex',hostId:'local',threadId,callId:'orbit-'+crypto.randomUUID(),turnId:crypto.randomUUID()});if(!r.success)throw Error(r.contentItems?.filter((x:any)=>x.type==='inputText').map((x:any)=>x.text).join('\n')||'桌面操作失败');const texts=r.contentItems?.filter((x:any)=>x.type==='inputText').map((x:any)=>x.text)||[];for(const t of texts){try{return JSON.parse(t)}catch{}}throw Error('桌面返回无法识别的结果')}
- async usageLimits(){return this.tool('get_usage_limits',{})}
+ async usageLimits(){
+  // Desktop login/runtime may change while this service stays alive. Reload
+  // persisted discovery before this read; never replay mutations on recovery.
+  try{const runtime=JSON.parse(readFileSync(join(this.root,'desktop-runtime.json'),'utf8'));if(typeof runtime.pipe==='string'&&typeof runtime.context==='string')this.runtime={pipe:runtime.pipe,context:runtime.context}}catch{}
+  try{return await this.tool('get_usage_limits',{})}catch(error){
+   if(/429|rate.limit/i.test(String(error)))throw error;
+   // Force discovery for the next read. Only this idempotent query is retried.
+   this.runtime.pipe=undefined;
+   return this.tool('get_usage_limits',{});
+  }
+ }
  async status(){try{await this.pipe();return{available:true,experimental:true}}catch(e){return{available:false,experimental:true,reason:(e as Error).message}}}
  async firstMessage(threadId:string,prompt:string){return this.tool('send_message_to_thread',{threadId,prompt})}
  async load(threadId:string){if(!/^[a-zA-Z0-9_-]+$/.test(threadId))throw Error('无效会话编号');return this.tool('navigate_to_codex_page',{threadId})}

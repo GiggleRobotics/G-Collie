@@ -37,3 +37,9 @@ test('compact history sends stable image handles without changing authenticated 
 });
 
 test('repeated video stays at its latest conversation occurrence',()=>{const d={id:'hermes:test',events:[{role:'assistant',media:['/clip.mp4']},{role:'assistant',media:['/one.png','/two.png']},{role:'assistant',media:['/clip.mp4'],text:'[视频](/clip.mp4)'}]};assert.deepEqual(references(d).map(r=>r.ref),['/one.png','/two.png','/clip.mp4']);assert.equal(references(d).length,3)});
+
+test('extensionless uploaded videos preserve the attachment label for media classification',()=>{
+ const ref='/home/test/uploads/ba4fe46c-c4fc-4efc-bd6b-be1e12d1d802/content';
+ const list=references({id:'codex:video',events:[{role:'user',text:`视频附件：[录屏.mp4](${ref})`}]});
+ assert.equal(list[0].name,'录屏.mp4');assert.equal(list[0].ref,ref);assert.equal(list[0].image,false);
+});

@@ -937,8 +937,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   final savedDrafts = <String, String>{};
   Timer? draftTimer;
   String get draftKey => 'workspace-drafts:${widget.api.base}';
-  String draftId() =>
-      detail?['draft'] == true ? '__new__' : '${detail?['id'] ?? ''}';
+  String draftId() => '${detail?['id'] ?? ''}';
   void persistDraft() {
     final id = draftId();
     if (id.isEmpty) return;
@@ -1040,7 +1039,9 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       // Otherwise fast cache restoration can open an empty offline placeholder.
       await initialLoad;
       if (!mounted) return;
-      if (widget.initialSession != null && seed == null) open(widget.initialSession!);
+      if (widget.initialSession != null && seed == null) {
+        open(widget.initialSession!);
+      }
     });
     NativeBridge.invoke<bool>('notificationEnabled')
         .then((enabled) {
@@ -1264,7 +1265,11 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       error = '';
       if (!sameSession) {
         final cached = cachedDetails[id];
-        detail = cached is Map ? localDetail(id, cached) : null;
+        detail = cached is Map
+            ? localDetail(id, cached)
+            : detail?['draft'] == true
+            ? localDetail(id, {...detail!, 'draft': false})
+            : null;
         draft.text = savedDrafts[id] ?? '';
         answers.clear();
       }
@@ -1513,7 +1518,6 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         'status': 'idle',
         'events': <Json>[],
       };
-      draft.text = savedDrafts['__new__'] ?? '';
     });
   }
 
@@ -1555,6 +1559,11 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         turnId: result['turnId'] as String?,
       );
       if (mounted && token == generation) {
+        // Consume the acknowledged first message before open() saves the
+        // outgoing draft, otherwise it is restored by the next new session.
+        draftTimer?.cancel();
+        draft.clear();
+        persistDraft();
         await open(result['id']);
         await load();
       }

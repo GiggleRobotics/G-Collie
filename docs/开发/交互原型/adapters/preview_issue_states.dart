@@ -32,8 +32,8 @@ class _PreviewIssueNoticeState extends State<PreviewIssueNotice> {
     }
     final auth = scenario == 'codex-auth';
     return StatusNotice(
-      title: recovered ? '检查完成' : auth ? '需要重新登录 Codex' : scenario == 'codex-timeout' ? 'Codex 响应超时' : '暂时无法获取额度',
-      message: recovered ? '这是演示反馈，实际状态以电脑返回的结果为准。' : auth ? '请在电脑端完成登录，再回到这里检查。' : scenario == 'codex-timeout' ? '未能及时取得结果，请重新检查。你的草稿已保留。' : '本次没有取得额度信息，请重新检查。你的草稿已保留。',
+      title: recovered ? '检查完成' : auth ? '暂时无法查询额度' : scenario == 'codex-timeout' ? 'Codex 响应超时' : '暂时无法获取额度',
+      message: recovered ? '这是演示反馈，实际状态以电脑返回的结果为准。' : auth ? '额度查询认证失败，不代表聊天不可用；请重新检查。' : scenario == 'codex-timeout' ? '未能及时取得结果，请重新检查。你的草稿已保留。' : '本次没有取得额度信息，请重新检查。你的草稿已保留。',
       icon: recovered ? Icons.check_circle_outline : auth ? Icons.lock_outline : scenario == 'codex-timeout' ? Icons.schedule_outlined : Icons.info_outline,
       connection: '电脑连接正常',
       primaryLabel: recovered ? '再次检查' : '重新检查',

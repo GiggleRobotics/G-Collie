@@ -526,38 +526,28 @@ class _CollieShellState extends State<CollieShell> {
     );
   }
 
-  Widget eventBody(Json e) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      if ('${e['text'] ?? ''}'.isNotEmpty) markdown('${e['text']}'),
-      if ((e['media'] as List? ?? [])
-              .where((r) => !isSessionVideo('$r'))
-              .length >
-          1)
-        SessionGallery(
-          key: ValueKey('${widget.detail?['id']}:${e['id']}:gallery'),
-          resources: resources,
-          sources: List<String>.from(e['media'])
-              .where((r) => !isSessionVideo(r))
-              .toList(),
-        )
-      else
-        for (final ref in (e['media'] ?? []).where(
-          (r) => !isSessionVideo('$r'),
-        ))
-          SessionImage(
-            key: ValueKey('${widget.detail?['id']}:$ref'),
+  Widget eventBody(Json e) {
+    final text = '${e['text'] ?? ''}';
+    final refs = <String>{...List<String>.from(e['media'] ?? []), ...sessionVideoReferences(text)}.toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (text.isNotEmpty) markdownText(text),
+        if (refs.length > 1)
+          SessionGallery(
+            key: ValueKey('${widget.detail?['id']}:${e['id']}:gallery'),
             resources: resources,
-            source: '$ref',
-          ),
-      for (final ref in (e['media'] ?? []).where((r) => isSessionVideo('$r')))
-        SessionVideo(
-          key: ValueKey('media-video:$ref'),
-          resources: resources,
-          source: '$ref',
-        ),
-    ],
-  );
+            sources: refs,
+            videos: sessionVideoReferences(text),
+          )
+        else for (final ref in refs)
+          if (isSessionVideo(ref) || sessionVideoReferences(text).contains(ref))
+            SessionVideo(resources: resources, source: ref)
+          else
+            SessionImage(resources: resources, source: ref),
+      ],
+    );
+  }
   final scaffold = GlobalKey<ScaffoldState>();
   String query = '', agent = 'all', project = '', page = 'chat';
   final previewMoreMenu = GlobalKey<PopupMenuButtonState<String>>();
@@ -2074,21 +2064,10 @@ class _CollieShellState extends State<CollieShell> {
     controller: widget.scroll,
     padding: const EdgeInsets.fromLTRB(20, 16, 20, 30),
     children: [
-      Center(
-        child: muted(
-          context,
-          d['draft'] == true
-              ? '直接发送第一条消息，自动生成会话名称'
-              : widget.api.previewOffline
-              ? '电脑离线 · 当前显示缓存记录'
-              : !widget.online
-              ? '电脑连接中断 · 状态未知'
-              : d['desktopLive'] == true
-              ? '桌面实时连接 · ${const {'idle': '空闲', 'running': '执行中', 'waiting': '等待处理', 'starting': '加载中'}[d['status']] ?? '状态未知'} · 最近 ${d['historyLimit'] ?? 200} 条记录'
-              : '桌面历史 · 运行状态未知 · 最近 ${d['historyLimit'] ?? 200} 条记录',
-          size: 10,
+      if (widget.api.previewOffline || !widget.online)
+        Center(
+          child: muted(context, '电脑离线 · 当前显示缓存记录', size: 10),
         ),
-      ),
       const SizedBox(height: 16),
       TextButton(
         onPressed: () => Navigator.of(context).push(
@@ -3042,6 +3021,7 @@ class _CollieShellState extends State<CollieShell> {
               ),
             if (widget.loading) const LinearProgressIndicator(minHeight: 1),
             Expanded(
+              key: const ValueKey('workspace-content'),
               child: page == 'projects'
                   ? projectsPage()
                   : page == 'usage'
@@ -3062,7 +3042,7 @@ class _CollieShellState extends State<CollieShell> {
                           child: Center(child: AnimatedBuilder(
                             animation: widget.scroll,
                             builder: (context, _) =>
-                                widget.scroll.hasClients && widget.scroll.position.hasContentDimensions &&
+                                widget.scroll.positions.length == 1 && widget.scroll.position.hasContentDimensions &&
                                     widget.scroll.position.extentAfter > 160
                                 ? Material(
                                     elevation: 2,

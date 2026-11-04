@@ -135,7 +135,7 @@ class CollieApi {
       ];
     }
     if (focus == 'long-history') {
-      demo['events'] = List.generate(35, (i) => {'id':'history-$i','role':i.isEven?'user':'assistant','text':'第 ${i+1} 条演示记录\n向上滑查看历史，右下角显示跳到最新消息箭头。'});
+      demo['events'] = List.generate(260, (i) => {'id':'history-$i','role':i.isEven?'user':'assistant','text':'第 ${i+1} 条演示记录\n向上滑查看历史，输入框上方显示跳到最新消息箭头。'});
     }
     if (focus == 'tool-records') {
       demo['events'] = [

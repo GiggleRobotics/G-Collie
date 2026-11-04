@@ -51,7 +51,7 @@ class _AccountLimitsState extends State<AccountLimits> {
         if (widget.account?['limitsError'] != null) ...[
           Text(
             widget.account?['limitsErrorCode'] == 'auth_expired'
-                ? 'Codex 登录已失效，请在电脑重新登录后刷新'
+                ? '额度查询认证失败，当前额度未知；不代表聊天登录失效'
                 : '电脑已连接，额度查询失败，当前额度未知',
           ),
           TextButton(onPressed: widget.onRefresh, child: const Text('刷新额度')),

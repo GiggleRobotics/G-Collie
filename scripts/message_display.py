@@ -5,6 +5,25 @@ from pathlib import PurePath
 from urllib.parse import quote
 
 
+def visible_user_media(text, media):
+    """Keep original attachments, hide only our own video sampling frames."""
+    paths = re.findall(r'<image\b[^>]*\bpath="([^"]+)"[^>]*>\s*</image>', text)
+    if len(paths) != len(media):
+        return text, media
+    hidden = set()
+    for i, path in enumerate(paths):
+        match = re.fullmatch(r'(.*/uploads/[a-f0-9-]{36})/media/frame-\d+\.jpg', path)
+        if match and re.search(r'视频附件：\[[^\]]+\]\(' + re.escape(quote(match[1] + '/content', safe='/')) + r'\)', text):
+            hidden.add(i)
+    if hidden:
+        text = re.sub(r'(?m)^以下是视频画面的均匀抽样，不含音频。[^\n]*\n?', '', text)
+        text = re.sub(r'(?m)^视频画面 \d+ · \d+(?:\.\d+)? 秒\s*$', '', text)
+        # The image tags are removed by display_text; retain real photo parts.
+        media = [ref for i, ref in enumerate(media) if i not in hidden]
+        text = re.sub(r'<image\b[^>]*>.*?</image>', '', text, flags=re.S)
+    return text, media
+
+
 def display_text(text, role='user', has_media=False, photo_names=()):
     if role == 'user':
         # Unwrap only a leading browser snapshot paired with the app request marker.

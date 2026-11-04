@@ -3,15 +3,18 @@ import {createInterface} from 'node:readline';
 import {existsSync} from 'node:fs';
 import {codexEnvironment} from './codex.js';
 /** Narrow native protocol adapter. No prompting, tool execution or plugin installation. */
-export async function nativeCodex(root:string,method:string,params:any){
- if(!['collaborationMode/list','plugin/installed','thread/goal/get','thread/goal/set','thread/goal/clear','thread/archive'].includes(method))throw Error('未允许的原生操作');
+export async function nativeCodex(root:string,method:string,params:any,expectedAccountKey?:string){
+ if(!['account/rateLimits/read','account/read','account/usage/read','collaborationMode/list','plugin/installed','thread/goal/get','thread/goal/set','thread/goal/clear','thread/archive'].includes(method))throw Error('未允许的原生操作');
  const bin=process.env.ORBIT_CODEX_BIN||process.env.CODEX_CLI_PATH||(existsSync('/usr/lib/chatgpt/resources/codex')?'/usr/lib/chatgpt/resources/codex':'codex');
  const child=spawn(bin,['app-server','--listen','stdio://'],{stdio:'pipe',env:codexEnvironment(root)});let seq=0;const pending=new Map<number,{resolve:(v:any)=>void;reject:(e:Error)=>void}>();const lines=createInterface({input:child.stdout});
  const fail=(e:Error)=>{for(const p of pending.values())p.reject(e);pending.clear()};child.on('error',fail);child.on('exit',()=>fail(Error('原生能力连接已关闭')));child.stderr.on('data',()=>{});
  lines.on('line',line=>{try{const r=JSON.parse(line),p=pending.get(r.id);if(p){pending.delete(r.id);r.error?p.reject(Error(r.error.message)):p.resolve(r.result)}}catch{}});
  const rpc=(method:string,params:any)=>new Promise<any>((resolve,reject)=>{const id=++seq;pending.set(id,{resolve,reject});child.stdin.write(JSON.stringify({id,method,params})+'\n')});
  const timer=setTimeout(()=>{fail(Error('原生能力响应超时，写入结果未知，请刷新确认'));child.kill()},15000);
- try{await rpc('initialize',{clientInfo:{name:'gcollie_capabilities',version:'0.3.16'},capabilities:{experimentalApi:true}});child.stdin.write('{"method":"initialized"}\n');return await rpc(method,params)}finally{clearTimeout(timer);lines.close();child.kill()}
+ try{await rpc('initialize',{clientInfo:{name:'gcollie_capabilities',version:'0.3.16'},capabilities:{experimentalApi:true}});child.stdin.write('{"method":"initialized"}\n');if(expectedAccountKey){if(method!=='account/usage/read')throw Error('身份校验仅用于只读统计');const identity=await rpc('account/rateLimits/read',{});if(identity.accountId!==expectedAccountKey)throw Error('账号统计身份尚未同步')}
+ const result=await rpc(method,params);
+ if(expectedAccountKey){const identity=await rpc('account/rateLimits/read',{});if(identity.accountId!==expectedAccountKey)throw Error('账号已变化')}
+ return result}finally{clearTimeout(timer);lines.close();child.kill()}
 }
 export function goalParams(nativeId:string,body:any){if(!/^[a-zA-Z0-9_-]+$/.test(nativeId))throw Error('无效会话编号');if(body.action==='clear')return{method:'thread/goal/clear',params:{threadId:nativeId}};if(body.action!=='set'||typeof body.objective!=='string'||!body.objective.trim()||body.objective.length>4000)throw Error('请输入 1–4000 字目标');if(body.tokenBudget!=null&&(!Number.isSafeInteger(body.tokenBudget)||body.tokenBudget<=0))throw Error('预算需为正整数');return{method:'thread/goal/set',params:{threadId:nativeId,objective:body.objective.trim(),...(body.tokenBudget?{tokenBudget:body.tokenBudget}:{})}}}
 

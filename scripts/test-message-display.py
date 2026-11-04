@@ -5,6 +5,16 @@ spec=importlib.util.spec_from_file_location('display',pathlib.Path(__file__).wit
 display=importlib.util.module_from_spec(spec);spec.loader.exec_module(display)
 
 class DisplayTests(unittest.TestCase):
+    def test_video_samples_do_not_become_message_photos(self):
+        root='/home/test/uploads/ba4fe46c-c4fc-4efc-bd6b-be1e12d1d802'
+        text=f'问题\n视频附件：[录屏.mp4]({root}/content)\n以下是视频画面的均匀抽样，不含音频。时长 9.3 秒。\n视频画面 1 · 0.8 秒\n<image name=[Image #1] path="{root}/media/frame-0.jpg">\n</image>\n<image name=[Image #2] path="/photo.jpg">\n</image>'
+        text, media=display.visible_user_media(text,['frame','photo'])
+        self.assertEqual(media,['photo'])
+        self.assertIn('录屏.mp4',text)
+        self.assertNotIn('视频画面',text)
+        self.assertEqual(display.visible_user_media('ordinary',['image']),('ordinary',['image']))
+
+
     def test_hermes_native_compaction_is_not_a_chat_message(self):
         marker='[CONTEXT COMPACTION — REFERENCE ONLY] historical summary'
         self.assertTrue(display.hermes_internal_message(marker))

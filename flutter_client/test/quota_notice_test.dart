@@ -6,35 +6,69 @@ import 'package:g_collie_flutter/quota_notice.dart';
 
 class QuotaApi extends CollieApi {
   int used = 100;
+  bool authError = false;
   QuotaApi() : super(Uri.parse('http://localhost:4310'));
   @override
   Future<dynamic> call(String path, [Json? body]) async => {
-    'codexAccount': {
-      'accountKey': 'test-account',
-      'limits': [
-        {
-          'id': 'codex',
-          'windows': [
-            {
-              'windowMinutes': 300,
-              'usedPercent': used,
-              'resetsAt':
-                  DateTime.now()
-                      .add(const Duration(hours: 2))
-                      .millisecondsSinceEpoch ~/
-                  1000,
-            },
-            {'windowMinutes': 10080, 'usedPercent': 22},
-          ],
-        },
-      ],
-      'resetCredits': {'availableCount': 2, 'credits': []},
-    },
+    'codexAccount': authError
+        ? {
+            'limits': [],
+            'limitsError': '认证失败',
+            'limitsErrorCode': 'auth_expired',
+          }
+        : {
+            'accountKey': 'test-account',
+            'limits': [
+              {
+                'id': 'codex',
+                'windows': [
+                  {
+                    'windowMinutes': 300,
+                    'usedPercent': used,
+                    'resetsAt':
+                        DateTime.now()
+                            .add(const Duration(hours: 2))
+                            .millisecondsSinceEpoch ~/
+                        1000,
+                  },
+                  {'windowMinutes': 10080, 'usedPercent': 22},
+                ],
+              },
+            ],
+            'resetCredits': {'availableCount': 2, 'credits': []},
+          },
   };
 }
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  testWidgets(
+    'quota authentication failure does not claim chat logout or block sending',
+    (tester) async {
+      final api = QuotaApi()..authError = true;
+      bool blocked = false;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CodexQuotaNotice(
+              api: api,
+              readOnly: false,
+              online: true,
+              error: '',
+              onBlocked: (v) => blocked = v,
+              onRefresh: () async {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('暂时无法查询额度'), findsOneWidget);
+      expect(find.text('需要重新登录 Codex'), findsNothing);
+      expect(blocked, false);
+      await tester.pumpWidget(const SizedBox());
+      api.close();
+    },
+  );
   testWidgets(
     'real quota snapshot blocks only when exhausted and refresh recovers',
     (tester) async {

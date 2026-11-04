@@ -13,14 +13,14 @@ const images=new Set(['.png','.jpg','.jpeg','.gif','.webp']);
 export type Resource={id:string;name:string;image:boolean;ref:string};
 // Only references present in user/assistant messages become addressable resources.
 export function references(d:any):Resource[]{
- const refs=new Set<string>();const media=new Set<string>();
+ const refs=new Set<string>();const media=new Set<string>();const names=new Map<string,string>();
  const add=(ref:string)=>{refs.delete(ref);refs.add(ref)};
  for(const e of d.events||[]){if(!['user','assistant'].includes(e.role))continue;
   for(const r of e.media||[])if(typeof r==='string'){add(r);media.add(r);}
   for(const m of String(e.text||'').matchAll(/^MEDIA:[ \t]*(.+)$/gm)){const r=m[1].trim().replace(/^"|"$/g,'');if(/\.(mp4|mov|m4v|webm)$/i.test(r))add(r)}
-  for(const m of String(e.text||'').matchAll(/!?\[[^\]]*\]\(\s*(<[^>]+>|[^\n]*?)\s*\)/g)){let r=m[1];if(r.startsWith('<'))r=r.slice(1,-1);else r=r.replace(/\s+"[^"]*"$/,'');add(r);}
+  for(const m of String(e.text||'').matchAll(/!?\[([^\]]*)\]\(\s*(<[^>]+>|[^\n]*?)\s*\)/g)){let r=m[2];if(r.startsWith('<'))r=r.slice(1,-1);else r=r.replace(/\s+"[^"]*"$/,'');add(r);if(/\.(mp4|mov|m4v|webm)$/i.test(m[1]))names.set(r,m[1]);}
  }
- return [...refs].filter(r=>(!/^https?:|^data:/i.test(r)&&(extensions.has(extname(r.split(/[?#]/)[0]).toLowerCase())||media.has(r)||/\/uploads\/[a-f0-9-]{36}\/content$/.test(r)))||/^data:image\/(png|jpeg|gif|webp);base64,/i.test(r)).map(ref=>({id:createHash('sha256').update(d.id+'\0'+ref).digest('hex').slice(0,32),ref,name:ref.startsWith('data:')?'会话图片.png':basename(ref.replace(/^file:\/\//,'')),image:ref.startsWith('data:')||images.has(extname(ref).toLowerCase())}));
+ return [...refs].filter(r=>(!/^https?:|^data:/i.test(r)&&(extensions.has(extname(r.split(/[?#]/)[0]).toLowerCase())||media.has(r)||/\/uploads\/[a-f0-9-]{36}\/content$/.test(r)))||/^data:image\/(png|jpeg|gif|webp);base64,/i.test(r)).map(ref=>({id:createHash('sha256').update(d.id+'\0'+ref).digest('hex').slice(0,32),ref,name:names.get(ref)||(ref.startsWith('data:')?'会话图片.png':basename(ref.replace(/^file:\/\//,''))),image:ref.startsWith('data:')||images.has(extname(ref).toLowerCase())}));
 }
 // Compact responses keep image bytes behind the existing session-scoped resource checks.
 export function compactReferences(d:any){return references(d).map(r=>r.ref.startsWith('data:')?{...r,ref:'gcollie-resource:'+r.id}:r)}
