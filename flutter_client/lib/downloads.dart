@@ -17,6 +17,16 @@ class DownloadsPage extends StatefulWidget {
 class _DownloadsPageState extends State<DownloadsPage> {
   List<dynamic> rows = [];
   String filter = '全部', error = '';
+  bool loaded = false;
+  List<dynamic> get visibleRows => rows
+      .where(
+        (r) =>
+            filter == '全部' ||
+            (filter == '已完成' && r['status'] == 8) ||
+            (filter == '失败' && [16, -1].contains(r['status'])) ||
+            (filter == '下载中' && [1, 2, 4].contains(r['status'])),
+      )
+      .toList();
   Timer? timer;
   @override
   void initState() {
@@ -36,6 +46,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
       final r = await NativeBridge.invoke<List<dynamic>>('downloads');
       if (mounted) {
         setState(() {
+          loaded = true;
           rows = r ?? [];
           error = '';
         });
@@ -63,7 +74,8 @@ class _DownloadsPageState extends State<DownloadsPage> {
     body: RefreshIndicator(
       onRefresh: load,
       child: ListView(
-        padding: const EdgeInsets.all(22),
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(22, 12, 22, 22),
         children: [
           Row(
             children: [
@@ -101,133 +113,137 @@ class _DownloadsPageState extends State<DownloadsPage> {
             ],
           ),
           const SizedBox(height: 16),
-          if (error.isNotEmpty) Text(error),
-          if (rows.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 60),
-              child: Center(child: Text('还没有下载内容')),
+          if (error.isNotEmpty) ...[
+            Text('下载记录加载失败：$error'),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(onPressed: load, child: const Text('重试')),
             ),
-          for (final r in rows)
-            if (filter == '全部' ||
-                (filter == '已完成' && r['status'] == 8) ||
-                (filter == '失败' && (r['status'] == 16 || r['status'] == -1)) ||
-                (filter == '下载中' && [1, 2, 4].contains(r['status'])))
-              Container(
-                padding: const EdgeInsets.symmetric(vertical: 18),
-                decoration: BoxDecoration(
-                  border: Border(
-                    bottom: BorderSide(
-                      color: Theme.of(
-                        context,
-                      ).dividerColor.withValues(alpha: .15),
-                    ),
+          ],
+          if (!loaded && error.isEmpty)
+            const Center(child: CircularProgressIndicator()),
+          if (loaded && error.isEmpty && visibleRows.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 60),
+              child: Center(
+                child: Text(rows.isEmpty ? '还没有下载内容' : '暂无$filter的下载内容'),
+              ),
+            ),
+          for (final r in visibleRows)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 18),
+              decoration: BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(
+                    color: Theme.of(
+                      context,
+                    ).dividerColor.withValues(alpha: .15),
                   ),
                 ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.insert_drive_file_outlined, size: 24),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            r['name'],
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            r['status'] == 8
-                                ? '下载完成'
-                                : r['status'] == 16
-                                ? '下载失败（${r['reason']}），请从原会话重试'
-                                : r['status'] == -1
-                                ? '记录或文件已移除'
-                                : '下载中 · ${r['bytes'] ?? 0} / ${r['total'] ?? 0} 字节',
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: Colors.grey,
-                            ),
-                          ),
-                          if ([1, 2, 4].contains(r['status']))
-                            const LinearProgressIndicator(),
-                        ],
-                      ),
-                    ),
-                    if (r['status'] == 16 &&
-                        r['previewRequest'] != null &&
-                        r['previewRequest'] != '')
-                      TextButton(
-                        onPressed: () async {
-                          try {
-                            final api = widget.api;
-                            if (api == null || '${api.base}' != r['computer']) {
-                              throw ApiException('请切换到来源电脑后重试');
-                            }
-                            final ticket = await api.call(
-                              r['previewRequest'],
-                              {},
-                            );
-                            final url = await api.browserPreview(
-                              ticket['path'],
-                            );
-                            await NativeBridge.invoke('downloadFile', {
-                              'url': url
-                                  .resolve('./content?download=1')
-                                  .toString(),
-                              'name': r['name'],
-                              'previewRequest': r['previewRequest'],
-                              'computer': r['computer'],
-                            });
-                            await load();
-                          } catch (e) {
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(
-                                context,
-                              ).showSnackBar(SnackBar(content: Text('$e')));
-                            }
-                          }
-                        },
-                        child: const Text('重试'),
-                      ),
-                    if (r['status'] == 8)
-                      TextButton(
-                        onPressed: () async {
-                          try {
-                            final bytes = await NativeBridge.invoke<Uint8List>(
-                              'readDownloadImage',
-                              {'id': r['id']},
-                            );
-                            if (bytes != null && context.mounted) {
-                              await Navigator.of(context).push(
-                                MaterialPageRoute<void>(
-                                  builder: (_) => FilePreviewPage(
-                                    name: r['name'],
-                                    url: Uri.parse('about:blank'),
-                                    image: Future.value(bytes),
-                                    showDownload: false,
-                                  ),
-                                ),
-                              );
-                              return;
-                            }
-                            await NativeBridge.invoke('openDownload', {
-                              'id': r['id'],
-                            });
-                          } catch (e) {
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(
-                                context,
-                              ).showSnackBar(SnackBar(content: Text('$e')));
-                            }
-                          }
-                        },
-                        child: const Text('打开'),
-                      ),
-                  ],
-                ),
               ),
+              child: Row(
+                children: [
+                  const Icon(Icons.insert_drive_file_outlined, size: 24),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          r['name'],
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          r['status'] == 8
+                              ? '下载完成'
+                              : r['status'] == 16
+                              ? '下载失败（${r['reason']}），请从原会话重试'
+                              : r['status'] == -1
+                              ? '记录或文件已移除'
+                              : '下载中 · ${r['bytes'] ?? 0} / ${r['total'] ?? 0} 字节',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey,
+                          ),
+                        ),
+                        if ([1, 2, 4].contains(r['status']))
+                          const LinearProgressIndicator(),
+                      ],
+                    ),
+                  ),
+                  if (r['status'] == 16 &&
+                      r['previewRequest'] != null &&
+                      r['previewRequest'] != '')
+                    TextButton(
+                      onPressed: () async {
+                        try {
+                          final api = widget.api;
+                          if (api == null || '${api.base}' != r['computer']) {
+                            throw ApiException('请切换到来源电脑后重试');
+                          }
+                          final ticket = await api.call(
+                            r['previewRequest'],
+                            {},
+                          );
+                          final url = await api.browserPreview(ticket['path']);
+                          await NativeBridge.invoke('downloadFile', {
+                            'url': url
+                                .resolve('./content?download=1')
+                                .toString(),
+                            'name': r['name'],
+                            'previewRequest': r['previewRequest'],
+                            'computer': r['computer'],
+                          });
+                          await load();
+                        } catch (e) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(SnackBar(content: Text('$e')));
+                          }
+                        }
+                      },
+                      child: const Text('重试'),
+                    ),
+                  if (r['status'] == 8)
+                    TextButton(
+                      onPressed: () async {
+                        try {
+                          final bytes = await NativeBridge.invoke<Uint8List>(
+                            'readDownloadImage',
+                            {'id': r['id']},
+                          );
+                          if (bytes != null && context.mounted) {
+                            await Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) => FilePreviewPage(
+                                  name: r['name'],
+                                  url: Uri.parse('about:blank'),
+                                  image: Future.value(bytes),
+                                  showDownload: false,
+                                ),
+                              ),
+                            );
+                            return;
+                          }
+                          await NativeBridge.invoke('openDownload', {
+                            'id': r['id'],
+                          });
+                        } catch (e) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(SnackBar(content: Text('$e')));
+                          }
+                        }
+                      },
+                      child: const Text('打开'),
+                    ),
+                ],
+              ),
+            ),
         ],
       ),
     ),

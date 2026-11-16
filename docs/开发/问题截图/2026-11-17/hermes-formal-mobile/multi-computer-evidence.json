@@ -1,0 +1,17 @@
+{
+  "app": "0.1.46/2048",
+  "serviceBoth": "0.3.31",
+  "existingPairingsPreserved": [
+    "original computer",
+    "JDCLOUD",
+    "SG"
+  ],
+  "operation": "Existing paired-computer manager; switch JD to SG; wait for online; SG two history rows displayed",
+  "noNewPairing": true,
+  "noTaskControl": true,
+  "noAdbReverse": true,
+  "rotationSettingsRestored": {
+    "accelerometer_rotation": 1,
+    "user_rotation": 0
+  }
+}

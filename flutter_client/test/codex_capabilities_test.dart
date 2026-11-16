@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:g_collie_flutter/api.dart';
@@ -35,7 +36,54 @@ class CapabilityApi extends CollieApi {
   }
 }
 
+class DelayedCapabilityApi extends CapabilityApi {
+  final result = Completer<dynamic>();
+  @override
+  Future<dynamic> call(String path, [Json? body]) => result.future;
+}
+
 void main() {
+  testWidgets('goal cannot be edited before loaded or on a read-only device', (
+    tester,
+  ) async {
+    final api = DelayedCapabilityApi();
+    addTearDown(api.close);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CodexCapabilities(
+          api: api,
+          session: 'codex:target',
+          enabled: true,
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(tester.widget<TextField>(find.byType(TextField)).enabled, false);
+    api.result.complete({
+      'goal': {
+        'data': {
+          'goal': {'objective': '已保存目标'},
+        },
+      },
+      'skills': [],
+    });
+    await tester.pumpAndSettle();
+    expect(find.text('已保存目标'), findsOneWidget);
+    expect(tester.widget<TextField>(find.byType(TextField)).enabled, true);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CodexCapabilities(
+          api: api,
+          session: 'codex:target',
+          enabled: false,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(find.byType(TextField)).enabled, false);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('mode and goal use native API, disabled device cannot mutate', (
     tester,
   ) async {

@@ -1,3 +1,6 @@
+import 'about_page.dart';
+import 'session_delete.dart';
+import 'offline_assets.dart';
 import 'sketch.dart';
 import 'codex_capabilities.dart';
 import 'snippets.dart';
@@ -18,6 +21,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
@@ -40,9 +44,11 @@ Color mutedColor(BuildContext c) => Theme.of(c).brightness == Brightness.dark
     ? const Color(0xff999999)
     : const Color(0xff888888);
 Widget glyph(String name, {double size = 22, Color? color}) => Builder(
-  builder: (c) => ['Download', 'User', 'Clock'].contains(name)
+  builder: (c) => ['Download', 'User', 'Clock', 'Delete'].contains(name)
       ? Icon(
-          name == 'Download'
+          name == 'Delete'
+              ? Icons.delete_outline
+              : name == 'Download'
               ? Icons.download_outlined
               : name == 'Clock'
               ? Icons.schedule_outlined
@@ -224,15 +230,17 @@ class CollieShell extends StatefulWidget {
   final bool initialLarge;
   final String role, error;
   final String? computerName;
-  final VoidCallback? onManageComputers;
+  final Future<void> Function()? onManageComputers;
   final Future<void> Function()? onClearCache;
+  final Future<void> Function(List<String>)? onDeleted;
   final bool connecting, reconnecting;
   final Future<void> Function()? onReconnect;
-  final bool online, loading, busy, enabled, running;
+  final bool online, loading, busy, enabled, attachmentEnabled, running;
   final List<dynamic> sessions, projects, warnings;
   final Json? detail;
   final TextEditingController draft;
   final ScrollController scroll;
+  final VoidCallback? onConversationMetrics, onConversationUserScroll;
   final Widget? pending;
   final Future<void> Function() onRefresh;
   final void Function(String) onOpen;
@@ -251,6 +259,7 @@ class CollieShell extends StatefulWidget {
     this.computerName,
     this.onManageComputers,
     this.onClearCache,
+    this.onDeleted,
     this.connecting = false,
     this.reconnecting = false,
     this.onReconnect,
@@ -262,6 +271,7 @@ class CollieShell extends StatefulWidget {
     required this.loading,
     required this.busy,
     required this.enabled,
+    required this.attachmentEnabled,
     required this.running,
     required this.sessions,
     required this.projects,
@@ -269,6 +279,8 @@ class CollieShell extends StatefulWidget {
     required this.detail,
     required this.draft,
     required this.scroll,
+    this.onConversationMetrics,
+    this.onConversationUserScroll,
     this.pending,
     required this.onRefresh,
     required this.onOpen,
@@ -378,14 +390,27 @@ class _CollieShellState extends State<CollieShell> {
     if (oldWidget.detail?['id'] != widget.detail?['id']) {
       uploads.clear();
       uploadError = '';
+      uploadStatus = '';
     }
   }
+
+  bool attachmentContext(String? id) =>
+      mounted &&
+      id != null &&
+      widget.attachmentEnabled &&
+      widget.detail?['id'] == id;
 
   Future<void> upload(String kind) async {
     final image = kind == 'image' || kind == 'clipboard';
     final video = kind == 'video';
     if (uploading || !widget.enabled) return;
-    final id = widget.detail?['id'];
+    final id = widget.detail?['id'] as String?;
+    if (!attachmentContext(id)) return;
+    setState(() {
+      uploading = true;
+      uploadError = '';
+      uploadStatus = '';
+    });
     String? temporaryClipboard;
     try {
       final clipboardPath = kind == 'clipboard'
@@ -411,6 +436,8 @@ class _CollieShellState extends State<CollieShell> {
                     ]
                   : [],
             );
+      // Native selectors can outlive a session switch, reconnect or permission change.
+      if (!attachmentContext(id)) return;
       if (files.length + uploads.length > 5) {
         throw ApiException('每条消息最多添加 5 个附件');
       }
@@ -421,19 +448,22 @@ class _CollieShellState extends State<CollieShell> {
       });
       for (final f in files) {
         final length = await f.length();
+        if (!attachmentContext(id)) return;
         if (length == 0 || length > (video ? 100 : 10) * 1024 * 1024) {
           throw ApiException(
             video ? '请选择不超过 100 MB 的视频' : '请选择不超过 10 MB 的非空文件',
           );
         }
+        final bytes = video ? null : await f.readAsBytes();
+        if (!attachmentContext(id)) return;
         final value = video
             ? await widget.api.uploadVideo(
-                id as String,
+                id!,
                 f.name,
                 length,
                 f.openRead(),
                 onProgress: (sent, total) {
-                  if (mounted) {
+                  if (attachmentContext(id)) {
                     setState(
                       () => uploadStatus = sent >= total
                           ? '正在完成视频上传…'
@@ -446,18 +476,35 @@ class _CollieShellState extends State<CollieShell> {
                 'session': id,
                 'name': f.name,
                 'image': image,
-                'data': base64Encode(await f.readAsBytes()),
+                'data': base64Encode(bytes!),
               });
+        if (!attachmentContext(id)) return;
+        if (image && value['id'] is String) {
+          final cache = await OfflineAssets.directory();
+          if (cache != null) {
+            final directory = Directory(
+              '${cache.parent.path}/pending-attachments',
+            );
+            await directory.create(recursive: true);
+            final local = File('${directory.path}/${value['id']}');
+            await local.writeAsBytes(await f.readAsBytes(), flush: true);
+            widget.api.attachmentPreviews[value['id']] = {
+              'session': id,
+              'path': local.path,
+              'image': true,
+            };
+          }
+        }
         if (kind == 'clipboard') {
           try {
             await File(f.path).delete();
           } catch (_) {}
         }
-        if (!mounted || widget.detail?['id'] != id) return;
+        if (!attachmentContext(id)) return;
         setState(() => uploads.add(Map<String, dynamic>.from(value)));
       }
     } catch (e) {
-      if (mounted) setState(() => uploadError = '$e');
+      if (attachmentContext(id)) setState(() => uploadError = '$e');
     } finally {
       if (temporaryClipboard != null) {
         try {
@@ -563,240 +610,258 @@ class _CollieShellState extends State<CollieShell> {
       child: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 16),
-          child: Column(
-            children: [
-              Row(
-                children: [
-                  iconAction(
-                    'PanelLeft',
-                    '关闭侧边栏',
-                    () => Navigator.pop(context),
-                  ),
-                  collieMark(size: 27),
-                  const SizedBox(width: 6),
-                  const Expanded(
-                    child: Text(
-                      'G-Collie',
-                      style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              Container(
-                height: 42,
-                decoration: BoxDecoration(
-                  color: panelColor(context),
-                  borderRadius: BorderRadius.circular(25),
-                ),
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Row(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final lowHeight = constraints.maxHeight < 560;
+              Widget historyContainer(Widget child) =>
+                  lowHeight ? child : Expanded(child: child);
+              final children = <Widget>[
+                Row(
                   children: [
-                    glyph('Search', size: 18, color: mutedColor(context)),
-                    const SizedBox(width: 9),
-                    Expanded(
-                      child: TextField(
-                        onChanged: (v) => setState(() => query = v),
-                        decoration: const InputDecoration(
-                          hintText: '搜索会话',
-                          border: InputBorder.none,
-                          isDense: true,
-                          contentPadding: EdgeInsets.symmetric(vertical: 11),
+                    iconAction(
+                      'PanelLeft',
+                      '关闭侧边栏',
+                      () => Navigator.pop(context),
+                    ),
+                    collieMark(size: 27),
+                    const SizedBox(width: 6),
+                    const Expanded(
+                      child: Text(
+                        'G-Collie',
+                        style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w600,
                         ),
-                        style: const TextStyle(fontSize: 13),
                       ),
                     ),
                   ],
                 ),
-              ),
-              const SizedBox(height: 14),
-              navRow('MessageCircle', '会话首页', () {
-                Navigator.pop(context);
-                home();
-              }),
-              navRow(
-                'Folder',
-                '项目管理',
-                () => nav('projects'),
-                trailing: '${widget.projects.length}',
-              ),
-              navRow('Activity', '用量统计', () => nav('usage')),
-              navRow('Clock', '定时任务', () {
-                Navigator.pop(context);
-                showPreviewSchedules(context, widget.sessions, widget.api);
-              }),
-              navRow('Download', '下载内容', () {
-                Navigator.pop(context);
-                Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => DownloadsPage(api: widget.api),
-                  ),
-                );
-              }),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  const SizedBox(width: 10),
-                  Expanded(child: muted(context, '会话')),
-                  iconAction('SlidersHorizontal', '筛选会话', filters, size: 16),
-                ],
-              ),
-              if (agent != 'all' || project.isNotEmpty)
+                const SizedBox(height: 14),
                 Container(
-                  margin: const EdgeInsets.symmetric(vertical: 6),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 4,
-                  ),
+                  height: 42,
                   decoration: BoxDecoration(
                     color: panelColor(context),
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(25),
                   ),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
                   child: Row(
                     children: [
+                      glyph('Search', size: 18, color: mutedColor(context)),
+                      const SizedBox(width: 9),
                       Expanded(
-                        child: Text(
-                          '${agent == 'all' ? '全部助手' : agent}${project.isEmpty ? '' : ' · ${project.split('/').last}'}',
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: companionGreen,
+                        child: TextField(
+                          onChanged: (v) => setState(() => query = v),
+                          decoration: const InputDecoration(
+                            hintText: '搜索会话',
+                            border: InputBorder.none,
+                            isDense: true,
+                            contentPadding: EdgeInsets.symmetric(vertical: 11),
                           ),
+                          style: const TextStyle(fontSize: 13),
                         ),
-                      ),
-                      iconAction(
-                        'X',
-                        '清除筛选',
-                        () => setState(() {
-                          agent = 'all';
-                          project = '';
-                        }),
-                        size: 14,
                       ),
                     ],
                   ),
                 ),
-              Expanded(
-                child: ListView(
+                const SizedBox(height: 14),
+                navRow('MessageCircle', '会话首页', () {
+                  Navigator.pop(context);
+                  home();
+                }),
+                navRow(
+                  'Folder',
+                  '项目管理',
+                  () => nav('projects'),
+                  trailing: '${widget.projects.length}',
+                ),
+                navRow('Activity', '用量统计', () => nav('usage')),
+                navRow('Clock', '定时任务', () {
+                  Navigator.pop(context);
+                  showPreviewSchedules(
+                    context,
+                    widget.sessions,
+                    widget.api,
+                    canEdit: () =>
+                        mounted && widget.online && widget.role != 'view',
+                  );
+                }),
+                navRow('Download', '下载内容', () {
+                  Navigator.pop(context);
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => DownloadsPage(api: widget.api),
+                    ),
+                  );
+                }),
+                const SizedBox(height: 16),
+                Row(
                   children: [
-                    for (final g in groups) ...[
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(10, 18, 10, 8),
-                        child: muted(context, g, size: 11),
-                      ),
-                      for (final s in rows.where((s) => group(s) == g))
-                        TextButton(
-                          onPressed: () {
-                            Navigator.pop(context);
-                            open(s['id']);
-                          },
-                          style: TextButton.styleFrom(
-                            foregroundColor: Theme.of(
-                              context,
-                            ).colorScheme.onSurface,
-                            backgroundColor: widget.detail?['id'] == s['id']
-                                ? panelColor(context)
-                                : null,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 11,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
+                    const SizedBox(width: 10),
+                    Expanded(child: muted(context, '会话')),
+                    iconAction('SlidersHorizontal', '筛选会话', filters, size: 16),
+                  ],
+                ),
+                if (agent != 'all' || project.isNotEmpty)
+                  Container(
+                    margin: const EdgeInsets.symmetric(vertical: 6),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: panelColor(context),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '${agent == 'all' ? '全部助手' : agent}${project.isEmpty ? '' : ' · ${project.split('/').last}'}',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: companionGreen,
                             ),
                           ),
-                          child: Row(
+                        ),
+                        iconAction(
+                          'X',
+                          '清除筛选',
+                          () => setState(() {
+                            agent = 'all';
+                            project = '';
+                          }),
+                          size: 14,
+                        ),
+                      ],
+                    ),
+                  ),
+                historyContainer(
+                  ListView(
+                    shrinkWrap: lowHeight,
+                    physics: lowHeight
+                        ? const NeverScrollableScrollPhysics()
+                        : null,
+                    children: [
+                      for (final g in groups) ...[
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(10, 18, 10, 8),
+                          child: muted(context, g, size: 11),
+                        ),
+                        for (final s in rows.where((s) => group(s) == g))
+                          TextButton(
+                            onPressed: () {
+                              Navigator.pop(context);
+                              open(s['id']);
+                            },
+                            style: TextButton.styleFrom(
+                              foregroundColor: Theme.of(
+                                context,
+                              ).colorScheme.onSurface,
+                              backgroundColor: widget.detail?['id'] == s['id']
+                                  ? panelColor(context)
+                                  : null,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 11,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                agentLogo(s['agent'], size: 20),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    '${s['managed'] == true ? '[独立测试] ' : ''}${s['title']}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                ),
+                                if (s['archived'] == true)
+                                  glyph('Archive', size: 13),
+                              ],
+                            ),
+                          ),
+                      ],
+                      if (rows.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: muted(
+                            context,
+                            widget.sessions.isEmpty ? '正在读取本机会话…' : '没有匹配的会话',
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                InkWell(
+                  onTap: workspaceMenu,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 13,
+                      horizontal: 7,
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 39,
+                          height: 39,
+                          decoration: BoxDecoration(
+                            color: panelColor(context),
+                            shape: BoxShape.circle,
+                          ),
+                          child: workspaceAvatar(size: 35),
+                        ),
+                        const SizedBox(width: 11),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              agentLogo(s['agent'], size: 20),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Text(
-                                  '${s['managed'] == true ? '[独立测试] ' : ''}${s['title']}',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontSize: 13),
+                              Text(
+                                previewWorkspaceName,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
                                 ),
                               ),
-                              if (s['archived'] == true)
-                                glyph('Archive', size: 13),
+                              const SizedBox(height: 6),
+                              Row(
+                                children: [
+                                  Container(
+                                    width: 5,
+                                    height: 5,
+                                    decoration: BoxDecoration(
+                                      color: widget.online
+                                          ? const Color(0xff278654)
+                                          : const Color(0xffb57b3b),
+                                      shape: BoxShape.circle,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 5),
+                                  muted(
+                                    context,
+                                    widget.online ? '电脑已连接' : '连接中断',
+                                    size: 10,
+                                  ),
+                                ],
+                              ),
                             ],
                           ),
                         ),
-                    ],
-                    if (rows.isEmpty)
-                      Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: muted(
-                          context,
-                          widget.sessions.isEmpty ? '正在读取本机会话…' : '没有匹配的会话',
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              const Divider(height: 1),
-              InkWell(
-                onTap: workspaceMenu,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 13,
-                    horizontal: 7,
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 39,
-                        height: 39,
-                        decoration: BoxDecoration(
-                          color: panelColor(context),
-                          shape: BoxShape.circle,
-                        ),
-                        child: workspaceAvatar(size: 35),
-                      ),
-                      const SizedBox(width: 11),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              previewWorkspaceName,
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            Row(
-                              children: [
-                                Container(
-                                  width: 5,
-                                  height: 5,
-                                  decoration: BoxDecoration(
-                                    color: widget.online
-                                        ? const Color(0xff278654)
-                                        : const Color(0xffb57b3b),
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                                const SizedBox(width: 5),
-                                muted(
-                                  context,
-                                  widget.online ? '电脑已连接' : '连接中断',
-                                  size: 10,
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                      glyph('MoreHorizontal', size: 20),
-                    ],
+                        glyph('MoreHorizontal', size: 20),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ];
+              return lowHeight
+                  ? ListView(children: children)
+                  : Column(children: children);
+            },
           ),
         ),
       ),
@@ -972,46 +1037,54 @@ class _CollieShellState extends State<CollieShell> {
     ),
   );
   Future<void> workspaceMenu() async {
-    await collieSheet<void>(
-      context,
-      previewWorkspaceName,
-      (ctx) => Column(
-        children: [
-          for (final item in [
-            ['User', '工作台资料'],
-            ['Monitor', '电脑与连接'],
-            ['Bell', '通知'],
-            ['Palette', '外观'],
-            ['Info', '关于 G-Collie'],
-            ['LogOut', '解除当前电脑配对'],
-          ])
-            Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ListTile(
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 0,
-                    vertical: 4,
+    while (mounted) {
+      if (!mounted) return;
+      final destination = await collieSheet<String>(
+        context,
+        previewWorkspaceName,
+        (ctx) => Column(
+          children: [
+            for (final item in [
+              ['User', '工作台资料'],
+              ['Monitor', '电脑与连接'],
+              ['Bell', '通知'],
+              ['Palette', '外观'],
+              ['Info', '关于 G-Collie'],
+              ['LogOut', '解除当前电脑配对'],
+            ])
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 0,
+                      vertical: 4,
+                    ),
+                    leading: glyph(item[0], size: 20),
+                    title: Text(item[1], style: const TextStyle(fontSize: 14)),
+                    trailing: const Icon(Icons.chevron_right, size: 20),
+                    onTap: () async {
+                      if (item[1] == '解除当前电脑配对') {
+                        await settings(item[1]);
+                        return;
+                      }
+                      Navigator.pop(ctx, item[1]);
+                    },
                   ),
-                  leading: glyph(item[0], size: 20),
-                  title: Text(item[1], style: const TextStyle(fontSize: 14)),
-                  trailing: const Icon(Icons.chevron_right, size: 20),
-                  onTap: () async {
-                    await settings(item[1]);
-                    if (ctx.mounted) (ctx as Element).markNeedsBuild();
-                  },
-                ),
-                if (item[0] != 'LogOut')
-                  Divider(
-                    height: 1,
-                    thickness: .5,
-                    color: Theme.of(ctx).dividerColor.withValues(alpha: .2),
-                  ),
-              ],
-            ),
-        ],
-      ),
-    );
+                  if (item[0] != 'LogOut')
+                    Divider(
+                      height: 1,
+                      thickness: .5,
+                      color: Theme.of(ctx).dividerColor.withValues(alpha: .2),
+                    ),
+                ],
+              ),
+          ],
+        ),
+      );
+      if (!mounted || destination == null) return;
+      await settings(destination);
+    }
   }
 
   Future<void> settings(String title) async {
@@ -1055,7 +1128,7 @@ class _CollieShellState extends State<CollieShell> {
     }
 
     if (title == '电脑与连接' && widget.onManageComputers != null) {
-      widget.onManageComputers!();
+      await widget.onManageComputers!();
       return;
     }
     if (title == '远程连接') {
@@ -1125,29 +1198,7 @@ class _CollieShellState extends State<CollieShell> {
       return;
     }
     if (title == '关于 G-Collie') {
-      await collieSheet<void>(
-        context,
-        title,
-        (ctx) => Column(
-          children: [
-            collieMark(size: 59),
-            const SizedBox(height: 12),
-            const Text('G-Collie', style: TextStyle(fontSize: 25)),
-            const Text('工作在电脑，掌控在手边。'),
-            muted(ctx, '内测版 0.1.17 · By Giggle'),
-            const SizedBox(height: 20),
-            const Text(
-              'G-Collie 是连接手机与电脑的 AI 助手工作台，将 Codex、Hermes 和 Claude Code 汇集在一起，方便你在手机上查看会话、发送消息、跟进任务。',
-              style: TextStyle(fontSize: 14, height: 1.8),
-            ),
-            const SizedBox(height: 14),
-            const Text(
-              '连接多台电脑，按项目整理工作，查看用量与文件。任务在电脑上执行，手机连接中断不影响电脑上的任务继续运行。',
-              style: TextStyle(fontSize: 14, height: 1.8),
-            ),
-          ],
-        ),
-      );
+      await collieSheet<void>(context, title, (_) => const AboutContent());
       return;
     }
     if (title == '解除当前电脑配对') {
@@ -1293,7 +1344,7 @@ class _CollieShellState extends State<CollieShell> {
   }
 
   Widget projectsPage() => ListView(
-    padding: const EdgeInsets.all(22),
+    padding: const EdgeInsets.fromLTRB(22, 12, 22, 22),
     children: [
       muted(
         context,
@@ -1509,7 +1560,7 @@ class _CollieShellState extends State<CollieShell> {
       rows.sort((a, b) => updated(b).compareTo(updated(a)));
       final recent = rows.take(4).toList();
       return Padding(
-        padding: const EdgeInsets.fromLTRB(22, 8, 22, 12),
+        padding: const EdgeInsets.fromLTRB(22, 4, 22, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -1523,7 +1574,7 @@ class _CollieShellState extends State<CollieShell> {
               ),
               const SizedBox(height: 8),
               const Text(
-                '今天想继续哪项工作？',
+                '现在想继续哪项工作？',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 22,
@@ -1532,7 +1583,7 @@ class _CollieShellState extends State<CollieShell> {
                 ),
               ),
               const SizedBox(height: 6),
-              Center(child: muted(context, '工作在电脑，掌控在手边。', size: 13)),
+              Center(child: muted(context, '帮你照看每一个 Agent', size: 13)),
               const SizedBox(height: 16),
             ],
             assistantCards(
@@ -1709,140 +1760,166 @@ class _CollieShellState extends State<CollieShell> {
       }
     },
   );
-  Widget conversation(Json d) => ListView(
-    controller: widget.scroll,
-    padding: const EdgeInsets.fromLTRB(20, 16, 20, 30),
-    children: [
-      if (d['draft'] != true)
-        Center(
-          child: muted(
-            context,
-            d['localHistory'] == true
-                ? d['uncached'] == true
-                      ? '此会话尚未缓存，连接电脑后可加载历史'
-                      : '本地历史 · 上次同步 ${d['lastSyncedAt'] ?? '时间未知'}'
-                : !widget.online
-                ? '本地历史 · 电脑暂不可达'
-                : d['desktopLive'] == true
-                ? '桌面实时连接 · ${const {'idle': '空闲', 'running': '执行中', 'waiting': '等待处理', 'starting': '加载中'}[d['status']] ?? '状态未知'} · 最近 ${d['historyLimit'] ?? 200} 条记录'
-                : '桌面历史 · 运行状态未知 · 最近 ${d['historyLimit'] ?? 200} 条记录',
-            size: 10,
-          ),
-        ),
-      const SizedBox(height: 30),
-      for (final e in d['events'] ?? [])
-        if (e['role'] == 'tool' || e['role'] == 'reasoning')
-          ProcessRecord(
-            key: ValueKey('process:${d['id']}:${e['id']}'),
-            record: Map<String, dynamic>.from(e),
-            live:
-                widget.online &&
-                d['desktopLive'] == true &&
-                ['running', 'starting', 'waiting'].contains(d['status']) &&
-                e['turnId'] != null &&
-                (e['turnId'] == d['turnId'] ||
-                    (d['hermesLive'] == true &&
-                        e['turnId'] == d['latestProcessTurnId'])),
-          )
-        else if (e['role'] == 'process')
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            child: muted(
-              context,
-              '已处理 ${processDuration(e['durationMs'])}',
-              size: 11,
-            ),
-          )
-        else if (e['phase'] == 'commentary')
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            child: markdown('${e['text']}', compact: true),
-          )
-        else if (e['role'] == 'user')
-          Align(
-            alignment: Alignment.centerRight,
-            child: Container(
-              constraints: BoxConstraints(
-                maxWidth: (MediaQuery.sizeOf(context).width - 40) * .85,
-              ),
-              margin: const EdgeInsets.only(top: 24, bottom: 32),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              decoration: BoxDecoration(
-                color: panelColor(context),
-                borderRadius: BorderRadius.circular(24),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  eventBody(Map<String, dynamic>.from(e)),
-                  if (e['sendStatus'] != null)
-                    muted(
-                      context,
-                      const {
-                            'sending': '发送中…',
-                            'sent': '已发送 · 等待记录同步',
-                            'failed': '发送失败，请检查提示后重试',
-                            'unknown': '发送结果未知，请勿重复发送',
-                          }[e['sendStatus']] ??
-                          '',
-                      size: 10,
-                    ),
-                ],
+  Widget conversation(Json d) => NotificationListener<UserScrollNotification>(
+    onNotification: (notification) {
+      if (notification.depth == 0 &&
+          notification.direction != ScrollDirection.idle) {
+        widget.onConversationUserScroll?.call();
+      }
+      return false;
+    },
+    child: NotificationListener<ScrollMetricsNotification>(
+      onNotification: (notification) {
+        if (notification.depth == 0) widget.onConversationMetrics?.call();
+        return false;
+      },
+      child: ListView(
+        controller: widget.scroll,
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 30),
+        children: [
+          if (d['draft'] != true &&
+              (d['localHistory'] == true || !widget.online))
+            Center(
+              child: muted(
+                context,
+                d['localHistory'] == true
+                    ? d['uncached'] == true
+                          ? '此会话尚未缓存，连接电脑后可加载历史'
+                          : '本地历史 · 上次同步 ${d['lastSyncedAt'] ?? '时间未知'}'
+                    : !widget.online
+                    ? '本地历史 · 电脑暂不可达'
+                    : d['desktopLive'] == true
+                    ? '桌面实时连接 · ${const {'idle': '空闲', 'running': '执行中', 'waiting': '等待处理', 'starting': '加载中'}[d['status']] ?? '状态未知'}'
+                    : '桌面历史 · 运行状态未知',
+                size: 10,
               ),
             ),
-          )
-        else
-          Padding(
-            padding: const EdgeInsets.only(bottom: 30),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+          if (d['draft'] != true &&
+              (d['localHistory'] == true || !widget.online))
+            const SizedBox(height: 8),
+          for (final e in d['events'] ?? [])
+            if (e['role'] == 'tool' || e['role'] == 'reasoning')
+              ProcessRecord(
+                key: ValueKey('process:${d['id']}:${e['id']}'),
+                record: Map<String, dynamic>.from(e),
+                live:
+                    widget.online &&
+                    d['desktopLive'] == true &&
+                    ['running', 'starting', 'waiting'].contains(d['status']) &&
+                    e['turnId'] != null &&
+                    (e['turnId'] == d['turnId'] ||
+                        (d['hermesLive'] == true &&
+                            e['turnId'] == d['latestProcessTurnId'])),
+              )
+            else if (e['role'] == 'process')
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: muted(
+                  context,
+                  '已处理 ${processDuration(e['durationMs'])}',
+                  size: 11,
+                ),
+              )
+            else if (e['phase'] == 'commentary')
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: markdown('${e['text']}', compact: true),
+              )
+            else if (e['role'] == 'user')
+              Align(
+                alignment: Alignment.centerRight,
+                child: Container(
+                  constraints: BoxConstraints(
+                    maxWidth: (MediaQuery.sizeOf(context).width - 40) * .85,
+                  ),
+                  margin: const EdgeInsets.only(top: 24, bottom: 32),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: panelColor(context),
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      eventBody(Map<String, dynamic>.from(e)),
+                      if (e['sendStatus'] != null)
+                        muted(
+                          context,
+                          const {
+                                'sending': '发送中…',
+                                'sent': '已发送 · 等待记录同步',
+                                'failed': '发送失败，请检查提示后重试',
+                                'unknown': '发送结果未知，请勿重复发送',
+                              }[e['sendStatus']] ??
+                              '',
+                          size: 10,
+                        ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.only(bottom: 30),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    agentLogo(d['agent'], size: 22),
-                    const SizedBox(width: 8),
-                    Text(
-                      d['agent'],
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
+                    Row(
+                      children: [
+                        agentLogo(d['agent'], size: 22),
+                        const SizedBox(width: 8),
+                        Text(
+                          d['agent'],
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    eventBody(Map<String, dynamic>.from(e)),
+                    const SizedBox(height: 8),
+                    iconAction(
+                      'Copy',
+                      '复制回复',
+                      () => Clipboard.setData(
+                        ClipboardData(text: '${e['text']}'),
                       ),
+                      size: 16,
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
-                eventBody(Map<String, dynamic>.from(e)),
-                const SizedBox(height: 8),
-                iconAction(
-                  'Copy',
-                  '复制回复',
-                  () => Clipboard.setData(ClipboardData(text: '${e['text']}')),
-                  size: 16,
-                ),
-              ],
+              ),
+          if (d['liveInflight']?['assistant'] != null)
+            markdown('${d['liveInflight']['assistant']}'),
+          if (d['agent'] == 'Codex' &&
+              RegExp(
+                r'额度|usage.limit|rate.limit|quota',
+                caseSensitive: false,
+              ).hasMatch('${d['error'] ?? d['desktopError'] ?? ''}'))
+            outlineAction('查看额度与重置卡', () => setState(() => page = 'usage')),
+          if (d['desktopError'] != null) ...[
+            muted(context, '${d['desktopError']}'),
+            outlineAction(
+              '重新连接',
+              widget.loading || widget.busy
+                  ? null
+                  : () => widget.onOpen(d['id']),
             ),
-          ),
-      if (d['liveInflight']?['assistant'] != null)
-        markdown('${d['liveInflight']['assistant']}'),
-      if (d['agent'] == 'Codex' &&
-          RegExp(
-            r'额度|usage.limit|rate.limit|quota',
-            caseSensitive: false,
-          ).hasMatch('${d['error'] ?? d['desktopError'] ?? ''}'))
-        outlineAction('查看额度与重置卡', () => setState(() => page = 'usage')),
-      if (d['desktopError'] != null) ...[
-        muted(context, '${d['desktopError']}'),
-        outlineAction(
-          '重新连接',
-          widget.loading || widget.busy ? null : () => widget.onOpen(d['id']),
-        ),
-      ],
-      if (widget.pending != null) widget.pending!,
-      const SizedBox(height: 28),
-      if (d['draft'] != true)
-        Center(child: muted(context, '已加载的会话记录', size: 10)),
-    ],
+          ],
+          if (widget.pending != null) widget.pending!,
+          const SizedBox(height: 28),
+          if (d['draft'] != true &&
+              (d['localHistory'] == true || !widget.online))
+            Center(child: muted(context, '已加载的会话记录', size: 10)),
+        ],
+      ),
+    ),
   );
   Future<Json?> chooseSessionSettings({Json? initial}) {
     String? selectedAgent = initial?['agent'];
@@ -2105,6 +2182,10 @@ class _CollieShellState extends State<CollieShell> {
               ClipboardData(text: '${d['nativeId'] ?? d['id']}'),
             ),
           ),
+          navRow('Delete', '删除会话', () {
+            Navigator.pop(ctx);
+            deleteSession();
+          }),
           if (d['agent'] == 'Hermes' && d['managed'] != true) ...[
             navRow('Pencil', '重命名', () {
               Navigator.pop(ctx);
@@ -2116,6 +2197,48 @@ class _CollieShellState extends State<CollieShell> {
             }),
           ],
         ],
+      ),
+    );
+  }
+
+  Future<void> deleteSession() async {
+    final d = Map<String, dynamic>.from(widget.detail!);
+    final id = d['id'] as String;
+    await collieSheet<void>(
+      context,
+      '删除会话',
+      (ctx) => SessionDeletePanel(
+        detail: d,
+        computer: widget.computerName ?? widget.api.base.host,
+        blocked: !widget.online
+            ? '电脑离线，恢复连接后再删除。'
+            : widget.role == 'view'
+            ? '当前连接只读，无法删除会话。'
+            : widget.busy ||
+                  widget.loading ||
+                  d['draft'] == true ||
+                  ['running', 'starting', 'waiting'].contains(d['status'])
+            ? '任务执行中或等待处理，暂不可删除。不会自动停止任务。'
+            : null,
+        eligibility: () async => Map<String, dynamic>.from(
+          await widget.api.call(
+            '/local/${Uri.encodeComponent(id)}/delete-eligibility',
+          ),
+        ),
+        remove: (request) async => Map<String, dynamic>.from(
+          await widget.api.call('/local/${Uri.encodeComponent(id)}/delete', {
+            'requestId': request,
+          }),
+        ),
+        onDeleted: (ids) async {
+          if (widget.onDeleted != null) {
+            await widget.onDeleted!(ids);
+          } else {
+            home();
+            await widget.onRefresh();
+          }
+          if (ctx.mounted) Navigator.pop(ctx);
+        },
       ),
     );
   }
@@ -2244,6 +2367,8 @@ class _CollieShellState extends State<CollieShell> {
   }
 
   Future<void> attachmentMenu() async {
+    final sessionId = widget.detail?['id'] as String?;
+    if (!widget.enabled || !attachmentContext(sessionId)) return;
     final kind = await collieSheet<String>(
       context,
       '添加',
@@ -2273,7 +2398,7 @@ class _CollieShellState extends State<CollieShell> {
         ],
       ),
     );
-    if (kind == null || !mounted) return;
+    if (!mounted || kind == null || !attachmentContext(sessionId)) return;
     if (['image', 'video', 'file', 'clipboard'].contains(kind)) {
       await upload(kind);
       return;
@@ -2288,7 +2413,7 @@ class _CollieShellState extends State<CollieShell> {
           ),
         ),
       );
-      if (selection != null && mounted) {
+      if (selection != null && attachmentContext(sessionId)) {
         if (uploads.length >= 5) {
           setState(() => uploadError = '每条消息最多添加 5 个附件或技能');
         } else {
@@ -2338,7 +2463,7 @@ class _CollieShellState extends State<CollieShell> {
       final value = await Navigator.of(
         context,
       ).push<String>(MaterialPageRoute(builder: (_) => const SnippetLibrary()));
-      if (mounted && value != null) appendContext(value);
+      if (attachmentContext(sessionId) && value != null) appendContext(value);
       return;
     }
     if (kind == 'folder') {
@@ -2347,7 +2472,9 @@ class _CollieShellState extends State<CollieShell> {
           builder: (_) => ComputerFolders(api: widget.api, create: false),
         ),
       );
-      if (folder != null && mounted) appendContext('电脑目录：${folder['path']}');
+      if (folder != null && attachmentContext(sessionId)) {
+        appendContext('电脑目录：${folder['path']}');
+      }
       return;
     }
     final field = TextEditingController();
@@ -2376,7 +2503,10 @@ class _CollieShellState extends State<CollieShell> {
         ],
       ),
     );
-    if (mounted && value != null && value.isNotEmpty) {
+    if (mounted &&
+        attachmentContext(sessionId) &&
+        value != null &&
+        value.isNotEmpty) {
       final uri = Uri.tryParse(value);
       if (kind == 'url' &&
           (uri == null ||
@@ -2638,66 +2768,74 @@ class _CollieShellState extends State<CollieShell> {
       drawerScrimColor: Colors.black.withValues(alpha: .4),
       appBar: AppBar(
         automaticallyImplyLeading: false,
+        titleSpacing: 20,
+        foregroundColor: mutedColor(context),
         title: InkWell(
+          borderRadius: BorderRadius.circular(8),
           onTap: widget.onManageComputers,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.computer_outlined, size: 17),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Text(
-                  widget.computerName ?? widget.api.base.host,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.computer_outlined, size: 15),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    widget.computerName ?? widget.api.base.host,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w400,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 6),
-              const Icon(Icons.keyboard_arrow_down, size: 17),
-              const SizedBox(width: 10),
-              SizedBox(
-                width: 66,
-                child: Row(
-                  children: [
-                    SizedBox(
-                      width: 10,
-                      height: 10,
-                      child: widget.connecting
-                          ? CircularProgressIndicator(
-                              strokeWidth: 1.3,
-                              color: const Color(0xffb88a00),
-                              semanticsLabel: '正在连接电脑',
-                            )
-                          : Center(
-                              child: Container(
-                                width: 5,
-                                height: 5,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: widget.online
-                                      ? const Color(0xff00d600)
-                                      : const Color(0xffef4444),
+                const SizedBox(width: 6),
+                const Icon(Icons.keyboard_arrow_down, size: 15),
+                const SizedBox(width: 10),
+                SizedBox(
+                  width: widget.connecting || !widget.online ? 66 : 10,
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 10,
+                        height: 10,
+                        child: widget.connecting
+                            ? CircularProgressIndicator(
+                                strokeWidth: 1.3,
+                                color: const Color(0xffb88a00),
+                                semanticsLabel: '正在连接电脑',
+                              )
+                            : Center(
+                                child: Container(
+                                  width: 6,
+                                  height: 6,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: !widget.online
+                                        ? const Color(0xffef4444)
+                                        : const Color(0xff00d600),
+                                  ),
                                 ),
                               ),
-                            ),
-                    ),
-                    const SizedBox(width: 5),
-                    Text(
-                      widget.connecting
-                          ? '连接中'
-                          : widget.online
-                          ? '已连接'
-                          : '未连接',
-                      style: const TextStyle(fontSize: 11),
-                    ),
-                  ],
+                      ),
+                      if (widget.connecting || !widget.online)
+                        const SizedBox(width: 5),
+                      if (widget.connecting || !widget.online)
+                        Text(
+                          widget.connecting
+                              ? '连接中'
+                              : !widget.online
+                              ? '未连接'
+                              : '已连接',
+                          style: const TextStyle(fontSize: 11),
+                        ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
         toolbarHeight: 40,
@@ -2732,7 +2870,7 @@ class _CollieShellState extends State<CollieShell> {
         child: Column(
           children: [
             SizedBox(
-              height: 60,
+              height: 48,
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 child: Row(
@@ -3203,7 +3341,7 @@ class _UsagePageState extends State<UsagePage> with WidgetsBindingObserver {
             ],
           ];
     return ListView(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
       children: [
         Row(
           children: [
@@ -3241,10 +3379,19 @@ class _UsagePageState extends State<UsagePage> with WidgetsBindingObserver {
               ? 'Claude Code · 主会话及子代理日志，按消息 ID 去重。输入包含缓存读取和写入，不代表账号全设备额度。'
               : '本机可解析日志 · 输入已包含缓存，推理属于输出。缺失日志的旧快照单独列出。',
         ),
-        if (error.isNotEmpty) Text(error),
-        if (a == null)
+        if (error.isNotEmpty) ...[
+          Text(error),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: busy ? null : load,
+              child: const Text('重试'),
+            ),
+          ),
+        ],
+        if (a == null && error.isEmpty)
           muted(context, busy ? '首次统计需要读取历史日志，请稍候。' : '暂无可用统计')
-        else ...[
+        else if (a != null) ...[
           const SizedBox(height: 18),
           Wrap(
             spacing: 12,

@@ -123,4 +123,31 @@ class HermesTests(unittest.TestCase):
             self.assertIsNone(display.hermes_message('举例：' + text, 'user')[2])
             self.assertEqual(display.hermes_message(text + '\n\n继续', 'user')[2]['followup'], '继续')
 
+    def test_batch_requires_native_kind_and_complete_unambiguous_children(self):
+        header = ('[IMPORTANT: 2 background processes completed. Treat these results as one batch '
+                  'and give one consolidated response; preserve failures and actionable results.]')
+        child = '[IMPORTANT: Background process proc_same exited (exit code -15, SIGTERM).\nCommand: echo test\nOutput:\n]'
+        text = header + '\n\n' + child + '\n\n' + child
+        for role, kind in [('user', None), ('user', 'custom'), ('assistant', 'process_complete')]:
+            self.assertEqual(display.hermes_message(text, role, kind), (role, text, None))
+        role, body, record = display.hermes_message(text, 'user', 'process_complete')
+        events = display.hermes_background_events(record, body, 123, 1000)
+        self.assertEqual([e['id'] for e in events], ['background:123:0', 'background:123:1'])
+        self.assertTrue(all(e['status'] == 'failed' and e['text'] == '' for e in events))
+        self.assertEqual(display.hermes_background_events(record, body, 123, 1000), events)
+        for malformed in [text[:-1], text.replace('2 background', '3 background'), text + '\n\n继续']:
+            self.assertEqual(display.hermes_message(malformed, 'user', 'process_complete'), ('user', malformed, None))
+        # A process output that looks like a complete extra child must not silently split.
+        ambiguous = header + '\n\n' + child + '\n\n' + child + '\n\n' + child
+        self.assertEqual(display.hermes_message(ambiguous, 'user', 'process_complete')[1], ambiguous)
+
+    def test_watch_keeps_unknown_process_result_and_quoted_content(self):
+        text = '[IMPORTANT: Background process proc_x matched watch pattern "ready".\nCommand: echo ready\nMatched output:\nready ]\n\nmore]'
+        role, body, record = display.hermes_message(text, 'user')
+        self.assertEqual(role, 'tool')
+        self.assertEqual(record['status'], 'pending')
+        self.assertIn('ready ]\n\nmore', body)
+        for ordinary, role in [('用户引用：' + text, 'user'), (text, 'assistant'), (text[:-1], 'user')]:
+            self.assertEqual(display.hermes_message(ordinary, role), (role, ordinary, None))
+
 unittest.main()

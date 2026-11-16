@@ -1,15 +1,16 @@
 import React,{useEffect,useRef,useState} from 'react';
 import AgentIcon from './AgentIcon';
-import {Archive,ChevronDown,Copy,Info,Pencil,Share2} from 'lucide-react';
+import {Archive,ChevronDown,Copy,Info,Pencil,Share2,Trash2} from 'lucide-react';
 type Props={
  agent:string;title:string;cwd?:string;nativeId:string;canManage:boolean;
  onShare:()=>void;
+ onDelete:()=>void;
  onInfo:()=>void;
  onRename:(title:string)=>Promise<void>;
  onArchive:()=>Promise<void>;
  onError:(message:string)=>void;
 };
-export default function SessionMenu({agent,title,cwd,nativeId,canManage,onShare,onInfo,onRename,onArchive,onError}:Props){
+export default function SessionMenu({agent,title,cwd,nativeId,canManage,onShare,onInfo,onRename,onArchive,onError,onDelete}:Props){
  const[open,setOpen]=useState(false),[mode,setMode]=useState<'menu'|'rename'|'archive'>('menu'),[draft,setDraft]=useState(''),[busy,setBusy]=useState(false),[note,setNote]=useState('');
  const wrap=useRef<HTMLDivElement>(null);
  useEffect(()=>{
@@ -37,6 +38,7 @@ export default function SessionMenu({agent,title,cwd,nativeId,canManage,onShare,
       {cwd&&<button role="menuitem" onClick={()=>copy(cwd,'工作目录')}><Copy size={15}/>复制工作目录</button>}
       {canManage&&<button role="menuitem" onClick={()=>{setDraft(title);setMode('rename')}}><Pencil size={15}/>重命名</button>}
       {canManage&&<button role="menuitem" onClick={()=>setMode('archive')}><Archive size={15}/>归档（从列表隐藏）</button>}
+      <button role="menuitem" onClick={()=>{restart();onDelete()}}><Trash2 size={15}/>删除会话</button>
       <button role="menuitem" onClick={()=>{restart();onInfo()}}><Info size={15}/>会话信息</button>
       {note&&<p className="session-menu-note">{note}</p>}
      </>}

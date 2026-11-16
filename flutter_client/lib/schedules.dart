@@ -8,17 +8,28 @@ import 'api.dart';
 Future<void> showPreviewSchedules(
   BuildContext context,
   List<dynamic> sessions,
-  CollieApi api,
-) => Navigator.of(context).push<void>(
+  CollieApi api, {
+  bool Function()? canEdit,
+}) => Navigator.of(context).push<void>(
   MaterialPageRoute(
-    builder: (_) => SchedulePreview(sessions: sessions, api: api),
+    builder: (_) =>
+        SchedulePreview(sessions: sessions, api: api, canEdit: canEdit),
   ),
 );
 
 class SchedulePreview extends StatefulWidget {
   final CollieApi api;
   final List<dynamic> sessions;
-  const SchedulePreview({super.key, required this.sessions, required this.api});
+  final bool enabled;
+  final bool Function()? canEdit;
+  bool get canModify => enabled && (canEdit?.call() ?? true);
+  const SchedulePreview({
+    super.key,
+    required this.sessions,
+    required this.api,
+    this.enabled = true,
+    this.canEdit,
+  });
   @override
   State<SchedulePreview> createState() => _SchedulePreviewState();
 }
@@ -33,6 +44,7 @@ class _SchedulePreviewState extends State<SchedulePreview> {
 
   List<Map<String, dynamic>> demoSchedules = [];
   String loadError = '';
+  bool loaded = false;
   @override
   void initState() {
     super.initState();
@@ -44,8 +56,10 @@ class _SchedulePreviewState extends State<SchedulePreview> {
     try {
       final r = await widget.api.call('/schedules');
       if (mounted) {
-        setState(
-          () => demoSchedules = (r['tasks'] as List).map((e) {
+        setState(() {
+          loadError = '';
+          loaded = true;
+          demoSchedules = (r['tasks'] as List).map((e) {
             final m = Map<String, dynamic>.from(e);
             m['time'] = DateTime.fromMillisecondsSinceEpoch(m['time']);
             m['repeat'] = m['interval'] == 18000000
@@ -54,8 +68,8 @@ class _SchedulePreviewState extends State<SchedulePreview> {
                 ? '每天'
                 : '仅一次';
             return m;
-          }).toList(),
-        );
+          }).toList();
+        });
       }
     } catch (e) {
       if (mounted) setState(() => loadError = '$e');
@@ -63,6 +77,14 @@ class _SchedulePreviewState extends State<SchedulePreview> {
   }
 
   Future<void> mutate(String path, [Json? data]) async {
+    if (!mounted) return;
+    if (!widget.canModify) {
+      setState(() {});
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('当前连接仅可查看定时任务，操作未执行')));
+      return;
+    }
     try {
       if (data == null) {
         await widget.api.call('$path/cancel', {});
@@ -80,6 +102,7 @@ class _SchedulePreviewState extends State<SchedulePreview> {
   }
 
   Future<void> edit([Map<String, dynamic>? old]) async {
+    if (!widget.canModify) return;
     final sessions = widget.sessions
         .where((s) => s['agent'] == 'Codex')
         .toList();
@@ -151,6 +174,10 @@ class _SchedulePreviewState extends State<SchedulePreview> {
                             ),
                           ),
                           onPressed: () {
+                            if (!widget.canModify) {
+                              change(() => error = '当前连接仅可查看定时任务，未保存');
+                              return;
+                            }
                             if (text.text.trim().isEmpty) {
                               change(() => error = '请填写消息内容');
                               return;
@@ -396,28 +423,45 @@ class _SchedulePreviewState extends State<SchedulePreview> {
         style: TextStyle(fontSize: 20, fontWeight: FontWeight.w500),
       ),
       actions: [
-        IconButton(
-          tooltip: '新建定时任务',
-          onPressed: edit,
-          icon: const Icon(Icons.add),
-        ),
+        if (widget.canModify)
+          IconButton(
+            tooltip: '新建定时任务',
+            onPressed: edit,
+            icon: const Icon(Icons.add),
+          ),
       ],
     ),
     body: ListView(
-      padding: const EdgeInsets.all(22),
+      padding: const EdgeInsets.fromLTRB(22, 12, 22, 22),
       children: [
-        if (loadError.isNotEmpty) Text(loadError),
-        const Text(
-          '安排下一条消息',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.w500),
-        ),
+        if (loadError.isNotEmpty) ...[
+          Text('定时任务加载失败：$loadError'),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(onPressed: load, child: const Text('重试')),
+          ),
+        ],
+        if (!loaded && loadError.isEmpty)
+          const Center(child: CircularProgressIndicator()),
+        if (widget.canModify && loaded && loadError.isEmpty)
+          const Text(
+            '安排下一条消息',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w500),
+          ),
         const SizedBox(height: 8),
         const Text(
           '任务由当前电脑执行，手机可离线。',
           style: TextStyle(fontSize: 12, color: Colors.grey),
         ),
+        if (!widget.canModify) ...[
+          const SizedBox(height: 12),
+          const Text(
+            '当前连接仅可查看定时任务',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+        ],
         const SizedBox(height: 20),
-        if (demoSchedules.isEmpty)
+        if (loaded && loadError.isEmpty && demoSchedules.isEmpty)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 60),
             child: Column(
@@ -430,11 +474,12 @@ class _SchedulePreviewState extends State<SchedulePreview> {
                 const SizedBox(height: 18),
                 const Text('还没有定时任务'),
                 const SizedBox(height: 16),
-                OutlinedButton.icon(
-                  onPressed: edit,
-                  icon: const Icon(Icons.add, size: 18),
-                  label: const Text('新建定时任务'),
-                ),
+                if (widget.canModify)
+                  OutlinedButton.icon(
+                    onPressed: edit,
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('新建定时任务'),
+                  ),
               ],
             ),
           ),
@@ -469,8 +514,11 @@ class _SchedulePreviewState extends State<SchedulePreview> {
                     ),
                     Switch(
                       value: task['enabled'] == true,
-                      onChanged: (v) =>
-                          mutate('/schedules/${task['id']}', {'enabled': v}),
+                      onChanged: widget.canModify
+                          ? (v) => mutate('/schedules/${task['id']}', {
+                              'enabled': v,
+                            })
+                          : null,
                     ),
                   ],
                 ),
@@ -498,40 +546,41 @@ class _SchedulePreviewState extends State<SchedulePreview> {
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
                 ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    TextButton(
-                      onPressed: () => edit(task),
-                      child: const Text('编辑'),
-                    ),
-                    TextButton(
-                      onPressed: () async {
-                        final yes = await showDialog<bool>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            title: const Text('取消此定时任务？'),
-                            content: const Text('取消后不会再按此计划发送。'),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(ctx, false),
-                                child: const Text('返回'),
-                              ),
-                              TextButton(
-                                onPressed: () => Navigator.pop(ctx, true),
-                                child: const Text('确认取消'),
-                              ),
-                            ],
-                          ),
-                        );
-                        if (yes == true && mounted) {
-                          mutate('/schedules/${task['id']}');
-                        }
-                      },
-                      child: const Text('取消任务'),
-                    ),
-                  ],
-                ),
+                if (widget.canModify)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed: () => edit(task),
+                        child: const Text('编辑'),
+                      ),
+                      TextButton(
+                        onPressed: () async {
+                          final yes = await showDialog<bool>(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text('取消此定时任务？'),
+                              content: const Text('取消后不会再按此计划发送。'),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(ctx, false),
+                                  child: const Text('返回'),
+                                ),
+                                TextButton(
+                                  onPressed: () => Navigator.pop(ctx, true),
+                                  child: const Text('确认取消'),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (yes == true && mounted) {
+                            mutate('/schedules/${task['id']}');
+                          }
+                        },
+                        child: const Text('取消任务'),
+                      ),
+                    ],
+                  ),
               ],
             ),
           ),

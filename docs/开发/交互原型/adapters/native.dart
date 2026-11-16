@@ -4,9 +4,11 @@ import 'api.dart';
 
 // Browser preview only. No native operation is performed.
 class NativeBridge {
+  static Future<String> appVersion() async => '交互原型 · 模拟版本';
   static bool previewNotifications = false;
   static void Function(String)? onLink;
   static void Function()? onNetworkReady;
+  static void Function()? onNetworkChanged;
   static const channel = MethodChannel('gcollie/preview-disabled');
   static Future<T?> invoke<T>(String method, [Json? args]) async {
     if (method == 'notificationsStop') {

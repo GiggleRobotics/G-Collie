@@ -1,4 +1,5 @@
 """Private local usage index. Only exports allowlisted counters, never message content/auth."""
+from path_compat import is_relative_to
 import os,sys,json,pathlib,sqlite3,datetime,hashlib
 from collections import defaultdict
 HOME=pathlib.Path(os.environ.get('GCOLLIE_USAGE_HOME',str(pathlib.Path.home())))
@@ -87,7 +88,7 @@ def project_for(agent,r,state):
   p=state.get('local-projects',{}).get(state.get('thread-project-assignments',{}).get(r['id'],{}).get('projectId'))
   if p and p.get('rootPaths'):return dict(path=p['rootPaths'][0],name=p.get('name') or pathlib.Path(p['rootPaths'][0]).name)
  cwd=r.get('cwd') or r.get('git_repo_root') or ''
- matches=[(root,p) for p in state.get('local-projects',{}).values() for root in p.get('rootPaths',[]) if cwd and (pathlib.Path(cwd)==pathlib.Path(root) or pathlib.Path(cwd).is_relative_to(pathlib.Path(root)))]
+ matches=[(root,p) for p in state.get('local-projects',{}).values() for root in p.get('rootPaths',[]) if cwd and (pathlib.Path(cwd)==pathlib.Path(root) or is_relative_to(pathlib.Path(cwd), pathlib.Path(root)))]
  if matches:
   root,p=max(matches,key=lambda x:len(x[0]));return dict(path=root,name=p.get('name') or pathlib.Path(root).name)
  if agent=='Claude Code' and cwd:return dict(path=cwd,name=pathlib.Path(cwd).name)
@@ -126,7 +127,7 @@ def report():
    for row in c.execute('SELECT id,title,name,cwd,model,rollout_path,tokens_used FROM threads ORDER BY created_at,id'):
     r=dict(row);path=pathlib.Path(r['rollout_path'] or '').resolve();allowed=[(HOME/'.codex/sessions').resolve(),(HOME/'.codex/archived_sessions').resolve()]
     try:
-     if not any(path.is_relative_to(root) for root in allowed):raise ValueError()
+     if not any(is_relative_to(path, root) for root in allowed):raise ValueError()
      st=path.stat();signature=[str(path),st.st_size,st.st_mtime_ns];old=cache['files'].get(r['id'])
      data=old['data'] if old and old['signature']==signature else scan(path,r['id'])
      newfiles[r['id']]=dict(signature=signature,data=data)
@@ -180,12 +181,12 @@ def report():
  claude_files={}
  root=(HOME/'.claude/projects').resolve()
  for path in sorted(root.glob('*/*.jsonl')):
-  if path.is_symlink() or not path.resolve().is_relative_to(root):continue
+  if path.is_symlink() or not is_relative_to(path.resolve(), root):continue
   try:
    sources=[path]+sorted(path.with_suffix('').glob('subagents/*.jsonl'))
    events=[];main=None
    for source in sources:
-    if source.is_symlink() or not source.resolve().is_relative_to(root):continue
+    if source.is_symlink() or not is_relative_to(source.resolve(), root):continue
     st=source.stat();signature=[str(source),st.st_size,st.st_mtime_ns];key=str(source.relative_to(root));old=cache.get('claudeFiles',{}).get(key)
     data=old['data'] if old and old['signature']==signature else scan_claude(source)
     claude_files[key]=dict(signature=signature,data=data)

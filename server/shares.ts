@@ -11,5 +11,6 @@ export class ShareStore{
  create(id:string,detail:any,requestId:string){if(!/^[a-zA-Z0-9_-]{8,100}$/.test(requestId||''))throw Error('无效分享操作编号');const existing=Object.entries(this.rows).find(([,v])=>v.sessionId===id&&v.requestId===requestId&&v.expiresAt>Date.now());if(existing)return{key:existing[0],expiresAt:existing[1].expiresAt};const key=randomBytes(24).toString('hex');const now=Date.now();this.rows[key]={...shareProjection(detail),sessionId:id,requestId,createdAt:now,expiresAt:now+7*86400000};this.save();return{key,expiresAt:this.rows[key].expiresAt}}
  latest(id:string){const row=Object.entries(this.rows).filter(([,v])=>v.sessionId===id&&v.expiresAt>Date.now()).sort((a,b)=>b[1].createdAt-a[1].createdAt)[0];return row?{key:row[0],expiresAt:row[1].expiresAt}:null}
  get(key:string){const s=this.rows[key];return /^[a-f0-9]{48}$/.test(key)&&s&&s.expiresAt>Date.now()?s:null}
+ revokeSession(id:string){for(const[key,row]of Object.entries(this.rows))if(row.sessionId===id)delete this.rows[key];this.save()}
  revoke(id:string,key:string){if(this.rows[key]?.sessionId!==id)throw Error('分享不存在');delete this.rows[key];this.save()}
 }

@@ -37,7 +37,39 @@ class UsageApi extends CollieApi {
   }
 }
 
+class FailingUsageApi extends UsageApi {
+  bool fail = true;
+  @override
+  Future<dynamic> call(String path, [Json? body]) async {
+    if (fail) throw ApiException('测试统计读取失败');
+    return {'agents': {}};
+  }
+}
+
 void main() {
+  testWidgets('usage failure replaces empty state and supports retry', (
+    tester,
+  ) async {
+    final api = FailingUsageApi();
+    addTearDown(api.close);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: UsagePage(api: api, onOpen: (_) {}),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('测试统计读取失败'), findsOneWidget);
+    expect(find.text('暂无可用统计'), findsNothing);
+    api.fail = false;
+    await tester.tap(find.text('重试'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('测试统计读取失败'), findsNothing);
+    expect(find.text('暂无可用统计'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets(
     'Claude usage tab is visible on phone and does not show Codex account quota',
     (tester) async {

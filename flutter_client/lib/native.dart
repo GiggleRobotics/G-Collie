@@ -8,6 +8,7 @@ import 'api.dart';
 class NativeBridge {
   static void Function(String)? onLink;
   static void Function()? onNetworkReady;
+  static void Function()? onNetworkChanged;
   static const channel = MethodChannel('dev.giggle.gcollie/native');
   static Future<T?> invoke<T>(String method, [Json? args]) {
     final result = channel.invokeMethod<T>(method, args);
@@ -17,6 +18,17 @@ class NativeBridge {
             onTimeout: () => throw ApiException('内置网络响应超时，请重新连接'),
           )
         : result;
+  }
+
+  static Future<String> appVersion() async {
+    try {
+      final version = await invoke<String>('appVersion');
+      return version == null || version.trim().isEmpty
+          ? '版本未知'
+          : '内测版 ${version.trim()}';
+    } catch (_) {
+      return '版本未知';
+    }
   }
 
   static String networkComputer = 'embedded-network';

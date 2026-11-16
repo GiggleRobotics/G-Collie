@@ -98,7 +98,7 @@ class ProcessRecords:
                 self.finish(key,p.get('output',''),time);return True
             # Summaries are explicitly public. Do not inspect content/raw_content/encrypted_content.
             if t=='reasoning':
-                self.summary(p.get('summary'),p.get('id'),time);return True
+                self.summary(p.get('summary'),p.get('id') or key,time);return True
         if kind=='event_msg':
             t=p.get('type')
             if t=='task_started': self.turn=p.get('turn_id');self.turn_start=len(self.events)
@@ -106,6 +106,11 @@ class ProcessRecords:
                 if isinstance(p.get('duration_ms'),(int,float)):
                     position=next((i+1 for i in range(self.turn_start,len(self.events)) if self.events[i].get('role')=='user'),self.turn_start)
                     self.events.insert(position,dict(id='turn:'+str(p.get('turn_id',index)),role='process',text='本轮处理完成',durationMs=p['duration_ms'],time=time))
+            if t=='item_started':
+                item=p.get('item') or {}
+                if item.get('type')=='Reasoning':
+                    self.summary([],item.get('id') or str(index),time,'pending')
+                    return True
             if t=='item_completed':
                 item=p.get('item') or {};it=item.get('type')
                 if it=='Reasoning': self.summary(item.get('summary_text'),item.get('id'),time)
@@ -127,10 +132,13 @@ class ProcessRecords:
                 return True
         return False
 
-    def summary(self,value,key,time):
+    def summary(self,value,key,time,status='completed'):
+        # A marker is public metadata, even when no public summary is supplied.
         text=public_summary(value).strip()
-        if not text or (key,text) in self.thoughts: return
-        # Both the response item and desktop item may contain the same summary.
-        if self.events and self.events[-1].get('role')=='reasoning' and self.events[-1].get('text')==text:return
-        self.thoughts.add((key,text))
-        self.events.append(dict(id='summary:'+str(key),role='reasoning',text=text,time=time))
+        existing=next((e for e in reversed(self.events) if e.get('role')=='reasoning' and e.get('sourceId')==str(key)),None)
+        if existing is not None:
+            if text:existing['text']=text
+            existing['status']=status
+            return
+        if text and self.events and self.events[-1].get('role')=='reasoning' and self.events[-1].get('text')==text:return
+        self.events.append(dict(id='summary:'+str(key),sourceId=str(key),role='reasoning',text=text,status=status,time=time,turnId=self.turn))

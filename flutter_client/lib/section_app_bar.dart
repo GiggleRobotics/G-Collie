@@ -14,11 +14,11 @@ class SectionAppBar extends StatelessWidget implements PreferredSizeWidget {
     this.primary = true,
   });
   @override
-  Size get preferredSize => const Size.fromHeight(60);
+  Size get preferredSize => const Size.fromHeight(52);
   @override
   Widget build(BuildContext context) => AppBar(
     primary: primary,
-    toolbarHeight: 60,
+    toolbarHeight: 52,
     leadingWidth: 60,
     titleSpacing: 5,
     centerTitle: false,

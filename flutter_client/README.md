@@ -1,10 +1,10 @@
 # G-Collie Flutter Android 客户端
 
-沿用现有 G-Collie 页面布局、文案、配色、边牧素材及 Lucide 图标，仅将界面实现切换为 Flutter；未修改原版 React 页面或旧 APK。界面使用 Flutter 组件，复用现有 G-Collie 电脑服务，应用 ID 为 `dev.giggle.g_collie_flutter`，可与旧 APK 同时安装。
+沿用现有 G-Collie 页面布局、文案、配色、边牧素材及 Lucide 图标，仅将界面实现切换为 Flutter；未修改原版 React 页面或旧 APK。界面使用 Flutter 组件，复用现有 G-Collie 电脑服务，应用 ID 为 `dev.giggle.g_collie_flutter`。公开发行只提供这一个 Android 应用，不再分发旧客户端。
 
 ## 运行
 
-需要 Flutter stable（本次验证 3.47.7 / Dart 3.13.5）、JDK 17、Android SDK 34/35/36、Build Tools 36、NDK 28.2.13676358 和 CMake 3.22.1（平台版本由插件使用）。支持 Android 8+。
+需要 Flutter stable（本次验证 3.47.7 / Dart 3.13.5）、JDK 17、Android SDK 34/35/36、Build Tools 36、NDK 28.2.13676358 和 CMake 3.22.1（平台版本由插件使用）。公开手机包面向 Android 8+ 的 arm64 设备；x86_64 包用于模拟器验证，暂不提供 32 位 ARM 包。
 
 ```bash
 cd flutter_client
@@ -18,9 +18,42 @@ flutter test
 flutter build apk --debug --target-platform android-arm64
 ```
 
-生成的内测 APK：`build/app/outputs/flutter-apk/app-debug.apk`。当前使用 Android 内测签名，不作为正式分发签名。
+生成的开发 APK：`build/app/outputs/flutter-apk/app-debug.apk`，只用于本地开发，禁止作为公开发行包。
 
-正式体验请使用 Release 内测包：在项目根目录执行 `npm run package:flutter-apk`，输出 `releases/g-collie-flutter-0.1.9-arm64-beta.apk`。APK 使用原有 `android/lib/` 下的网络模块，首次构建需先运行 `npm run build:network`。
+## 正式签名与打包
+
+APK 复用 `android/lib/` 下的 arm64-v8a / x86_64 网络模块，首次构建先运行 `npm run build:network`。正式版本保持应用 ID `dev.giggle.g_collie_flutter`，不能随意更换签名密钥。
+
+签名配置通过环境变量指定项目外的私密文件；未提供完整配置时，Release 构建直接失败，绝不回退到 debug 签名。配置格式如下（示例全部是占位符）：
+
+```properties
+storeFile=/absolute/private/path/release.p12
+storePassword=YOUR_PRIVATE_PASSWORD
+keyAlias=g-collie-release
+keyPassword=YOUR_PRIVATE_PASSWORD
+```
+
+密钥与配置所在目录权限设为 `0700`，文件权限设为 `0600`；不要将其放进仓库、CI 日志、问题附件或发行包。备份至加密离线介质，密码分开保管；同一磁盘上的副本不能代替离线备份。维护者可用 JDK `keytool` 创建自己的 PKCS12 RSA 签名密钥，Fork 不使用本项目发布密钥。
+
+```bash
+export GCOLLIE_ANDROID_SIGNING_PROPERTIES=/absolute/private/path/signing.properties
+npm run package:flutter-apk
+```
+
+脚本先执行 `flutter analyze`、`flutter test`，然后输出当前 pubspec 版本的：
+
+- `releases/g-collie-<版本>-android-arm64-release.apk`：arm64 手机公开安装包。
+- `releases/g-collie-<版本>-android-x86_64-release.apk`：x86_64 模拟器兼容验证包，不代表所有 x86 实机已验证。
+- 每个 APK 对应的 `.sha256` 校验文件。
+- `releases/g-collie-<版本>-android-signatures.json`：包名、版本号、ABI、SHA256 和生产证书指纹。脚本会验证 APK 签名并拒绝 debug 证书。
+
+发布前使用 SDK Build Tools 的 `apksigner verify --verbose --print-certs <APK>` 核验证书指纹，用 `sha256sum -c <APK>.sha256` 核对文件。后续版本必须使用同一生产密钥，并提高 `pubspec.yaml` 的 build number。debug 构建仍使用本地开发密钥，与生产包隔离。
+
+### 已有内测安装的升级限制
+
+截至 0.1.40 的内测包使用 debug 证书。生产证书不同，Android 会拒绝同包覆盖安装（`INSTALL_FAILED_UPDATE_INCOMPATIBLE`），这不是安装包损坏。不能承诺内测包无损升级到生产签名，不能通过签名配置规避系统校验。
+
+不要自动卸载、清除内测应用或改变现有配对。已有内测用户可先保留现状，待自行决定迁移后再手动卸载内测包、安装公开版并重新配对；这会丢失本机配对、设置、草稿和内置网络登录状态。电脑上的 Agent 会话不因手机卸载删除。首次生产签名安装完成后，后续同签名 APK 可正常覆盖升级。
 
 ## 连接
 
@@ -45,7 +78,7 @@ flutter build apk --debug --target-platform android-arm64
 
 ## 当前边界
 
-当前为内测签名版本。入网与 G-Collie 设备配对是独立操作，旧 APK 的配对不会自动转移到 Flutter 包名。已验证无 ADB 端口转发的私网访问、冷启动恢复、真实 Codex / Hermes 收发及执行中追加消息。超长后台存活尚未完成专项验收。详细历次验证记录见 [VALIDATION.md](VALIDATION.md)。
+入网与 G-Collie 设备配对是独立操作，debug 内测包与生产签名之间的迁移限制见上文。已验证无 ADB 端口转发的私网访问、冷启动恢复、真实 Codex / Hermes 收发及执行中追加消息。超长后台存活尚未完成专项验收。详细历次验证记录见 [VALIDATION.md](VALIDATION.md)。
 
 0.1.4：点击新建直接选择助手/项目，进入空白聊天，首次发送才创建会话；名称根据首条消息生成。输入或附件非空时显示发送箭头，执行中也能发送；执行中输入为空时显示停止。Codex 使用桌面 steer，Hermes 沿用后端忙碌输入配置。历史问题回答只显示人类回答，不显示内部回复标签与 JSON。
 ## 会话图片与文件预览（0.1.1）

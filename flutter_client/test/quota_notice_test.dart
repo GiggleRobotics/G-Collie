@@ -1,58 +1,77 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:g_collie_flutter/api.dart';
 import 'package:g_collie_flutter/quota_notice.dart';
 
-class QuotaApi extends CollieApi {
-  int used = 100;
-  bool authError = false;
-  QuotaApi() : super(Uri.parse('http://localhost:4310'));
+class LimitsApi extends CollieApi {
+  LimitsApi() : super(Uri.parse('http://localhost:4310'));
+  bool fail = false;
+  int used = 30;
   @override
-  Future<dynamic> call(String path, [Json? body]) async => {
-    'codexAccount': authError
-        ? {
-            'limits': [],
-            'limitsError': '认证失败',
-            'limitsErrorCode': 'auth_expired',
-          }
-        : {
-            'accountKey': 'test-account',
-            'limits': [
+  Future<dynamic> call(String path, [Json? body]) async {
+    if (fail) throw ApiException('temporary quota lookup failure', 503);
+    return {
+      'codexAccount': {
+        'limits': [
+          {
+            'id': 'codex',
+            'windows': [
               {
-                'id': 'codex',
-                'windows': [
-                  {
-                    'windowMinutes': 300,
-                    'usedPercent': used,
-                    'resetsAt':
-                        DateTime.now()
-                            .add(const Duration(hours: 2))
-                            .millisecondsSinceEpoch ~/
-                        1000,
-                  },
-                  {'windowMinutes': 10080, 'usedPercent': 22},
-                ],
+                'windowMinutes': 300,
+                'usedPercent': used,
+                'resetsAt': 2000000000,
               },
             ],
-            'resetCredits': {'availableCount': 2, 'credits': []},
           },
-  };
+        ],
+      },
+    };
+  }
 }
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
   testWidgets(
-    'quota authentication failure does not claim chat logout or block sending',
+    'background quota lookup failure never expands quota/reset panel',
     (tester) async {
-      final api = QuotaApi()..authError = true;
-      bool blocked = false;
+      final api = LimitsApi();
+      addTearDown(api.close);
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
             body: CodexQuotaNotice(
               api: api,
               readOnly: false,
+              online: true,
+              error: '',
+              onBlocked: (_) {},
+              onRefresh: () async {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('5 小时限额'), findsNothing);
+      api.fail = true;
+      await tester.pump(const Duration(seconds: 30));
+      await tester.pumpAndSettle();
+      expect(find.text('5 小时限额'), findsNothing);
+      expect(find.text('刷新额度'), findsNothing);
+      expect(find.text('暂时无法查询额度'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+  testWidgets(
+    'first lookup failure stays quiet while actual exhaustion is shown',
+    (tester) async {
+      final api = LimitsApi()..fail = true;
+      addTearDown(api.close);
+      bool blocked = false;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CodexQuotaNotice(
+              api: api,
+              readOnly: true,
               online: true,
               error: '',
               onBlocked: (v) => blocked = v,
@@ -62,46 +81,38 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('暂时无法查询额度'), findsOneWidget);
-      expect(find.text('需要重新登录 Codex'), findsNothing);
+      expect(find.text('暂时无法查询额度'), findsNothing);
       expect(blocked, false);
+      api.fail = false;
+      api.used = 100;
+      await tester.pump(const Duration(seconds: 30));
+      await tester.pumpAndSettle();
+      expect(find.text('5 小时限额'), findsOneWidget);
+      expect(blocked, true);
       await tester.pumpWidget(const SizedBox());
-      api.close();
     },
   );
-  testWidgets(
-    'real quota snapshot blocks only when exhausted and refresh recovers',
-    (tester) async {
-      FlutterSecureStorage.setMockInitialValues({});
-      final api = QuotaApi();
-      bool? blocked;
-      String error = '';
-      Widget page() => MaterialApp(
+  testWidgets('explicit exhaustion error stays actionable when lookup fails', (
+    tester,
+  ) async {
+    final api = LimitsApi()..fail = true;
+    addTearDown(api.close);
+    await tester.pumpWidget(
+      MaterialApp(
         home: Scaffold(
           body: CodexQuotaNotice(
             api: api,
-            readOnly: false,
+            readOnly: true,
             online: true,
-            error: error,
-            onBlocked: (v) => blocked = v,
+            error: 'usage_limit_exceeded',
+            onBlocked: (_) {},
             onRefresh: () async {},
           ),
         ),
-      );
-      await tester.pumpWidget(page());
-      await tester.pumpAndSettle();
-      expect(blocked, true);
-      expect(find.text('剩余 0%'), findsOneWidget);
-      expect(find.text('剩余 78%'), findsOneWidget);
-      expect(find.text('重置额度'), findsOneWidget);
-      api.used = 10;
-      error = 'refresh';
-      await tester.pumpWidget(page());
-      await tester.pumpAndSettle();
-      expect(blocked, false);
-      expect(find.text('重置额度'), findsNothing);
-      await tester.pumpWidget(const SizedBox());
-      api.close();
-    },
-  );
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('暂时无法查询额度'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
 }

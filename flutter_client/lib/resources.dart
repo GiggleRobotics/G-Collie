@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'session_gallery.dart';
 import 'session_video.dart';
 import 'dart:async';
@@ -91,6 +92,21 @@ class SessionResources {
   }
 
   Future<void> gallery(BuildContext context, String ref) async {
+    if (ref.startsWith('gcollie-upload:')) {
+      if (context.mounted) {
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => FilePreviewPage(
+              name: '待同步图片',
+              url: api.base,
+              image: image(ref),
+              showDownload: false,
+            ),
+          ),
+        );
+      }
+      return;
+    }
     List<Json> items = [];
     try {
       if (!offline) {
@@ -208,6 +224,17 @@ class SessionResources {
   }
 
   Future<Uint8List> image(String ref) async {
+    if (ref.startsWith('gcollie-upload:')) {
+      final id = ref.substring('gcollie-upload:'.length);
+      final local = api.attachmentPreviews[id];
+      // Preview ids are bound to this API instance; only files saved by the picker.
+      if (local == null ||
+          local['image'] != true ||
+          local['session'] != session) {
+        throw ApiException('本地图片预览不可用');
+      }
+      return File(local['path'] as String).readAsBytes();
+    }
     if (RegExp(r'^data:image/(png|jpeg|gif|webp);base64,').hasMatch(ref)) {
       if (ref.length > 8 * 1024 * 1024) throw ApiException('图片数据过大');
       return base64Decode(ref.substring(ref.indexOf(',') + 1));

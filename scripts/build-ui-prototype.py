@@ -14,11 +14,14 @@ if not (work / 'web/index.html').exists():
 shutil.copy2(root/'flutter_client/pubspec.yaml',work/'pubspec.yaml')
 shutil.copy2(root/'flutter_client/pubspec.lock',work/'pubspec.lock')
 # Bundle a complete Chinese fallback in the browser build; no external font CDN.
-font = Path(os.environ.get('GCOLLIE_PREVIEW_CJK_FONT', '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf'))
-if not font.exists(): raise RuntimeError('Set GCOLLIE_PREVIEW_CJK_FONT to a Chinese TTF font for offline preview')
+font = Path(os.environ.get('GCOLLIE_PREVIEW_CJK_FONT', '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc'))
+if not font.exists(): raise RuntimeError('Set GCOLLIE_PREVIEW_CJK_FONT to a font covering Latin and Chinese for offline preview')
 (work/'assets/fonts').mkdir(parents=True, exist_ok=True)
 shutil.copy2(font, work/'assets/fonts/prototype-cjk.ttf')
-with (work/'pubspec.yaml').open('a') as f: f.write('\n  fonts:\n    - family: PrototypeCJK\n      fonts:\n        - asset: assets/fonts/prototype-cjk.ttf\n')
+# Explicit widget TextStyles (for example AppBar titles) bypass theme fallback.
+# CanvasKit's default fallback is Roboto; bundle the same CJK face under that
+# family as well so those runs remain offline and do not request a font CDN.
+with (work/'pubspec.yaml').open('a') as f: f.write('\n  fonts:\n    - family: PrototypeCJK\n      fonts:\n        - asset: assets/fonts/prototype-cjk.ttf\n    - family: Roboto\n      fonts:\n        - asset: assets/fonts/prototype-cjk.ttf\n')
 
 shutil.copytree(root/'flutter_client/assets',work/'assets',dirs_exist_ok=True)
 shutil.copytree(root/'flutter_client/lib',work/'lib',dirs_exist_ok=True)
@@ -26,7 +29,7 @@ for path in adapters.glob('*.dart'): shutil.copy2(path,work/'lib'/path.name)
 # The following sources must never be rewritten by the preview build.
 manifest = {}
 for src in sorted((root/'flutter_client/lib').glob('*.dart')):
-    if src.name in ('api.dart','native.dart','ui.dart','connection_page.dart'): continue
+    if src.name in ('api.dart','native.dart','ui.dart','connection_page.dart','session_events.dart','about_page.dart','process_record.dart'): continue
     copied=work/'lib'/src.name
     assert src.read_bytes()==copied.read_bytes(), f'Widget source drift: {src}'
     manifest[src.name]=hashlib.sha256(src.read_bytes()).hexdigest()
@@ -34,7 +37,7 @@ run(sdk,'pub','get','--offline')
 run(sdk,'build','web','--release','--target=lib/preview_main.dart','--base-href=/','--no-web-resources-cdn')
 if out.exists(): shutil.rmtree(out)
 shutil.copytree(work/'build/web',out)
-license_path = Path('/usr/share/doc/fonts-droid-fallback/copyright')
+license_path = Path('/usr/share/doc/fonts-noto-cjk/copyright')
 if license_path.exists(): shutil.copy2(license_path, out/'PrototypeCJK-LICENSE.txt')
 # Use content-specific filenames so preview refreshes cannot reuse an older UI.
 revision = hashlib.sha256((out/'main.dart.js').read_bytes()).hexdigest()[:12]

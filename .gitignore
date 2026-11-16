@@ -2,6 +2,10 @@ node_modules/
 dist/
 .data/
 .env
+*.jks
+*.keystore
+*.p12
+**/signing.properties
 
 releases/
 screenshots/

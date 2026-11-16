@@ -7,7 +7,7 @@ export async function nativeCodex(root:string,method:string,params:any,expectedA
  if(!['account/rateLimits/read','account/read','account/usage/read','collaborationMode/list','plugin/installed','thread/goal/get','thread/goal/set','thread/goal/clear','thread/archive'].includes(method))throw Error('未允许的原生操作');
  const bin=process.env.ORBIT_CODEX_BIN||process.env.CODEX_CLI_PATH||(existsSync('/usr/lib/chatgpt/resources/codex')?'/usr/lib/chatgpt/resources/codex':'codex');
  const child=spawn(bin,['app-server','--listen','stdio://'],{stdio:'pipe',env:codexEnvironment(root)});let seq=0;const pending=new Map<number,{resolve:(v:any)=>void;reject:(e:Error)=>void}>();const lines=createInterface({input:child.stdout});
- const fail=(e:Error)=>{for(const p of pending.values())p.reject(e);pending.clear()};child.on('error',fail);child.on('exit',()=>fail(Error('原生能力连接已关闭')));child.stderr.on('data',()=>{});
+ const fail=(e:Error)=>{for(const p of pending.values())p.reject(e);pending.clear()};child.stdin.on('error',fail);child.on('error',fail);child.on('exit',()=>fail(Error('原生能力连接已关闭')));child.stderr.on('data',()=>{});
  lines.on('line',line=>{try{const r=JSON.parse(line),p=pending.get(r.id);if(p){pending.delete(r.id);r.error?p.reject(Error(r.error.message)):p.resolve(r.result)}}catch{}});
  const rpc=(method:string,params:any)=>new Promise<any>((resolve,reject)=>{const id=++seq;pending.set(id,{resolve,reject});child.stdin.write(JSON.stringify({id,method,params})+'\n')});
  const timer=setTimeout(()=>{fail(Error('原生能力响应超时，写入结果未知，请刷新确认'));child.kill()},15000);

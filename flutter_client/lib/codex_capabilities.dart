@@ -105,6 +105,7 @@ class _CodexCapabilitiesState extends State<CodexCapabilities> {
           if (data?['goal']?['error'] != null)
             Text('${data!['goal']['error']}'),
           TextField(
+            enabled: widget.enabled && !busy && data != null,
             controller: objective,
             maxLength: 4000,
             minLines: 2,

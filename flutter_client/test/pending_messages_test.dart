@@ -83,4 +83,135 @@ void main() {
       expect(p.sessions['codex:new'], isEmpty);
     },
   );
+  test(
+    'server receipt heals legacy steer image receipt without consuming a text message',
+    () {
+      final p = PendingMessages();
+      p.add(
+        'codex:s',
+        'request',
+        '',
+        [],
+        attachments: true,
+        attachmentIds: ['image-id'],
+      );
+      p.update('codex:s', 'request', 'sent');
+      final text = {
+        'id': 'text',
+        'role': 'user',
+        'text': '继续',
+        'turnId': 'turn',
+        'media': [],
+      };
+      var d = p.merge({
+        'id': 'codex:s',
+        'events': [text],
+        'sendReceipts': [
+          {'requestId': 'request', 'turnId': 'turn'},
+        ],
+      });
+      expect(d['events'].length, 2);
+      expect(p.sessions['codex:s']!.single['turnId'], 'turn');
+      final other = {
+        'id': 'other-image',
+        'role': 'user',
+        'text': '',
+        'turnId': 'turn',
+        'media': ['/uploads/different/media/image.jpg'],
+      };
+      d = p.merge({
+        'id': 'codex:s',
+        'events': [text, other],
+      });
+      expect(p.sessions['codex:s'], hasLength(1));
+      final image = {
+        'id': 'image',
+        'role': 'user',
+        'text': '',
+        'turnId': 'turn',
+        'media': ['gcollie-resource:opaque-image-hash'],
+        'attachmentIds': ['image-id'],
+      };
+      d = p.merge({
+        'id': 'codex:s',
+        'events': [text, other, image],
+      });
+      expect(d['events'].length, 3);
+      expect(p.sessions['codex:s'], isEmpty);
+    },
+  );
+  test(
+    'local picture is visible before history and survives stale refreshes',
+    () {
+      final p = PendingMessages();
+      p.add(
+        'codex:s',
+        'request',
+        '',
+        [],
+        attachments: true,
+        attachmentIds: ['image-id'],
+        media: ['gcollie-upload:image-id'],
+      );
+      final d = p.merge({'id': 'codex:s', 'events': []});
+      expect(d['events'].single['text'], '');
+      expect(d['events'].single['media'], ['gcollie-upload:image-id']);
+      expect(d['events'].single['sendStatus'], 'sending');
+    },
+  );
+  test('missing projected turn heals only a recent exact matching message', () {
+    final p = PendingMessages();
+    p.add('s', 'r', '继续', []);
+    p.update('s', 'r', 'sent', turnId: 'known-turn');
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final wrongTurn = {
+      'id': 'other-turn',
+      'role': 'user',
+      'text': '继续',
+      'time': now,
+      'turnId': 'different',
+    };
+    final old = {
+      'id': 'old',
+      'role': 'user',
+      'text': '继续',
+      'time': now - 60000,
+    };
+    p.merge({
+      'id': 's',
+      'events': [wrongTurn, old],
+    });
+    expect(p.sessions['s'], hasLength(1));
+    p.merge({
+      'id': 's',
+      'events': [
+        wrongTurn,
+        old,
+        {'id': 'new', 'role': 'user', 'text': '继续', 'time': now},
+      ],
+    });
+    expect(p.sessions['s'], isEmpty);
+  });
+
+  test('exact request id reconciles transformed steer text once only', () {
+    final p = PendingMessages();
+    p.add('s', 'r1', '同一句', []);
+    p.add('s', 'r2', '同一句', []);
+    p.update('s', 'r1', 'sent', turnId: 'old-active-turn');
+    p.merge({
+      'id': 's',
+      'events': [
+        {
+          'id': 'native',
+          'role': 'user',
+          'requestId': 'r1',
+          'turnId': 'actual-turn',
+          'text': 'transport-enriched',
+        },
+      ],
+    });
+    expect(p.sessions['s']!.single['id'], 'r2');
+    expect(p.isAcknowledged('s', 'r1'), true);
+    expect(p.isAcknowledged('s', 'r2'), false);
+  });
 }

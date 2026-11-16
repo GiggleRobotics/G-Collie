@@ -1,0 +1,31 @@
+{
+  "version": "0.3.29",
+  "environment": "official Android phone + JDCLOUD Hermes0.22.7 dedicated localhost-provider QA session",
+  "readOnlyVerification": true,
+  "approval": {
+    "generation5": {
+      "requestSequence": 24,
+      "settledSequence": 25,
+      "toolDenied": true,
+      "exitCode": -1
+    },
+    "generation6": {
+      "requestSequence": 34,
+      "settledSequence": 35,
+      "exitCode": 0
+    },
+    "commandScope": "dedicated QA cwd/disposable only",
+    "disposableRemoved": true
+  },
+  "question": {
+    "generation": 7,
+    "requestSequence": 44,
+    "nativeChoices": [
+      "蓝 (Recommended)",
+      "绿"
+    ],
+    "gcollieOptionsPreserved": true,
+    "persistedClarifyToolResultContainsGreen": true
+  },
+  "phoneObservation": "initially card scrolled to bottom; scrolling showed options; no backend/provider defect"
+}

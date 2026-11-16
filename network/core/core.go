@@ -24,12 +24,138 @@ import (
 )
 
 type State struct {
-	State     string     `json:"state"`
-	AuthURL   string     `json:"authURL,omitempty"`
-	Address   string     `json:"address,omitempty"`
-	Error     string     `json:"error,omitempty"`
-	Computers []Computer `json:"computers,omitempty"`
+	State       string      `json:"state"`
+	AuthURL     string      `json:"authURL,omitempty"`
+	Address     string      `json:"address,omitempty"`
+	Error       string      `json:"error,omitempty"`
+	Computers   []Computer  `json:"computers,omitempty"`
+	Diagnostics Diagnostics `json:"diagnostics"`
 }
+
+// Diagnostics never retains upstream log text, arguments, URLs, addresses or keys.
+// All keys/labels are selected from fixed enumerations, so memory use is bounded.
+type Diagnostics struct {
+	UptimeSeconds       int64                    `json:"uptimeSeconds"`
+	LogCount            uint64                   `json:"logCount"`
+	LastStage           string                   `json:"lastStage,omitempty"`
+	LastErrorClass      string                   `json:"lastErrorClass,omitempty"`
+	LastEventAgeSeconds int64                    `json:"lastEventAgeSeconds"`
+	Counts              map[string]uint64        `json:"counts"`
+	Network             MobileNetworkDiagnostics `json:"network"`
+}
+type MobileNetworkDiagnostics struct {
+	InterfaceType string `json:"interfaceType"`
+	DNSv4         int    `json:"dnsV4"`
+	DNSv6         int    `json:"dnsV6"`
+	AddressV4     int    `json:"addressV4"`
+	AddressV6     int    `json:"addressV6"`
+	PrivateDNS    bool   `json:"privateDNS"`
+}
+
+var mobileDiagnosticMu sync.Mutex
+var mobileDiagnosticNetwork MobileNetworkDiagnostics
+
+// RecordMobileNetwork takes only counts and an allowlisted link category.
+func RecordMobileNetwork(kind string, dns4, dns6, addr4, addr6 int, privateDNS bool) {
+	switch kind {
+	case "vpn", "mobile", "wifi", "ethernet", "none":
+	default:
+		kind = "other"
+	}
+	clamp := func(n int) int {
+		if n < 0 {
+			return 0
+		}
+		if n > 16 {
+			return 16
+		}
+		return n
+	}
+	mobileDiagnosticMu.Lock()
+	mobileDiagnosticNetwork = MobileNetworkDiagnostics{kind, clamp(dns4), clamp(dns6), clamp(addr4), clamp(addr6), privateDNS}
+	mobileDiagnosticMu.Unlock()
+}
+
+type diagnosticBuffer struct {
+	mu                sync.Mutex
+	started           time.Time
+	lastEvent         time.Time
+	count             uint64
+	stage, errorClass string
+	counts            map[string]uint64
+}
+
+func logClassification(message string) (stage, class string) {
+	text := strings.ToLower(message)
+	stage = "other"
+	switch {
+	case strings.Contains(text, "dns") || strings.Contains(text, "lookup "):
+		stage = "dns"
+	case strings.Contains(text, "control"):
+		stage = "control"
+	case strings.Contains(text, "derp"):
+		stage = "derp"
+	case strings.Contains(text, "netmon") || strings.Contains(text, "linkchange"):
+		stage = "netmon"
+	case strings.Contains(text, "auth") || strings.Contains(text, "login"):
+		stage = "auth"
+	case strings.Contains(text, "magicsock") || strings.Contains(text, "wgengine") || strings.Contains(text, "netstack"):
+		stage = "engine"
+	}
+	class = "none"
+	switch {
+	case strings.Contains(text, "timeout") || strings.Contains(text, "deadline exceeded"):
+		class = "timeout"
+	case strings.Contains(text, "no such host") || strings.Contains(text, "server misbehaving"):
+		class = "name-resolution"
+	case strings.Contains(text, "unreachable") || strings.Contains(text, "no route to host"):
+		class = "unreachable"
+	case strings.Contains(text, "connection refused"):
+		class = "refused"
+	case strings.Contains(text, "tls") || strings.Contains(text, "certificate"):
+		class = "tls"
+	case strings.Contains(text, "error") || strings.Contains(text, "failed"):
+		class = "other"
+	}
+	return
+}
+func (d *diagnosticBuffer) logf(format string, args ...any) {
+	// The temporary formatted string is classified then discarded, never stored/logged.
+	stage, class := logClassification(fmt.Sprintf(format, args...))
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.started.IsZero() {
+		d.started = time.Now()
+	}
+	if d.counts == nil {
+		d.counts = make(map[string]uint64)
+	}
+	d.count++
+	d.stage = stage
+	d.errorClass = class
+	d.lastEvent = time.Now()
+	d.counts[stage+"/"+class]++
+}
+func (d *diagnosticBuffer) snapshot() Diagnostics {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	counts := make(map[string]uint64, len(d.counts))
+	for k, v := range d.counts {
+		counts[k] = v
+	}
+	var uptime, age int64
+	if !d.started.IsZero() {
+		uptime = int64(time.Since(d.started).Seconds())
+	}
+	if !d.lastEvent.IsZero() {
+		age = int64(time.Since(d.lastEvent).Seconds())
+	}
+	mobileDiagnosticMu.Lock()
+	network := mobileDiagnosticNetwork
+	mobileDiagnosticMu.Unlock()
+	return Diagnostics{uptime, d.count, d.stage, d.errorClass, age, counts, network}
+}
+
 type Computer struct {
 	Name    string `json:"name"`
 	Address string `json:"address"`
@@ -48,6 +174,7 @@ type Node struct {
 	server      *http.Server
 	address     string
 	closed      bool
+	diagnostics diagnosticBuffer
 }
 
 func New(dir, hostname string) (*Node, error) {
@@ -62,23 +189,34 @@ func New(dir, hostname string) (*Node, error) {
 	os.Unsetenv("TS_AUTHKEY")
 	os.Unsetenv("TS_CLIENT_SECRET")
 	os.Unsetenv("TS_ID_TOKEN")
-	n := &Node{ts: &tsnet.Server{Dir: dir, Hostname: hostname, UserLogf: func(string, ...any) {}, Logf: func(string, ...any) {}}}
+	n := &Node{diagnostics: diagnosticBuffer{started: time.Now()}}
+	n.ts = &tsnet.Server{Dir: dir, Hostname: hostname, UserLogf: n.diagnostics.logf, Logf: n.diagnostics.logf}
 	if err := n.ts.Start(); err != nil {
 		n.ts.Close()
 		return nil, err
 	}
 	return n, nil
 }
+
+// Android supplies interface changes explicitly; its fallback poll is ten minutes.
+// Preserve node keys, the netmap and active gateways when the default link changes.
+func (n *Node) NetworkChanged() {
+	n.diagnostics.logf("netmon refresh requested")
+	if monitor, ok := n.ts.Sys().NetMon.GetOK(); ok {
+		monitor.InjectEvent()
+	}
+}
+
 func (n *Node) Status() State {
 	c, err := n.ts.LocalClient()
 	if err != nil {
-		return State{State: "error", Error: err.Error()}
+		return State{State: "error", Error: err.Error(), Diagnostics: n.diagnostics.snapshot()}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	s, err := c.Status(ctx)
 	if err != nil {
-		return State{State: "error", Error: err.Error()}
+		return State{State: "error", Error: err.Error(), Diagnostics: n.diagnostics.snapshot()}
 	}
 	n.mu.Lock()
 	address := n.address
@@ -99,7 +237,7 @@ func (n *Node) Status() State {
 			}
 		}
 	}
-	return State{State: s.BackendState, AuthURL: auth, Address: address, Computers: computers}
+	return State{State: s.BackendState, AuthURL: auth, Address: address, Computers: computers, Diagnostics: n.diagnostics.snapshot()}
 }
 func (n *Node) Login() error {
 	c, e := n.ts.LocalClient()

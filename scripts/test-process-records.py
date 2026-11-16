@@ -24,9 +24,9 @@ class ProcessTests(unittest.TestCase):
         events=[];p=ProcessRecords(events)
         p.feed('response_item',{'type':'reasoning','id':'r','summary':[],'content':'PRIVATE','encrypted_content':'PRIVATE'},1000,1)
         p.feed('event_msg',{'type':'item_completed','item':{'type':'Reasoning','id':'r','summary_text':[],'raw_content':'PRIVATE'}},1100,2)
-        self.assertEqual(events,[])
+        self.assertEqual(len(events),1);self.assertEqual(events[0]['text'],'');self.assertEqual(events[0]['status'],'completed')
         p.feed('event_msg',{'type':'item_completed','item':{'type':'Reasoning','id':'s','summary_text':['公开摘要'],'raw_content':'PRIVATE'}},1200,3)
-        self.assertEqual(events[0]['text'],'公开摘要');self.assertNotIn('PRIVATE',str(events))
+        self.assertEqual(events[1]['text'],'公开摘要');self.assertNotIn('PRIVATE',str(events))
     def test_incomplete_call_is_not_invented_as_success(self):
         events=[];p=ProcessRecords(events);p.start('a','terminal',{'command':'sleep 10'},1000,1)
         self.assertEqual(events[0]['status'],'pending');self.assertNotIn('durationMs',events[0])

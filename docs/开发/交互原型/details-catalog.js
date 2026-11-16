@@ -1,4 +1,8 @@
 window.prototypeDetails = [
+ {group:'会话管理',page:'chat',detail:'delete-session',label:'删除会话确认',help:'仅演示；不可恢复提示、取消、失败保留及禁删状态。真实删除尚未实现。',state:'normal'},
+ {group:'会话管理',page:'hermes',detail:'delete-session',label:'删除会话确认',help:'仅演示；不可恢复提示、取消、失败保留及禁删状态。真实删除尚未实现。',state:'normal'},
+ {group:'会话管理',page:'claude',detail:'delete-session',label:'删除会话确认',help:'仅演示；不可恢复提示、取消、失败保留及禁删状态。真实删除尚未实现。',state:'normal'},
+
  {group:'工具与批准',page:'question',detail:'multi-select',label:'Hermes 多选问题',help:'多选至少一项，按原生数组字符串提交；不执行真实任务。',state:'normal'},
 
   {

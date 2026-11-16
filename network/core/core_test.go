@@ -185,3 +185,63 @@ func TestConcurrentReconnectAndTargetSwitch(t *testing.T) {
 		t.Fatalf("old credential accepted: %d", response.StatusCode)
 	}
 }
+
+func TestDiagnosticsClassifyWithoutRetainingSensitiveText(t *testing.T) {
+	var d diagnosticBuffer
+	d.logf("control: lookup %s failed: %s", "private-host.100.123.1.2", "deadline exceeded https://login.tailscale.com/a/token-secret?authURL=private")
+	s := d.snapshot()
+	if s.LogCount != 1 || s.LastStage != "dns" || s.LastErrorClass != "timeout" || s.Counts["dns/timeout"] != 1 {
+		t.Fatalf("wrong safe classification: %+v", s)
+	}
+	raw := JSON(s)
+	for _, secret := range []string{"private-host", "100.123.1.2", "login.tailscale.com", "token-secret", "authURL", "deadline exceeded"} {
+		if strings.Contains(raw, secret) {
+			t.Fatalf("diagnostic retained source text %q", secret)
+		}
+	}
+	s.Counts["injected-hostname"] = 12
+	if _, ok := d.snapshot().Counts["injected-hostname"]; ok {
+		t.Fatal("snapshot mutated internal counters")
+	}
+}
+
+func TestDiagnosticsStayBoundedAcrossConcurrentLogs(t *testing.T) {
+	var d diagnosticBuffer
+	var group sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			for j := 0; j < 500; j++ {
+				d.logf("unknown-private-label-%d secret=%d", j, j)
+			}
+		}()
+	}
+	group.Wait()
+	s := d.snapshot()
+	if s.LogCount != 4000 || len(s.Counts) > 49 || s.Counts["other/none"] != 4000 {
+		t.Fatalf("unbounded or lost diagnostics: %+v", s)
+	}
+}
+
+func TestMobileDiagnosticsOnlyExposeAllowlistedTypeAndCounts(t *testing.T) {
+	mobileDiagnosticMu.Lock()
+	previous := mobileDiagnosticNetwork
+	mobileDiagnosticMu.Unlock()
+	defer func() { mobileDiagnosticMu.Lock(); mobileDiagnosticNetwork = previous; mobileDiagnosticMu.Unlock() }()
+	RecordMobileNetwork("private-interface-100.64.1.2", 999, -3, 2, 1, true)
+	var d diagnosticBuffer
+	s := d.snapshot()
+	if s.Network.InterfaceType != "other" || s.Network.DNSv4 != 16 || s.Network.DNSv6 != 0 || s.Network.AddressV4 != 2 || !s.Network.PrivateDNS {
+		t.Fatalf("unexpected safe network data: %+v", s.Network)
+	}
+	if strings.Contains(JSON(s), "private-interface") {
+		t.Fatal("interface address/name leaked")
+	}
+	for _, kind := range []string{"vpn", "mobile", "wifi", "ethernet", "none"} {
+		RecordMobileNetwork(kind, 1, 2, 1, 2, false)
+		if d.snapshot().Network.InterfaceType != kind {
+			t.Fatal("valid category lost")
+		}
+	}
+}

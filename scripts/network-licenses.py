@@ -16,6 +16,7 @@ for name,m in sorted(modules.items()):
  for f in sorted(p.iterdir()):
   if f.is_file() and f.name.upper().startswith(('LICENSE','COPYING','NOTICE','PATENTS')):
    out.append('\n'+f.name+'\n'+f.read_text(errors='replace'))
+out.append('\n=== G-Collie Android source modification ===\n'+(root/'network/patches/README.md').read_text())
 assets=root/'android/assets';assets.mkdir(parents=True,exist_ok=True)
 (assets/'NETWORK-NOTICES.txt').write_text('\n'.join(out))
 print('Network notices collected:',len(modules),'modules')

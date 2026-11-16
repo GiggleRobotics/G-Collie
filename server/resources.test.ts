@@ -43,3 +43,12 @@ test('extensionless uploaded videos preserve the attachment label for media clas
  const list=references({id:'codex:video',events:[{role:'user',text:`视频附件：[录屏.mp4](${ref})`}]});
  assert.equal(list[0].name,'录屏.mp4');assert.equal(list[0].ref,ref);assert.equal(list[0].image,false);
 });
+test('Markdown dependency images are ticket scoped, relative to document, and recheck revocation/traversal',async()=>{
+ const d=await fixture();await mkdir(join(d.cwd,'子目录'));await mkdir(join(d.cwd,'.private'));const png=Buffer.from('89504e470d0a1a0a','hex');await writeFile(join(d.cwd,'中文 图片.png'),png);await writeFile(join(d.cwd,'子目录','图片.png'),png);await writeFile(join(d.cwd,'.private','hidden.png'),png);await symlink('/etc/passwd',join(d.cwd,'leak.png'));
+ await writeFile(join(d.cwd,'report.md'),'# 报告\n![同目录](中文%20图片.png)\n![子目录](子目录/图片.png)\n![缺失](missing.png)\n![隐藏](.private/hidden.png)\n![越界](../outside.png)\n![软链](leak.png)\n![外网](https://example.com/pixel.png)');let allowed=true;const app=express(),issue=installPreviews(app,async()=>d,()=>allowed),server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));try{
+ const base='http://127.0.0.1:'+(server.address() as any).port,path=await issue(d.id,references(d)[0].id,'phone'),html=await(await fetch(base+path)).text();const links=[...html.matchAll(/src="(\.\/asset\?id=[a-f0-9]+)"/g)].map(m=>new URL(m[1],base+path).href);assert.equal(links.length,2);assert.match(html,/图片不可用/);assert.doesNotMatch(html,/src="https:/);
+ for(const link of links){const r=await fetch(link);assert.equal(r.status,200);assert.match(r.headers.get('content-type')||'',/image\/png/);assert.deepEqual(Buffer.from(await r.arrayBuffer()),png)}
+ assert.equal((await fetch(base+path.replace('/view','/asset?id=arbitrary'))).status,404);
+ await writeFile(join(d.cwd,'子目录','图片.png'),'changed');const {unlink}=await import('node:fs/promises');await unlink(join(d.cwd,'子目录','图片.png'));await symlink('/etc/passwd',join(d.cwd,'子目录','图片.png'));assert.equal((await fetch(links[1])).status,404);allowed=false;assert.equal((await fetch(links[0])).status,410);
+ }finally{server.close();}
+});

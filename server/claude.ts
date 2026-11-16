@@ -1,3 +1,4 @@
+import {historyPage} from './history.js';
 import {claudeMediaInput} from './claude-media.js';
 import type {Attachment} from './attachments.js';
 import {dirname} from 'node:path';
@@ -9,7 +10,7 @@ import {join} from 'node:path';
 import {homedir} from 'node:os';
 
 const valid=(id:string)=>/^[a-f0-9]{8}-[a-f0-9-]{27,28}$/i.test(id);
-export function claudeEvents(rows:any[]){
+export function claudeEvents(rows:any[],before?:string,all=false){
  const events:any[]=[];let usage={input:0,output:0,cached:0,semantics:'includes-cache'};const counted=new Set<string>();
  for(const r of rows){const m=r.message;if(!m||!['user','assistant'].includes(m.role)||r.isMeta||r.isSidechain||(r.type&&!['user','assistant'].includes(r.type)))continue;
   const parts=typeof m.content==='string'?[{type:'text',text:m.content}]:m.content||[];
@@ -25,7 +26,7 @@ export function claudeEvents(rows:any[]){
   }
   if(m.usage&&!counted.has(m.id)){counted.add(m.id);const u=m.usage;usage.input+=(u.input_tokens||0)+(u.cache_read_input_tokens||0)+(u.cache_creation_input_tokens||0);usage.output+=u.output_tokens||0;usage.cached+=u.cache_read_input_tokens||0;}
  }
- return {events:events.slice(-200),usage};
+ return {...(all?{events}:historyPage(events,before)),usage};
 }
 export class ClaudeBridge{
  private owned:Record<string,any>={};private active=new Map<string,{child:ChildProcess;turnId:string;stopped?:boolean}>();private seen:Record<string,boolean>={};private submitting=new Set<string>();private cache:any[]=[];private expires=0;
@@ -37,7 +38,7 @@ export class ClaudeBridge{
   for(const [id,s]of Object.entries(this.owned))if(!sessions.some(v=>v.nativeId===id))sessions.push({id:'claude:'+id,nativeId:id,agent:'Claude Code',...s,projectPath:s.cwd||null,project:s.cwd.split('/').pop()||'无项目',archived:false});
   this.cache=sessions;this.expires=Date.now()+2000;return sessions;
  }
- async detail(id:string){if(!valid(id))throw Error('无效 Claude Code 会话');const s=(await this.list()).find(v=>v.nativeId===id);if(!s)throw Error('Claude Code 会话不存在');let rows:any[]=[];if(s._path)rows=(await readFile(s._path,'utf8')).split('\n').flatMap(l=>{try{return[JSON.parse(l)]}catch{return[]}});const {_path,...summary}=s;const a=this.active.get(id);const owned=this.owned[id];return{...summary,...claudeEvents(rows),historyLimit:200,claudeLive:!!owned,desktopLive:!!owned,desktopControl:!!owned,readOnly:!owned,status:a?'running':owned?.status||'unknown',turnId:a?.turnId,desktopError:owned?.error||(!owned?'终端会话仅查看历史；请在终端继续，或在 G-Collie 新建会话':undefined),connectionState:owned?'connected':'readonly'};}
+ async detail(id:string,options?:{before?:string;all?:boolean}){if(!valid(id))throw Error('无效 Claude Code 会话');const s=(await this.list()).find(v=>v.nativeId===id);if(!s)throw Error('Claude Code 会话不存在');let rows:any[]=[];if(s._path)rows=(await readFile(s._path,'utf8')).split('\n').flatMap(l=>{try{return[JSON.parse(l)]}catch{return[]}});const {_path,...summary}=s;const a=this.active.get(id);const owned=this.owned[id];return{...summary,...claudeEvents(rows,options?.before,options?.all),claudeLive:!!owned,desktopLive:!!owned,desktopControl:!!owned,readOnly:!owned,status:a?'running':owned?.status||'unknown',turnId:a?.turnId,desktopError:owned?.error||(!owned?'终端会话仅查看历史；请在终端继续，或在 G-Collie 新建会话':undefined),connectionState:owned?'connected':'readonly'};}
  async create(title:string,cwd:string,prompt?:string,files:Attachment[]=[]){if(!existsSync(this.binary))throw Error('本机未安装 Claude Code CLI');const id=randomUUID();this.owned[id]={title,cwd,updatedAt:Date.now(),status:'idle',started:false};this.save();this.expires=0;if(prompt?.trim()||files.length)await this.action(id,{action:'send',text:prompt||'',attachments:files,requestId:randomUUID()});this.change();return{id:'claude:'+id};}
  async action(id:string,b:any){if(!valid(id)||!this.owned[id])throw Error('仅能控制 G-Collie 创建的 Claude Code 会话');const a=this.active.get(id);
   if(b.action==='stop'){if(!a||b.turnId!==a.turnId)throw Error('执行轮次已改变，请刷新');a.stopped=true;a.child.kill('SIGTERM');const timer=setTimeout(()=>{if(this.active.get(id)===a)a.child.kill('SIGKILL')},3000);timer.unref();return{ok:true};}

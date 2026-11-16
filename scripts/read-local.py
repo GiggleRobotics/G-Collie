@@ -1,17 +1,38 @@
 """Read-only, allowlisted session projection. Never exports settings or credentials."""
+from path_compat import is_relative_to
 import json,sqlite3,pathlib,sys,datetime,re,os,hashlib,base64
-from message_display import visible_user_media, display_text, hermes_internal_message, hermes_message, codex_created_input, codex_generated_image, group_generated_images
+from message_display import visible_user_media, display_text, hermes_internal_message, hermes_message, hermes_background_events, codex_created_input, codex_generated_image, group_generated_images, codex_user_text
 from process_records import ProcessRecords
+from history_page import history_page
 HOME=pathlib.Path.home()
 def db(path):
  c=sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True,timeout=3);c.row_factory=sqlite3.Row;c.execute('PRAGMA query_only=ON');return c
+def hermes_display_rows(connection, native):
+ # Hermes copies protected messages across compaction generations. Identity includes
+ # the original timestamp and tool linkage; equal text from separate sends is distinct.
+ rows=connection.execute("SELECT * FROM messages WHERE session_id=? AND role IN ('user','assistant','tool') ORDER BY id ASC",(native,))
+ seen={};order={}
+ for row in rows:
+  r=dict(row)
+  if 'active' in r and not (r.get('active') or r.get('compacted')):continue
+  metadata=r.get('display_metadata')
+  try:metadata=json.loads(metadata) if isinstance(metadata,str) else metadata
+  except (ValueError,TypeError):metadata=None
+  if isinstance(metadata,dict) and metadata.get('model_only'):continue
+  identity=r.get('display_identity')
+  legacy=(r['role'],r.get('content'),r.get('timestamp'),r.get('tool_call_id'),r.get('tool_calls'),r.get('tool_name'))
+  key=bytes(identity) if identity is not None else hashlib.sha256(repr(legacy).encode('utf-8','surrogatepass')).digest()
+  order.setdefault(key,r.get('display_order') if r.get('display_order') is not None else r['id'])
+  old=seen.get(key)
+  if old is None or (r.get('active',1),r['id'])>(old.get('active',1),old['id']):seen[key]=r
+ return [dict(seen[key],id=order[key]) for key in sorted(seen,key=order.get)]
 def ms(v):
  if isinstance(v,(int,float)):return int(v*1000) if v<1e12 else int(v)
  try:return int(datetime.datetime.fromisoformat(v.replace('Z','+00:00')).timestamp()*1000)
  except:return 0
-def clean(v):
- if isinstance(v,str):return v[:24000]
- if isinstance(v,list):return '\n'.join(str(x.get('text','')) for x in v if isinstance(x,dict) and x.get('type') in ['text','input_text','output_text'])[:24000]
+def clean(v,limit=24000):
+ if isinstance(v,str):return v[:limit]
+ if isinstance(v,list):return '\n'.join(str(x.get('text','')) for x in v if isinstance(x,dict) and x.get('type') in ['text','input_text','output_text'])[:limit]
  return ''
 try:APP_STATE=json.loads((HOME/'.codex/.codex-global-state.json').read_text())
 except:APP_STATE={}
@@ -32,7 +53,7 @@ def project_for(agent,r,cwd):
   if p and p.get('rootPaths'):return dict(path=p['rootPaths'][0],name=p.get('name') or pathlib.Path(p['rootPaths'][0]).name)
  if not cwd:return None
  path=pathlib.Path(cwd)
- matches=[(root,p) for p in REGISTERED.values() for root in p.get('rootPaths',[]) if path==pathlib.Path(root) or path.is_relative_to(pathlib.Path(root))]
+ matches=[(root,p) for p in REGISTERED.values() for root in p.get('rootPaths',[]) if path==pathlib.Path(root) or is_relative_to(path, pathlib.Path(root))]
  if matches:
   root,p=max(matches,key=lambda x:len(x[0]));return dict(path=root,name=p.get('name') or pathlib.Path(root).name)
  if agent=='Hermes' and r.get('git_repo_root'):
@@ -49,7 +70,7 @@ def photo_names(media,text):
   if ref.startswith('data:'):continue
   try:
    path=pathlib.Path(ref).resolve()
-   if not path.is_relative_to(uploads):continue
+   if not is_relative_to(path, uploads):continue
    relative=path.relative_to(uploads)
    if len(relative.parts)!=3 or not re.fullmatch(r'[a-f0-9-]{36}',relative.parts[0]) or relative.parts[1:]!=('media','image.jpg'):continue
    meta=json.loads((uploads/relative.parts[0]/'meta.json').read_text())
@@ -75,6 +96,7 @@ def codexdb():
  files=list((HOME/'.codex').glob('state_*.sqlite'))
  return db(max(files,key=lambda p:p.stat().st_mtime)) if files else None
 mode=sys.argv[1]; key=sys.argv[2] if len(sys.argv)>2 else ''
+options=json.loads(sys.argv[3]) if len(sys.argv)>3 else {}
 result={'sessions':[],'projects':[],'warnings':[]}
 if mode=='list':
  try:
@@ -100,7 +122,7 @@ else:
   c=codexdb();row=c.execute('SELECT id,title,name,cwd,git_branch,model,updated_at_ms,updated_at,archived,rollout_path FROM threads WHERE id=?',(native,)).fetchone()
   if not row:raise ValueError('会话不存在')
   row=dict(row);result=summary('Codex',row);path=pathlib.Path(row['rollout_path']).resolve();allowed=[(HOME/'.codex/sessions').resolve(),(HOME/'.codex/archived_sessions').resolve()]
-  if not any(path.is_relative_to(root) for root in allowed):raise ValueError('会话文件超出允许范围')
+  if not any(is_relative_to(path, root) for root in allowed):raise ValueError('会话文件超出允许范围')
   generated_seen=set()
   with path.open() as f:
    for index,line in enumerate(f):
@@ -120,7 +142,8 @@ else:
     if kind=='response_item':
      t=p.get('type')
      if t=='message' and p.get('role') in ['user','assistant']:
-      role=p['role'];text=clean(p.get('content'))
+      role=p['role'];text=clean(p.get('content'),None if role=='user' else 24000)
+      if role=='user':text=codex_user_text(text)[:24000]
       for part in p.get('content',[]) if isinstance(p.get('content'),list) else []:
        if isinstance(part,dict) and part.get('type') in ['image','input_image','output_image','local_image','localImage']:
         value=part.get('image_url') or part.get('url') or part.get('path');value=value.get('url') if isinstance(value,dict) else value
@@ -132,21 +155,22 @@ else:
      modern_usage=True;u=p.get('thread_token_usage') or {};usage={'input':u.get('input_tokens'),'output':u.get('output_tokens'),'cached':u.get('cached_input_tokens'),'semantics':'includes-cache'}
     if kind=='event_msg' and p.get('type')=='token_count' and not modern_usage:
      u=(p.get('info') or {}).get('total_token_usage') or {};usage={'input':u.get('input_tokens'),'output':u.get('output_tokens'),'cached':u.get('cached_input_tokens'),'semantics':'includes-cache'}
+    attachment_ids=list(dict.fromkeys(re.findall(r'/uploads/([a-f0-9-]{36})/(?:media/|content)','\n'.join([text,*media])))) if role=='user' else []
     if role=='user':text,media=visible_user_media(text,media)
     text=display_text(text,role,bool(media),photo_names(media,text))
-    if text or media:events.append(dict(id=p.get('id') or str(index),role=role,text=text,media=media,phase=p.get('channel'),turnId=(p.get('internal_chat_message_metadata_passthrough') or {}).get('turn_id'),time=ms(d.get('timestamp'))))
+    if text or media:events.append(dict(id=p.get('id') or str(index),role=role,text=text,media=media,attachmentIds=attachment_ids,phase=p.get('channel'),turnId=(p.get('internal_chat_message_metadata_passthrough') or {}).get('turn_id'),time=ms(d.get('timestamp'))))
  elif agent=='hermes':
   with db(HOME/'.hermes/state.db') as c:
    row=c.execute('SELECT id,title,cwd,git_repo_root,git_branch,model,started_at,last_activity_at,archived,input_tokens,output_tokens,cache_read_tokens FROM sessions WHERE id=? AND hidden=0',(native,)).fetchone()
    if not row:raise ValueError('会话不存在')
    r=dict(row);result=summary('Hermes',r);usage={'input':r['input_tokens'],'output':r['output_tokens'],'cached':r['cache_read_tokens'],'semantics':'provider-reported'}
-   for row in reversed(list(c.execute("SELECT id,role,content,tool_name,tool_calls,tool_call_id,display_kind,_compressed_summary,timestamp FROM messages WHERE session_id=? AND role IN ('user','assistant','tool') ORDER BY id DESC LIMIT 200",(native,)))):
+   for row in hermes_display_rows(c,native):
     r=dict(row);content=r['content'];media=[]
     if hermes_internal_message(content,r.get('display_kind'),r.get('_compressed_summary')):continue
     projected_role,content,background=hermes_message(content,r['role'],r.get('display_kind'))
     if background:
      followup=background.pop('followup','')
-     events.append(dict(id='background:'+str(r['id']),role='tool',text=content[:24000],time=ms(r['timestamp']),**background))
+     events.extend(hermes_background_events(background,content,r['id'],ms(r['timestamp'])))
      if not followup:continue
      projected_role,content='user',followup
     r['role']=projected_role
@@ -167,7 +191,7 @@ else:
      def photo_ref(match):
       path=pathlib.Path(match[1])
       try:
-       if path.resolve().is_relative_to(image_root) and path.is_file() and path.suffix.lower() in {'.png','.jpg','.jpeg','.gif','.webp'}:
+       if is_relative_to(path.resolve(), image_root) and path.is_file() and path.suffix.lower() in {'.png','.jpg','.jpeg','.gif','.webp'}:
         media.append(str(path));return ''
       except OSError:pass
       return match[0]
@@ -189,5 +213,5 @@ else:
      f=call.get('function') or {};process.start(call.get('id') or call.get('call_id'),f.get('name','工具'),f.get('arguments',''),ms(r['timestamp']),str(r['id'])+':'+str(call.get('id')))
  else:raise ValueError('未知 Agent')
  if agent=='codex':events=group_generated_images(events)
- result.update(events=events[-200:],usage=usage,historyLimit=200,latestProcessTurnId=process.turn)
+ result.update(**(dict(events=events) if options.get('all') else history_page(events,options.get('before'))),usage=usage,latestProcessTurnId=process.turn)
 print(json.dumps(result,ensure_ascii=False))

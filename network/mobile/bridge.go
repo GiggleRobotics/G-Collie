@@ -28,6 +28,8 @@ func GCStart(dir *C.char) *C.char {
 	mu.Lock()
 	defer mu.Unlock()
 	if node != nil {
+		// Status/Open call Start too: do not inject a link event on every poll.
+		// GCConfigureNetwork owns actual-link and explicit recovery changes.
 		return result(nil)
 	}
 	var e error
@@ -100,4 +102,15 @@ func GCStop() {
 func main() {}
 
 //export GCConfigureNetwork
-func GCConfigureNetwork(raw *C.char) *C.char { return result(configureNetwork(C.GoString(raw))) }
+func GCConfigureNetwork(raw *C.char) *C.char {
+	mu.Lock()
+	defer mu.Unlock()
+	changed, err := configureNetwork(C.GoString(raw))
+	if err == nil && changed && node != nil {
+		node.NetworkChanged()
+	}
+	if err != nil {
+		return result(err)
+	}
+	return C.CString(core.JSON(map[string]any{"ok": true, "changed": changed}))
+}

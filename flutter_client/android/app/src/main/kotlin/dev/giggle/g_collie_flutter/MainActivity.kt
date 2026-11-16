@@ -25,6 +25,28 @@ class MainActivity : FlutterActivity() {
     private var networkStarted = false
     private var noStateSince = 0L
     private var lastNetworkRecovery = 0L
+    private companion object {
+        // Match the native node's process lifetime, including Activity recreation.
+        val networkRefreshGeneration = java.util.concurrent.atomic.AtomicLong(0L)
+    }
+    private var lastOpenFailureLog = 0L
+    private fun logNetworkOpenFailure() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (lastOpenFailureLog != 0L && now - lastOpenFailureLog < 30000L) return
+        lastOpenFailureLog = now
+        val safe = JSONObject().put("event", "open_failed")
+        try {
+            val status = JSONObject(NativeNetwork.status())
+            val state = status.optString("state")
+            val allowedStates = setOf("NoState", "Stopped", "Starting", "Running", "NeedsLogin", "NeedsMachineAuth", "InUseOtherUser", "error")
+            safe.put("state", if (state in allowedStates) state else "unknown")
+            // Only allowlisted Go counters/categories; never error/authURL/address/token.
+            safe.put("diagnostics", status.optJSONObject("diagnostics") ?: JSONObject())
+        } catch (_: Throwable) {
+            safe.put("state", "diagnostic_unavailable")
+        }
+        android.util.Log.w("GCollieNetwork", safe.toString())
+    }
     private fun networkStatus(): String {
         var raw = NativeNetwork.status()
         val state = JSONObject(raw).optString("state")
@@ -33,37 +55,73 @@ class MainActivity : FlutterActivity() {
             if (noStateSince == 0L) noStateSince = now
             if (now - noStateSince >= 20000L && (lastNetworkRecovery == 0L || now - lastNetworkRecovery >= 120000L)) {
                 lastNetworkRecovery = now
-                android.util.Log.w("GCollieNetwork", "Recovering uninitialized backend after 20 seconds")
-                NativeNetwork.stop()
-                networkStarted = false
-                startNetwork()
-                noStateSince = now
+                // Only Go's allowlisted counters/categories are logged, never raw status/authURL.
+                val safe = JSONObject().put("state", "NoState")
+                    .put("waitingSeconds", (now - noStateSince) / 1000)
+                    .put("diagnostics", JSONObject(raw).optJSONObject("diagnostics") ?: JSONObject())
+                android.util.Log.w("GCollieNetwork", safe.toString())
+                // Only this rate-limited recovery forces one link observation refresh.
+                // Node identity, private-network login and device pairing stay intact.
+                startNetwork(forceRefresh = true)
                 raw = NativeNetwork.status()
             }
-        } else noStateSince = 0L
+        } else { noStateSince = 0L; lastNetworkRecovery = 0L }
         return raw
     }
-    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
-        override fun onLinkPropertiesChanged(network: Network, link: LinkProperties) {
-            if (networkStarted && !worker.isShutdown) worker.execute { try { startNetwork() } catch (_: Throwable) {} }
+    private fun refreshNetwork() {
+        if (!worker.isShutdown) worker.execute {
+            try {
+                if (startNetwork()) {
+                    runOnUiThread { channel?.invokeMethod("networkChanged", null) }
+                }
+            } catch (e: Throwable) {
+                android.util.Log.w("GCollieNetwork", "Network update failed: ${e.javaClass.simpleName}")
+            }
         }
+    }
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) { refreshNetwork() }
+        override fun onLost(network: Network) { refreshNetwork() }
+        override fun onLinkPropertiesChanged(network: Network, link: LinkProperties) { refreshNetwork() }
     }
     private var channel: MethodChannel? = null
     private var permissionResult: MethodChannel.Result? = null
     private fun incoming(i: Intent?): String? = if (i?.data?.scheme == "gcollie" && i.data?.host == "connect") i.data?.getQueryParameter("url") else i?.getStringExtra("server")
-    private fun startNetwork() {
+    private fun startNetwork(forceRefresh: Boolean = false): Boolean {
+        // Ordinary Status/Open retain the same value and do not inject netmon events.
+        // Keep the incremented value across later ordinary calls, not a one-shot flag.
+        if (forceRefresh) networkRefreshGeneration.incrementAndGet()
         val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
         val link = cm.getLinkProperties(cm.activeNetwork)
-        val description = JSONObject()
+        val capabilities = cm.getNetworkCapabilities(cm.activeNetwork)
+        val interfaceType = when {
+            capabilities?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) == true -> "vpn"
+            capabilities?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) == true -> "mobile"
+            capabilities?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true -> "wifi"
+            capabilities?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) == true -> "ethernet"
+            cm.activeNetwork == null -> "none"
+            else -> "other"
+        }
+        val description = JSONObject().put("interfaceType", interfaceType)
         val addresses = JSONArray()
         if (link != null) {
             description.put("name", link.interfaceName).put("mtu", link.mtu)
+            val dns = JSONArray()
+            link.dnsServers.forEach { dns.put(it.hostAddress!!.split("%")[0]) }
+            description.put("dns", dns)
+            if (Build.VERSION.SDK_INT >= 28 && link.isPrivateDnsActive && !link.privateDnsServerName.isNullOrBlank()) {
+                description.put("privateDNSName", link.privateDnsServerName)
+            }
             link.linkAddresses.forEach { addresses.put(it.address.hostAddress!!.split("%")[0] + "/" + it.prefixLength) }
             link.routes.firstOrNull { it.isDefaultRoute && it.gateway != null }?.let { description.put("gateway", it.gateway!!.hostAddress) }
         }
-        checked(NativeNetwork.configureNetwork(description.put("addresses", addresses).toString()))
+        description.put("networkHandle", cm.activeNetwork?.networkHandle ?: 0L)
+        description.put("refreshGeneration", networkRefreshGeneration.get())
+        val configuration = JSONObject(checked(NativeNetwork.configureNetwork(description.put("addresses", addresses).toString())))
+        val changed = configuration.optBoolean("changed", true) || !networkStarted
         checked(NativeNetwork.start(File(filesDir, "tailnet").absolutePath))
         networkStarted = true
+        return changed
     }
     private fun checked(raw: String): String {
         val value = JSONObject(raw)
@@ -76,6 +134,15 @@ class MainActivity : FlutterActivity() {
         channel = MethodChannel(engine.dartExecutor.binaryMessenger, "dev.giggle.gcollie/native")
         channel!!.setMethodCallHandler { call, result ->
             when (call.method) {
+                "appVersion" -> {
+                    try {
+                        @Suppress("DEPRECATION")
+                        val info = packageManager.getPackageInfo(packageName, 0)
+                        result.success(info.versionName)
+                    } catch (e: Throwable) {
+                        result.error("version_unavailable", "无法读取应用版本", null)
+                    }
+                }
                 "clipboardImage" -> {
                     try {
                         val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
@@ -204,7 +271,10 @@ class MainActivity : FlutterActivity() {
                         }
                         val value = checked(raw)
                         runOnUiThread { result.success(value) }
-                    } catch (e: Throwable) { runOnUiThread { result.error("network", e.message ?: "内置网络不可用", null) } }
+                    } catch (e: Throwable) {
+                        if (call.method == "networkOpen") logNetworkOpenFailure()
+                        runOnUiThread { result.error("network", e.message ?: "内置网络不可用", null) }
+                    }
                 }
                 else -> result.notImplemented()
             }

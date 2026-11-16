@@ -1,0 +1,20 @@
+{
+  "format": 1,
+  "artifacts": [
+    {
+      "file": "g-collie-0.1.46-android-arm64-release.apk",
+      "sha256": "8533ec8633e105e5b5ebf2d5d680cee59be4925a23b4eea3fc5509b4de2053f3",
+      "package": "dev.giggle.g_collie_flutter",
+      "versionCode": 2048,
+      "versionName": "0.1.46",
+      "abi": [
+        "arm64-v8a"
+      ],
+      "certificateSha256": "6286e58588a3b92e786f4511bb84cb59e954b527e2bf2c1f3e11c5b2e80cc08b",
+      "debuggable": false,
+      "releaseNoticesVerified": true,
+      "apkSignatureVerified": true,
+      "zipAlignment16KiBVerified": true
+    }
+  ]
+}

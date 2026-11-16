@@ -11,7 +11,8 @@ class ApiException implements Exception {
   final String message;
   final int status;
   final String? code;
-  ApiException(this.message, [this.status = 0, this.code]);
+  final String? outcome;
+  ApiException(this.message, [this.status = 0, this.code, this.outcome]);
   @override
   String toString() => message;
 }
@@ -64,6 +65,7 @@ class CollieApi {
     String? correlation,
   ]) => DiagnosticLog.record(base.host, path, reason, requestId: correlation);
 
+  final Map<String, Json> attachmentPreviews = {};
   final Uri base;
   final HttpClient _client = HttpClient()
     ..connectionTimeout = const Duration(seconds: 10);
@@ -79,6 +81,13 @@ class CollieApi {
   void close() {
     _browser?.close(force: true);
     _client.close(force: true);
+    for (final preview in attachmentPreviews.values) {
+      final path = preview['path'];
+      if (path is String) {
+        unawaited(File(path).delete().then<void>((_) {}).catchError((_) {}));
+      }
+    }
+    attachmentPreviews.clear();
   }
 
   // Browsers have a separate cookie jar. Relay only explicitly issued file
@@ -361,6 +370,7 @@ class CollieApi {
         data is Map ? '${data['error'] ?? '请求失败'}' : '请求失败',
         response.statusCode,
         data is Map && data['code'] is String ? data['code'] : null,
+        data is Map && data['outcome'] is String ? data['outcome'] : null,
       );
     }
     return data;

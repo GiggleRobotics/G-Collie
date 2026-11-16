@@ -1,7 +1,7 @@
 import {previewPage,pdfPreview} from './preview-page.js';
 import {createHash,randomBytes} from 'node:crypto';
 import {realpath,stat,readFile} from 'node:fs/promises';
-import {resolve,basename,extname} from 'node:path';
+import {resolve,basename,extname,dirname,relative} from 'node:path';
 import type {Express} from 'express';
 import mammoth from 'mammoth';
 import {marked} from 'marked';
@@ -38,17 +38,26 @@ export async function resourceFile(d:any,id:string){
  const st=await stat(path);if(!st.isFile()||st.size>(['.mp4','.mov','.m4v','.webm'].includes(extname(path).toLowerCase())?100:50)*1024*1024)throw Error('文件不存在或超过 50 MB');
  return {...r,path,data:undefined as Buffer|undefined,mime:'',size:st.size,mtime:st.mtimeMs,extension:extname(path).toLowerCase()};
 }
+async function markdownImage(document:string,ref:string,session:string){
+ const decoded=decodeURIComponent(ref);if(/^[a-z][a-z0-9+.-]*:|^[/\\]|\0/i.test(decoded)||!images.has(extname(decoded).toLowerCase()))throw Error('图片地址不受支持');
+ const root=await realpath(dirname(document)),path=await realpath(resolve(root,decoded));const child=relative(root,path);if(child.startsWith('..')||resolve(root,child)!==path)throw Error('图片超出文档目录');
+ const d={id:session,cwd:root,events:[{role:'assistant',media:[path]}]};return resourceFile(d,references(d)[0].id);
+}
 const esc=(s:string)=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 const safe=(s:string)=>sanitize(s,{allowedTags:sanitize.defaults.allowedTags.concat(['img','h1','h2']),allowedAttributes:{a:['href'],img:['src','alt'],td:['colspan','rowspan'],th:['colspan','rowspan']},allowedSchemes:['http','https','data'],allowedSchemesByTag:{img:['data']},allowProtocolRelative:false});
 const page=previewPage;
 export function installPreviews(app:Express,read:(id:string)=>Promise<any>,authorized:(device:string)=>boolean){
- const tickets=new Map<string,{session:string;resource:string;device:string;expires:number}>();
+ const tickets=new Map<string,{session:string;resource:string;device:string;expires:number;assets?:Map<string,string>}>();
  const issue=async(session:string,resource:string,device:string)=>{await resourceFile(await read(session),resource);for(const[k,t]of tickets)if(t.expires<Date.now())tickets.delete(k);if(tickets.size>=500)tickets.delete(tickets.keys().next().value!);const key=randomBytes(24).toString('hex');tickets.set(key,{session,resource,device,expires:Date.now()+20*60*1000});return `/preview/${key}/view`;};
  app.get('/preview-assets/:name',async(req,res)=>{const names:Record<string,string>={'pdf.mjs':'pdfjs-dist/legacy/build/pdf.mjs','pdf.worker.mjs':'pdfjs-dist/legacy/build/pdf.worker.mjs'};const name=names[req.params.name];if(!name){res.sendStatus(404);return}let path=resolve('preview-assets',req.params.name);try{await stat(path)}catch{path=resolvePackage.resolve(name)}res.type('text/javascript').sendFile(path);});
  app.get('/preview/:key/:action',async(req,res)=>{try{
   const t=tickets.get(req.params.key);if(!t||t.expires<Date.now()||!authorized(t.device)){res.status(410).type('html').send(page('预览已过期','请返回 G-Collie，重新点击文件。'));return}
   const file=await resourceFile(await read(t.session),t.resource);
   res.set({'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','X-Robots-Tag':'noindex, nofollow','Content-Security-Policy':"default-src 'none'; script-src 'self' 'unsafe-inline'; worker-src 'self'; connect-src 'self'; media-src 'self'; img-src 'self' data:; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"});
+  if(req.params.action==='asset'){
+   const ref=t.assets?.get(String(req.query.id||''));if(!ref||file.extension!=='.md'){res.sendStatus(404);return}
+   const asset=await markdownImage(file.path,ref,t.session);res.type(asset.extension).sendFile(asset.path,{dotfiles:'allow'});return;
+  }
   if(req.params.action==='content'){if(req.query.download==='1')res.attachment(file.name);else res.set('Content-Disposition',`inline; filename*=UTF-8''${encodeURIComponent(file.name)}`);if(file.data)res.type(file.mime).send(file.data);else{if(file.mime)res.type(file.mime);res.sendFile(file.path,{dotfiles:'allow'})}return}
   if(req.params.action!=='view'){res.sendStatus(404);return}
   let body='';
@@ -56,7 +65,13 @@ export function installPreviews(app:Express,read:(id:string)=>Promise<any>,autho
   else if(['.mp4','.mov','.m4v','.webm'].includes(file.extension))body='<video controls playsinline preload="metadata" src="./content" style="width:100%;max-height:75vh;background:#111;border-radius:12px"></video>';
   else if(file.extension==='.pdf')body=pdfPreview();
   else if(file.extension==='.docx'){if(file.size>15*1024*1024)throw Error('Word 预览最大支持 15 MB');const r=await mammoth.convertToHtml({buffer:await readFile(file.path)},{externalFileAccess:false});body='<div class="notice">阅读模式 · 原文件排版可下载查看</div>'+safe(r.value);}
-  else if(['.md','.txt','.csv'].includes(file.extension)){if(file.size>2*1024*1024)throw Error('文本预览最大支持 2 MB');const text=await readFile(file.path,'utf8');body=file.extension==='.md'?safe(await marked(text)):`<pre>${esc(text)}</pre>`;}
+  else if(['.md','.txt','.csv'].includes(file.extension)){if(file.size>2*1024*1024)throw Error('文本预览最大支持 2 MB');const text=await readFile(file.path,'utf8');if(file.extension==='.md'){
+    const tokens=marked.lexer(text),refs=new Set<string>();marked.walkTokens(tokens,token=>{if(token.type==='image')refs.add(token.href)});
+    const assets=new Map<string,string>(),urls=new Map<string,string>();
+    for(const ref of refs){if(/^data:image\/(png|jpeg|gif|webp);base64,/i.test(ref)){urls.set(decodeURIComponent(ref),ref);continue}try{await markdownImage(file.path,ref,t.session);const id=createHash('sha256').update(ref).digest('hex').slice(0,32);assets.set(id,ref);urls.set(decodeURIComponent(ref),'./asset?id='+id)}catch{}}
+    t.assets=assets;
+    body=sanitize(await marked.parser(tokens),{allowedTags:sanitize.defaults.allowedTags.concat(['img','h1','h2']),allowedAttributes:{a:['href'],img:['src','alt'],td:['colspan','rowspan'],th:['colspan','rowspan']},allowedSchemes:['http','https','data'],allowedSchemesByTag:{img:['data']},allowProtocolRelative:false,transformTags:{img:(_tag,attrs):sanitize.Tag=>{let ref=attrs.src;try{ref=decodeURIComponent(ref)}catch{}return urls.has(ref)?{tagName:'img',attribs:{src:urls.get(ref)!,alt:attrs.alt||'文档图片'}}:{tagName:'span',attribs:{},text:'图片不可用（文件缺失或无权访问）'+(attrs.alt?'：'+attrs.alt:'')}}}});
+   }else body=`<pre>${esc(text)}</pre>`;}
   else body='<p>此格式请下载后使用手机上的应用打开。</p>';
   if(['.mp4','.mov','.m4v','.webm'].includes(file.extension)){
    res.type('html').send(`<!doctype html><html><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;width:100%;height:100%;background:#000;overflow:hidden}video{display:block;width:100%;height:100%;object-fit:contain}p{color:white;font:14px sans-serif;position:absolute;top:40%;width:100%;text-align:center}</style><video controls ${req.query.autoplay==='1'?'autoplay':''} playsinline preload="metadata" src="./content" onerror="document.querySelector('p').hidden=false"></video><p hidden>视频加载失败或格式暂不支持，请返回重试。</p></html>`);return;

@@ -167,7 +167,7 @@ class _CodexQuotaNoticeState extends State<CodexQuotaNotice>
       r'额度.*(用完|耗尽|上限)|usage.limit|rate.limit|quota',
       caseSensitive: false,
     ).hasMatch(widget.error);
-    if (!quotaExhausted(account) && !explicit && loadError == null) {
+    if (!quotaExhausted(account) && !explicit) {
       return const SizedBox.shrink();
     }
     if (windows.isEmpty && loadError != null) {

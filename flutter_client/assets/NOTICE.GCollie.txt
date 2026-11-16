@@ -1,0 +1,7 @@
+G-Collie
+Copyright (C) 2026 Giggle
+
+Project-owned source is licensed under GPL-3.0-only.
+Third-party components retain their own copyrights and licenses.
+Agent names and logos identify integrations; this project is independent and is not endorsed by their owners.
+See THIRD_PARTY_NOTICES.md and the notices distributed with each artifact.

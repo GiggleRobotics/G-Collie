@@ -17,7 +17,7 @@ void main() {
         );
         await tester.pumpAndSettle();
         expect(tester.getTopLeft(find.text(title)).dx, 65);
-        expect(tester.getSize(find.byType(AppBar)).height, 60);
+        expect(tester.getSize(find.byType(AppBar)).height, 52);
         expect(find.byTooltip('返回'), findsOneWidget);
       }
     });

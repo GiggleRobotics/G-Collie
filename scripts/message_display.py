@@ -1,8 +1,24 @@
 """Remove known app-generated attachment envelopes, preserving the human request."""
+from path_compat import is_relative_to
 import re
 import json
 from pathlib import PurePath
 from urllib.parse import quote
+
+
+def codex_user_text(text):
+    """Remove a leading, complete native workspace-instructions envelope only.
+
+    Apply before display truncation: workspace rules can exceed the bubble limit.
+    This is a display projection; the source rollout and agent context stay intact.
+    Ordinary references, quoted examples and malformed envelopes remain visible.
+    """
+    match = re.match(
+        r'\A[ \t]*# AGENTS\.md instructions for (?:/[^\r\n]+|[A-Za-z]:[\\/][^\r\n]+)'
+        r'\r?\n[ \t\r\n]*<INSTRUCTIONS>\r?\n.*?\r?\n</INSTRUCTIONS>'
+        r'(?=\s|\Z)', text, re.S,
+    )
+    return text[match.end():].lstrip() if match else text
 
 
 def visible_user_media(text, media):
@@ -99,6 +115,29 @@ def hermes_message(content, role, display_kind=None):
     steer = re.fullmatch(re.escape(HERMES_STEER_PREFIX) + r'\s*(.*?)\s*\[/OUT-OF-BAND USER MESSAGE\]', content.strip(), re.S)
     if steer:
         return role, steer[1], None
+    batch = re.fullmatch(
+        r'\[IMPORTANT: ([2-9]\d*|1\d+) background processes completed\. '
+        r'Treat these results as one batch and give one consolidated response; '
+        r'preserve failures and actionable results\.\]\s*\n(.*)', content.strip(), re.S)
+    if batch and display_kind == 'process_complete':
+        parts = re.split(r'(?<=\])\r?\n\s*\r?\n(?=\[IMPORTANT: Background process proc_)', batch[2].strip())
+        records = []
+        for part in parts:
+            projected_role, body, record = hermes_message(part, role, 'process_complete_item')
+            if not record or record.get('followup') or record.get('records') or record.get('status') == 'pending':
+                break
+            records.append(dict(record, text=body))
+        else:
+            if len(records) == int(batch[1]):
+                return 'tool', '', {'records': records}
+        # Preserve an incomplete or ambiguous batch verbatim rather than dropping text.
+        return role, content, None
+    watch = re.fullmatch(
+        r'\[IMPORTANT: Background process (proc_[a-zA-Z0-9_-]+) matched watch pattern "([^\n]*)"\.\s*'
+        r'Command: (.*?)\s+Matched output:\s*(.*)\]', content.strip(), re.S)
+    if watch:
+        return 'tool', '命中观察规则：' + watch[2] + '\n' + watch[4], {
+            'name': '后台进程观察', 'input': watch[3], 'status': 'pending', 'processId': watch[1]}
     background = re.fullmatch(
         r'\[IMPORTANT: Background process (proc_[a-zA-Z0-9_-]+) '
         r'(?:completed normally|failed|exited|completed|terminated by process\.kill) \(exit code (-?\d+)(?:, SIG[A-Z]+)?\)\.\s*'
@@ -131,7 +170,7 @@ def codex_generated_image(kind, payload, home, thread_id):
         return None
     root = (Path(home) / '.codex/generated_images' / thread_id).resolve()
     path = Path(saved).resolve()
-    if not path.is_relative_to(root) or path.suffix.lower() not in {'.png', '.jpg', '.jpeg', '.webp'}:
+    if not is_relative_to(path, root) or path.suffix.lower() not in {'.png', '.jpg', '.jpeg', '.webp'}:
         return None
     return str(path)
 
@@ -148,3 +187,20 @@ def group_generated_images(events):
         target['media'] = list(dict.fromkeys((target.get('media') or []) + [ref for image in images for ref in image.get('media', [])]))
         removed.update(id(e) for e in images if e is not target)
     return [e for e in events if id(e) not in removed]
+
+
+def hermes_background_events(background, text, message_id, time):
+    """Stable child IDs keep batch projection compatible with history cursors."""
+    records = background.get('records')
+    if records is None:
+        records = [dict(background, text=text)]
+    events = []
+    for index, record in enumerate(records):
+        record = dict(record)
+        body = record.pop('text', '')
+        record.pop('followup', None)
+        event_id = 'background:' + str(message_id)
+        if 'records' in background:
+            event_id += ':' + str(index)
+        events.append(dict(id=event_id, role='tool', text=body[:24000], time=time, **record))
+    return events

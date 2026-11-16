@@ -1,3 +1,4 @@
+import 'session_events.dart';
 import 'request_input.dart';
 import 'offline_assets.dart';
 import 'profile.dart';
@@ -210,6 +211,9 @@ class _ConnectionState extends State<ConnectionPage> {
       await receiveLink(value);
     };
     NativeBridge.channel.setMethodCallHandler((call) async {
+      if (call.method == 'networkChanged') {
+        NativeBridge.onNetworkChanged?.call();
+      }
       if (call.method == 'link' && call.arguments is String) {
         NativeBridge.onLink?.call(call.arguments as String);
       }
@@ -897,7 +901,7 @@ class Workspace extends StatefulWidget {
   final String? initialSession;
   final Json? initialData;
   final String? computerName;
-  final VoidCallback? onManageComputers;
+  final Future<void> Function()? onManageComputers;
   final VoidCallback? onPairingInvalid;
   const Workspace({
     super.key,
@@ -915,7 +919,11 @@ class Workspace extends StatefulWidget {
 
 class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   final draft = TextEditingController();
-  final scroll = ScrollController();
+  final scroll = ScrollController(keepScrollOffset: false);
+  bool followingLatest = true,
+      positioningLatest = false,
+      bottomScheduled = false;
+  int bottomGeneration = 0;
   List<dynamic> sessions = [], projects = [], warnings = [];
   Json? detail;
   String error = '';
@@ -1018,6 +1026,57 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     unawaited(saveWorkspace());
   }
 
+  late final sessionEvents = SessionEvents(widget.api, queueEventRefresh, (
+    error,
+  ) {
+    if (error is ApiException && error.status == 401) failure(error);
+  });
+  Timer? eventRefresh;
+  void queueEventRefresh() {
+    eventRefresh ??= Timer(const Duration(milliseconds: 150), () {
+      eventRefresh = null;
+      if (!mounted || !active || leaving) return;
+      if (loading || polling) {
+        queueEventRefresh();
+        return;
+      }
+      unawaited(poll(fromEvent: true));
+    });
+  }
+
+  Timer? networkRefresh;
+  int networkRevision = 0;
+  void networkChanged() {
+    if (!mounted || leaving || !active) return;
+    final revision = ++networkRevision;
+    sessionEvents.stop();
+    networkRefresh?.cancel();
+    networkRefresh = Timer(const Duration(milliseconds: 300), () async {
+      // Physical links change underneath the same tsnet node and loopback gateway.
+      // Verify that gateway before paying for another native Open/health sequence.
+      final check = connectionCheck;
+      final reachable = await widget.api.reachable();
+      if (!mounted || leaving || !active || revision != networkRevision) return;
+      if (check != connectionCheck) {
+        if (online) sessionEvents.start();
+        return;
+      }
+      nextConnectionAttempt = DateTime.fromMillisecondsSinceEpoch(0);
+      if (reachable) {
+        setState(() {
+          online = true;
+          error = '';
+        });
+        sessionEvents.start();
+        queueEventRefresh();
+      } else {
+        setState(() => online = false);
+        await load();
+        if (mounted && active && online) sessionEvents.start();
+      }
+    });
+  }
+
   Timer? timer;
   final answers = <String, String>{};
   final answerControllers = <String, TextEditingController>{};
@@ -1026,6 +1085,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     draft.addListener(draftChanged);
+    scroll.addListener(historyScroll);
     final seed = widget.initialData;
     if (seed != null) {
       sessions = seed['sessions'] ?? [];
@@ -1033,6 +1093,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       detail = seed['detail'];
       online = seed['online'] == true;
     }
+    NativeBridge.onNetworkChanged = networkChanged;
     final initialLoad = load();
     restoreWorkspace().then((_) async {
       // Connection state must be established before opening the initial chat.
@@ -1059,8 +1120,12 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     active = state == AppLifecycleState.resumed;
     if (active) {
+      nextRoleCheck = DateTime.fromMillisecondsSinceEpoch(0);
       load();
-      poll();
+      queueEventRefresh();
+      sessionEvents.start();
+    } else {
+      sessionEvents.stop();
     }
     unawaited(
       widget.api
@@ -1099,6 +1164,13 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       return;
     }
     if (leaving) return;
+    if (e is ApiException && e.status == 403) {
+      unawaited(
+        refreshRole(force: true).catchError((Object error) {
+          if (error is ApiException && error.status == 401) failure(error);
+        }),
+      );
+    }
     if (e is ApiException && e.status >= 400) {
       setState(() => error = '$e');
       return;
@@ -1165,6 +1237,38 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
 
   DateTime nextConnectionAttempt = DateTime.fromMillisecondsSinceEpoch(0);
 
+  DateTime nextRoleCheck = DateTime.fromMillisecondsSinceEpoch(0);
+  Future<void>? roleCheck;
+  Future<void> refreshRole({bool force = false}) {
+    if (roleCheck != null) return roleCheck!;
+    if (!force && DateTime.now().isBefore(nextRoleCheck)) return Future.value();
+    // Bound both successful and failed checks; the existing index refresh polls
+    // permissions without adding an authentication request to every chat tick.
+    nextRoleCheck = DateTime.now().add(const Duration(seconds: 15));
+    return roleCheck = readRole().whenComplete(() => roleCheck = null);
+  }
+
+  Future<void> readRole() async {
+    final auth = await widget.api.call('/auth/status');
+    if (!mounted || leaving) return;
+    if (auth['paired'] == false) throw ApiException('配对已失效，请重新配对', 401);
+    if (auth['paired'] == true) {
+      final role = auth['device']?['role'];
+      setState(
+        () => effectiveRole = ['owner', 'control', 'view'].contains(role)
+            ? role
+            : 'view',
+      );
+      // Persist metadata independently: secure storage must not hold up the
+      // permission change or prevent a live session from loading.
+      unawaited(
+        ComputerStore(storage)
+            .remember(widget.api.base, effectiveRole, select: false)
+            .catchError((_) {}),
+      );
+    }
+  }
+
   Future<void> loadCurrent() async {
     if (leaving) return;
     if (mounted) setState(() => refreshingConnection = true);
@@ -1174,19 +1278,8 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         await NativeBridge.connect(widget.api);
         rebuiltConnection = true;
       }
-      if (!online) {
-        final auth = await widget.api.call('/auth/status');
-        if (auth['paired'] == false) throw ApiException('配对已失效，请重新配对', 401);
-        if (auth['paired'] == true) {
-          final role = auth['device']?['role'];
-          effectiveRole = ['owner', 'control', 'view'].contains(role)
-              ? role
-              : 'view';
-          await ComputerStore(
-            storage,
-          ).remember(widget.api.base, effectiveRole, select: false);
-        }
-      }
+      await refreshRole();
+      if (!mounted || leaving) return;
       final data = await widget.api.call('/local');
       if (mounted) {
         setState(() {
@@ -1198,6 +1291,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
           error = '';
         });
       }
+      if (mounted && active && online) sessionEvents.start();
       if (rebuiltConnection &&
           await NativeBridge.invoke<bool>('notificationEnabled') == true) {
         unawaited(
@@ -1258,6 +1352,12 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     }
     persistDraft();
     final sameSession = detail?['id'] == id;
+    if (!sameSession) {
+      followingLatest = true;
+      positioningLatest = true;
+      bottomGeneration++;
+      bottomScheduled = false;
+    }
     final token = ++generation;
     connectionCheck++;
     setState(() {
@@ -1274,6 +1374,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         answers.clear();
       }
     });
+    if (!sameSession) bottom();
     if (!online) {
       setState(() {
         detail ??= {
@@ -1298,7 +1399,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       Json d = await widget.api.call('/local/${Uri.encodeComponent(id)}');
       if (!mounted || token != generation) return;
       setState(() {
-        detail = pendingMessages.merge(d);
+        detail = mergeHistory(d);
         connectionCheck++;
         online = true;
       });
@@ -1312,7 +1413,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         );
       }
       if (mounted && token == generation) {
-        setState(() => detail = pendingMessages.merge(d));
+        setState(() => detail = mergeHistory(d));
         rememberDetail(d);
         if (!sameSession) bottom();
       }
@@ -1335,18 +1436,159 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         failure(e);
       }
     } finally {
-      if (mounted && token == generation) setState(() => loading = false);
+      if (mounted && token == generation) {
+        setState(() => loading = false);
+        if (!sameSession && followingLatest) bottom();
+      }
     }
   }
 
-  void bottom() => WidgetsBinding.instance.addPostFrameCallback((_) {
-    if (mounted && scroll.hasClients) {
-      scroll.jumpTo(scroll.position.maxScrollExtent);
+  final Map<String, List<dynamic>> olderHistory = {};
+  final Map<String, String?> historyCursors = {};
+  bool historyLoading = false;
+  Json mergeHistory(Json incoming) {
+    final id = incoming['id'] as String;
+    final older = olderHistory[id] ?? [];
+    if (!historyCursors.containsKey(id) &&
+        incoming.containsKey('historyCursor')) {
+      historyCursors[id] = incoming['historyCursor'] as String?;
     }
-  });
+    final events = <String, dynamic>{};
+    for (final e in [...older, ...incoming['events'] as List? ?? []]) {
+      events['${e['id']}'] = e;
+    }
+    olderHistory[id] = events.values
+        .where((e) => e['sendStatus'] == null)
+        .toList();
+    final merged = pendingMessages.merge({
+      ...incoming,
+      'events': events.values.toList(),
+    });
+    if (uncertainSendId != null &&
+        pendingMessages.isAcknowledged(id, uncertainSendId!)) {
+      final submitted = jsonDecode(uncertainSendKey!) as Map;
+      consumeSubmittedDraft(id, '${submitted['text'] ?? ''}');
+      uncertainSendKey = null;
+      uncertainSendId = null;
+    }
+    return merged;
+  }
+
+  void historyScroll() {
+    if (scroll.hasClients && scroll.position.extentAfter < 1) {
+      followingLatest = true;
+    }
+    if (!positioningLatest &&
+        scroll.hasClients &&
+        scroll.position.pixels < 120) {
+      unawaited(loadOlderHistory());
+    }
+  }
+
+  Future<void> loadOlderHistory() async {
+    final d = detail;
+    if (d == null || !online || loading || historyLoading || !active) return;
+    final id = d['id'] as String;
+    final cursor = historyCursors[id];
+    if (cursor == null) return;
+    historyLoading = true;
+    final token = generation;
+    final extent = scroll.hasClients ? scroll.position.maxScrollExtent : 0.0;
+    final offset = scroll.hasClients ? scroll.offset : 0.0;
+    try {
+      final page = await widget.api.call(
+        '/local/${Uri.encodeComponent(id)}/history?before=${Uri.encodeQueryComponent(cursor)}',
+      );
+      if (!mounted || token != generation || detail?['id'] != id) return;
+      olderHistory[id] = [
+        ...page['events'] as List? ?? [],
+        ...olderHistory[id] ?? [],
+      ];
+      historyCursors[id] = page['historyCursor'] as String?;
+      setState(() => detail = mergeHistory(detail!));
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && token == generation && scroll.hasClients) {
+          scroll.jumpTo(
+            (offset + scroll.position.maxScrollExtent - extent).clamp(
+              0.0,
+              scroll.position.maxScrollExtent,
+            ),
+          );
+        }
+      });
+    } catch (e) {
+      if (mounted && token == generation) setState(() => error = '加载更早记录失败：$e');
+    } finally {
+      historyLoading = false;
+    }
+  }
+
+  void conversationUserScroll() {
+    followingLatest = false;
+    positioningLatest = false;
+    bottomGeneration++;
+  }
+
+  void conversationMetricsChanged() {
+    if (followingLatest) bottom();
+  }
+
+  // Lazy lists first expose an estimated extent. Settle the actual end across
+  // layouts, and follow later media-size changes only until the user scrolls.
+  void bottom() {
+    if (bottomScheduled) return;
+    bottomScheduled = true;
+    final token = generation;
+    final request = bottomGeneration;
+    var frames = 0, stable = 0;
+    double? lastExtent;
+    void settle(Duration _) {
+      bottomScheduled = false;
+      if (!mounted ||
+          token != generation ||
+          request != bottomGeneration ||
+          !followingLatest ||
+          !scroll.hasClients) {
+        return;
+      }
+      final position = scroll.position;
+      final extent = position.maxScrollExtent;
+      stable = lastExtent == extent && position.extentAfter < 1
+          ? stable + 1
+          : 0;
+      lastExtent = extent;
+      position.jumpTo(extent);
+      if (++frames < 24 && stable < 2) {
+        bottomScheduled = true;
+        WidgetsBinding.instance.addPostFrameCallback(settle);
+        WidgetsBinding.instance.scheduleFrame();
+      } else {
+        positioningLatest = false;
+      }
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback(settle);
+  }
+
+  void consumeSubmittedDraft(String session, String submitted) {
+    // Consume only the submitted snapshot, including its persisted draft.
+    // A delayed receipt must never erase text written after that submission.
+    if (detail?['id'] == session && draft.text == submitted) {
+      draftTimer?.cancel();
+      draft.clear();
+      persistDraft();
+    } else if (savedDrafts[session] == submitted) {
+      savedDrafts.remove(session);
+      final snapshot = jsonEncode(savedDrafts);
+      cacheWrite = cacheWrite
+          .catchError((_) {})
+          .then((_) => storage.write(key: draftKey, value: snapshot));
+    }
+  }
+
   late final diagnosticSync = DiagnosticSync(widget.api);
-  Future<void> poll() async {
-    if (polling || loading || busy || !active) return;
+  Future<void> poll({bool fromEvent = false}) async {
+    if (polling || loading || (!fromEvent && busy) || !active) return;
     polling = true;
     if (online) unawaited(diagnosticSync.tick());
     final token = generation;
@@ -1369,7 +1611,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
             if (detail?['pending']?['id'] != d['pending']?['id']) {
               answers.clear();
             }
-            detail = pendingMessages.merge(d);
+            detail = mergeHistory(d);
             connectionCheck++;
             online = true;
             error = '';
@@ -1411,14 +1653,23 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         '${extra['text'] ?? ''}',
         d['events'] ?? [],
         attachments: (extra['attachments'] as List? ?? []).isNotEmpty,
+        attachmentIds: List<String>.from(extra['attachments'] ?? []),
+        media: [
+          for (final id in extra['attachments'] as List? ?? [])
+            if (widget.api.attachmentPreviews[id]?['session'] == d['id'])
+              'gcollie-upload:$id',
+        ],
       );
     }
     setState(() {
       busy = true;
       error = '';
-      if (action == 'send') detail = pendingMessages.merge(d);
+      if (action == 'send') detail = mergeHistory(d);
     });
-    if (action == 'send') bottom();
+    if (action == 'send') {
+      followingLatest = true;
+      bottom();
+    }
     try {
       final receipt = await widget.api.call(controlPath(d), {
         'action': action,
@@ -1432,12 +1683,12 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
           'sent',
           turnId: receipt is Map ? receipt['turnId'] as String? : null,
         );
+        if (mounted) consumeSubmittedDraft(d['id'], '${extra['text'] ?? ''}');
       }
       if (mounted && token == generation) {
         setState(() {
           if (action == 'send') {
-            detail = pendingMessages.merge(detail!);
-            draft.clear();
+            detail = mergeHistory(detail!);
             uncertainSendKey = null;
             uncertainSendId = null;
           }
@@ -1451,7 +1702,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
             );
             if (mounted && token == generation) {
               setState(() {
-                detail = pendingMessages.merge(updated);
+                detail = mergeHistory(updated);
                 error = '';
                 online = true;
                 connectionCheck++;
@@ -1484,7 +1735,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
             operationId,
             uncertain ? 'unknown' : 'failed',
           );
-          setState(() => detail = pendingMessages.merge(detail!));
+          setState(() => detail = mergeHistory(detail!));
         }
         if (action == 'send' && uncertain) {
           uncertainSendKey = fingerprint;
@@ -1502,6 +1753,10 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
 
   Future<void> create() async {
     persistDraft();
+    followingLatest = true;
+    positioningLatest = false;
+    bottomGeneration++;
+    bottomScheduled = false;
     final previous = detail;
     setState(() {
       generation++;
@@ -1535,11 +1790,17 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       text,
       [],
       attachments: ids.isNotEmpty,
+      attachmentIds: ids,
+      media: [
+        for (final id in ids)
+          if (widget.api.attachmentPreviews[id]?['session'] == d['id'])
+            'gcollie-upload:$id',
+      ],
     );
     setState(() {
       busy = true;
       error = '';
-      detail = pendingMessages.merge(d);
+      detail = mergeHistory(d);
     });
     bottom();
     try {
@@ -1551,6 +1812,12 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         'attachments': ids,
         'requestId': (d['id'] as String).substring(6),
       });
+      for (final id in ids) {
+        final preview = widget.api.attachmentPreviews[id];
+        if (preview != null && preview['session'] == d['id']) {
+          preview['session'] = result['id'];
+        }
+      }
       pendingMessages.move(d['id'], result['id']);
       pendingMessages.update(
         result['id'],
@@ -1561,17 +1828,22 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       if (mounted && token == generation) {
         // Consume the acknowledged first message before open() saves the
         // outgoing draft, otherwise it is restored by the next new session.
-        draftTimer?.cancel();
-        draft.clear();
-        persistDraft();
+        consumeSubmittedDraft(d['id'], text);
+        final remainingDraft = draft.text;
         await open(result['id']);
+        if (mounted &&
+            detail?['id'] == result['id'] &&
+            remainingDraft != text) {
+          draft.text = remainingDraft;
+          persistDraft();
+        }
         await load();
       }
       return true;
     } catch (e) {
       pendingMessages.update(d['id'], operationId, 'unknown');
       if (mounted && token == generation) {
-        setState(() => detail = pendingMessages.merge(detail!));
+        setState(() => detail = mergeHistory(detail!));
       }
       // Keep the draft and its request id: an uncertain submission must not replay.
       if (mounted && token == generation) setState(() => error = '$e');
@@ -1596,6 +1868,11 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    sessionEvents.stop();
+    eventRefresh?.cancel();
+    networkRefresh?.cancel();
+    networkRevision++;
+    NativeBridge.onNetworkChanged = null;
     draftTimer?.cancel();
     persistDraft();
     draft.removeListener(draftChanged);
@@ -1613,11 +1890,17 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   Widget pendingPanel(Json p, bool enabled) {
     if (['secret', 'question', 'approval'].contains(p['kind'])) {
       return RequestInputCard(
-        key: ValueKey('input-request:${p['id']}'),
+        key: ValueKey(
+          'input-request:${p['id']}:${p['generation'] ?? 'legacy'}:${p['requestEpoch'] ?? 'legacy'}',
+        ),
         request: p,
         enabled: enabled,
-        onSubmit: (answer) =>
-            control('answer', {'pendingId': p['id'], ...answer}),
+        onSubmit: (answer) => control('answer', {
+          'pendingId': p['id'],
+          if (p['generation'] != null) 'expectedGeneration': p['generation'],
+          if (p['requestEpoch'] != null) 'requestEpoch': p['requestEpoch'],
+          ...answer,
+        }),
       );
     }
     return const Card(
@@ -1679,6 +1962,32 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
           }
         },
         onManageComputers: widget.onManageComputers,
+        onDeleted: (ids) async {
+          generation++;
+          draftTimer?.cancel();
+          for (final id in ids) {
+            cachedDetails.remove(id);
+            savedDrafts.remove(id);
+            pendingMessages.sessions.remove(id);
+            pendingMessages.matched.remove(id);
+            pendingMessages.acknowledged.remove(id);
+          }
+          setState(() {
+            sessions.removeWhere((s) => ids.contains(s['id']));
+            if (ids.contains(detail?['id'])) {
+              detail = null;
+              draft.clear();
+              answers.clear();
+            }
+            loading = false;
+          });
+          final snapshot = jsonEncode(savedDrafts);
+          cacheWrite = cacheWrite
+              .catchError((_) {})
+              .then((_) => storage.write(key: draftKey, value: snapshot));
+          await saveWorkspace();
+          await load();
+        },
         initialTheme: appTheme.value,
         initialLarge: appLarge.value,
         role: effectiveRole,
@@ -1687,6 +1996,10 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         loading: loading,
         busy: busy,
         enabled: enabled,
+        attachmentEnabled: d != null &&
+            (d['draft'] == true
+                ? online && effectiveRole != 'view'
+                : canControl(d, effectiveRole, online)),
         running: d != null && isActive(d),
         sessions: sessions,
         projects: projects,
@@ -1694,6 +2007,8 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         detail: d,
         draft: draft,
         scroll: scroll,
+        onConversationMetrics: conversationMetricsChanged,
+        onConversationUserScroll: conversationUserScroll,
         pending: d?['pending'] is Map
             ? pendingPanel(Map<String, dynamic>.from(d!['pending']), enabled)
             : null,

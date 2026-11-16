@@ -48,6 +48,8 @@ bool isActive(Json d) =>
 
 // Preview-only in-memory transport. No HTTP client or real credentials.
 class CollieApi {
+  // Local-only preview metadata; never reads production attachment caches.
+  final Map<String, Json> attachmentPreviews = {};
   Future<bool> reachable() async => !previewOffline;
   Future<void> recordFailure(
     String path,
