@@ -1,3 +1,4 @@
+import 'pairing_link.dart';
 import 'about_page.dart';
 import 'session_delete.dart';
 import 'offline_assets.dart';
@@ -4203,7 +4204,10 @@ class _AddComputerPaneState extends State<AddComputerPane> {
     try {
       final raw = Uri.parse(address.text.trim());
       final base = serverUri(raw.replace(fragment: '').toString());
-      final invite = Uri.splitQueryString(raw.fragment)['pair'];
+      final invite = parsePairingLink(address.text)?.code;
+      if (raw.hasFragment && invite == null) {
+        throw const FormatException('无效配对链接');
+      }
       client = CollieApi(
         base,
         cookie: '',
@@ -4245,6 +4249,7 @@ class _AddComputerPaneState extends State<AddComputerPane> {
       const SizedBox(height: 16),
       TextField(
         controller: address,
+        inputFormatters: [PairingLinkFormatter(address: address, code: code)],
         enabled: !busy,
         decoration: const InputDecoration(
           labelText: '服务地址或完整配对链接',
@@ -4254,6 +4259,7 @@ class _AddComputerPaneState extends State<AddComputerPane> {
       const SizedBox(height: 16),
       TextField(
         controller: code,
+        inputFormatters: [PairingLinkFormatter(address: address, code: code, codeField: true)],
         enabled: !busy,
         keyboardType: TextInputType.number,
         maxLength: 6,

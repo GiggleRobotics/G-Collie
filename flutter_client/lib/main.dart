@@ -1,4 +1,5 @@
 import 'session_events.dart';
+import 'pairing_link.dart';
 import 'request_input.dart';
 import 'offline_assets.dart';
 import 'profile.dart';
@@ -6,7 +7,6 @@ import 'diagnostic_sync.dart';
 import 'pending_messages.dart';
 import 'dart:async';
 import 'dart:convert';
-import 'package:flutter/services.dart';
 import 'computers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -321,7 +321,7 @@ class _ConnectionState extends State<ConnectionPage> {
         return;
       }
       client.close();
-      final secret = Uri.splitQueryString(uri.fragment)['pair'];
+      final secret = parsePairingLink(value)?.code;
       if (secret != null) {
         code.text = secret;
         await pair();
@@ -397,7 +397,7 @@ class _ConnectionState extends State<ConnectionPage> {
       final base = serverUri(normalized.toString());
       address.text = '$base';
       await storage.write(key: 'server', value: '$base');
-      final pairCode = Uri.splitQueryString(raw.fragment)['pair'];
+      final pairCode = parsePairingLink(normalized.toString())?.code;
       if (pairCode != null) {
         code.text = pairCode;
         await pair();
@@ -692,9 +692,10 @@ class _ConnectionState extends State<ConnectionPage> {
     });
     try {
       final raw = Uri.tryParse(address.text.trim());
-      final linked = raw == null
-          ? null
-          : Uri.splitQueryString(raw.fragment)['pair'];
+      final linked = parsePairingLink(address.text)?.code;
+      if (raw?.hasFragment == true && linked == null) {
+        throw const FormatException('无效配对链接');
+      }
       final base = serverUri(
         raw == null ? address.text : raw.replace(fragment: '').toString(),
       );
@@ -799,6 +800,7 @@ class _ConnectionState extends State<ConnectionPage> {
                       const SizedBox(height: 18),
                       TextField(
                         controller: address,
+                        inputFormatters: [PairingLinkFormatter(address: address, code: code)],
                         enabled: !busy,
                         keyboardType: TextInputType.url,
                         autocorrect: false,
@@ -818,8 +820,7 @@ class _ConnectionState extends State<ConnectionPage> {
                         enabled: !busy,
                         keyboardType: TextInputType.number,
                         inputFormatters: [
-                          FilteringTextInputFormatter.digitsOnly,
-                          LengthLimitingTextInputFormatter(6),
+                          PairingLinkFormatter(address: address, code: code, codeField: true),
                         ],
                         onChanged: (_) => setState(() {}),
                         decoration: InputDecoration(
@@ -1341,7 +1342,10 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     'localHistory': true,
   };
 
+  String? retryOpenId;
+
   Future<void> open(String id) async {
+    retryOpenId = null;
     if (id.startsWith('draft-agent:') && detail?['draft'] == true) {
       setState(() => detail = {...detail!, 'agent': id.substring(12)});
       return;
@@ -1395,8 +1399,10 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       });
       return;
     }
+    var detailReadCompleted = false;
     try {
       Json d = await widget.api.call('/local/${Uri.encodeComponent(id)}');
+      detailReadCompleted = true;
       if (!mounted || token != generation) return;
       setState(() {
         detail = mergeHistory(d);
@@ -1432,6 +1438,10 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
               'localHistory': true,
             },
           );
+        }
+        if (!detailReadCompleted &&
+            (e is! ApiException || e.status == 0 || e.status >= 500)) {
+          retryOpenId = id;
         }
         failure(e);
       }
@@ -1600,6 +1610,10 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         if (!online) return;
       } else if (++ticks % 8 == 0) {
         await load();
+      }
+      if (retryOpenId != null) {
+        await open(retryOpenId!);
+        return;
       }
       if (current != null && current['draft'] != true) {
         final d = await widget.api.call(
