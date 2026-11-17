@@ -12,7 +12,7 @@
 
 ## Codex 原桌面会话
 
-测试聊天：开展手机控制测试，ID `01a14e4c-a713-7bf1-9637-3ef870354669`。
+测试聊天：开展手机控制测试，ID `TEST_RECORD_ID`。
 
 | 功能 | 结果 |
 | --- | --- |
@@ -55,7 +55,7 @@
 - `node scripts/desktop-created-control.mjs`：对上述测试会话发送第二轮，实际点击停止；验证同一新建 requestId 不重复创建、未配对请求返回 401。
 - `node scripts/desktop-create-projectless.mjs`：真实无项目创建、首条回复、projectPath 为 null，进入最近会话。设置 `ORBIT_TEST_REQUEST_ID` 可复用已提交的测试操作。
 - 单元测试覆盖本地项目白名单、无项目 target、成功幂等和结果未知不重放。当前 18 项通过。
-- 原生桌面列表已确认项目测试会话存在，ID `01a14f05-59a0-7802-861d-aae38064ee01`。无项目测试 ID `01a14f06-0fde-7cb3-80b7-2f939fafc5a8`。
+- 原生桌面列表已确认项目测试会话存在，ID `TEST_RECORD_ID`。无项目测试 ID `TEST_RECORD_ID`。
 
 ## 会话分享
 
@@ -206,10 +206,10 @@ Codex 原生分享由桌面工具单独实测成功；G-Collie pipe 调用失败
 - 首页透明边牧插画、顶部品牌头像、侧栏与工作台头像、关于页、淡绿筛选与发送按钮；Codex/Hermes 图标及会话功能保留。
 - 内置 imagegen 生成两张透明 PNG，已保存 public/brand，来源与提示词摘要记录于该目录 README。
 - TypeScript 与生产构建通过；Android 模拟器深色首页、侧栏检查通过，浅色主题已切换检查。APK 签名 v2/v3 通过，模拟器安装成功。
-- 真机 d7e798c8 当前不在 ADB 列表，无法更新原生图标；手机网页刷新即可使用新版界面。APK 已生成，未声称真机安装成功。
+- 真机 DEVICE_SERIAL 当前不在 ADB 列表，无法更新原生图标；手机网页刷新即可使用新版界面。APK 已生成，未声称真机安装成功。
 
 ### 边牧新版真机升级（2026-10-19 12:43）
-- USB d7e798c8 在线，新版 APK 覆盖安装 Success；系统 lastUpdateTime 12:42:42，versionCode 303。
+- USB DEVICE_SERIAL 在线，新版 APK 覆盖安装 Success；系统 lastUpdateTime 12:42:42，versionCode 303。
 - 已打开真机 G-Collie，原有私有连接与设备配对保留，实际首页品牌头像、边牧插画和会话列表正常加载；未使用 ADB reverse。
 - 真机截图 screenshots/collie-physical-installed.png。APK 内应用图标为新版边牧素材。
 

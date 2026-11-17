@@ -39,7 +39,7 @@
 
 ## 2026-10-23 USB 真机补充
 
-USB 设备 `d7e798c8` 连接正常；已恢复 `reverse tcp:4310 tcp:4310`。手机当前安装版本为 `0.1.0`（2001）。电脑 Hermes 后端已恢复可用。
+USB 设备 `DEVICE_SERIAL` 连接正常；已恢复 `reverse tcp:4310 tcp:4310`。手机当前安装版本为 `0.1.0`（2001）。电脑 Hermes 后端已恢复可用。
 
 创建专用会话 `G-Collie Flutter USB 真机调试 1023`（`hermes:20261023_001454_a27084`），在手机输入并发送 `Reply only FLUTTER_USB_OK. Do not use tools or change files.`。正式服务记录与手机显示均确认收到真实助手回复 `FLUTTER_USB_OK`，会话返回空闲。截图 `screenshots/flutter/phone-usb-real-reply.png` 已人工查看。未向已有工作会话发送测试消息，未修改 UI 或应用代码。
 
@@ -64,7 +64,7 @@ USB 设备 `d7e798c8` 连接正常；已恢复 `reverse tcp:4310 tcp:4310`。手
 
 ## Codex 会话补充验收
 
-使用已有专用会话“开展手机控制测试”（`codex:01a14e4c-a713-7bf1-9637-3ef870354669`），未向其他工作会话发送验证消息。
+使用已有专用会话“开展手机控制测试”（`codex:TEST_RECORD_ID`），未向其他工作会话发送验证消息。
 
 - Codex 返回带图片、PDF、DOCX、Markdown 链接的回复；资源接口正确识别四项资源。
 - 小米 14 点击 Codex 回复中的 PDF、Word、Markdown 链接，以及图片，均在 G-Collie 内打开。截图 `codex-inapp-pdf.png`、`codex-inapp-word.png`、`codex-inapp-markdown.png`、`codex-inapp-image.png`，均已查看。
@@ -92,7 +92,7 @@ USB 设备 `d7e798c8` 连接正常；已恢复 `reverse tcp:4310 tcp:4310`。手
 
 0.1.4（2006）已在 Xiaomi 14 安装。ADB reverse 列表为空，手机通过移动网络和内置 Tailscale 连接 `100.84.91.5:4310`；强制停止再启动后已重新显示“私有网络连接”和真实 Codex 会话。启动首次探测超时的问题另补只读探测重试。系统 VPN 直连分支未单独完成设备端专项验收。
 
-点击新建直接弹出助手/项目选择页，选择后为空白聊天；首次发送才创建真实会话，标题来自首条消息，创建及首条发送共用持久去重账本。真实新建 Hermes `20261023_081726_2a8163` 与 Codex `01a1661e-a9e6-77c3-a07c-f774d3f4c42f` 均成功；重复相同创建编号未另建会话。两者执行期间追加要求，分别返回 `GCOLLIE_HERMES_STEER_OK`、`GCOLLIE_CODEX_STEER_OK`。Codex 对齐桌面 steer 请求的 restoreMessage/context，Hermes 沿用 prompt.submit 的后台忙碌输入配置。
+点击新建直接弹出助手/项目选择页，选择后为空白聊天；首次发送才创建真实会话，标题来自首条消息，创建及首条发送共用持久去重账本。真实新建 Hermes `20261023_081726_2a8163` 与 Codex `TEST_RECORD_ID` 均成功；重复相同创建编号未另建会话。两者执行期间追加要求，分别返回 `GCOLLIE_HERMES_STEER_OK`、`GCOLLIE_CODEX_STEER_OK`。Codex 对齐桌面 steer 请求的 restoreMessage/context，Hermes 沿用 prompt.submit 的后台忙碌输入配置。
 
 输入或附件非空显示发送箭头，执行中允许发送；空输入显示停止。去掉主题继承的黑色焦点内框，单行起步随内容增高；附件名限制宽度并省略，移除按钮保留。历史问题回复只投影回答，已核对实际当前会话的内部回复包装残留为零；只过滤完整已知包装，保留普通示例和损坏数据。
 
@@ -104,7 +104,7 @@ USB 设备 `d7e798c8` 连接正常；已恢复 `reverse tcp:4310 tcp:4310`。手
 
 项目网格包含同尺寸的“＋ 新建项目”卡片，只有进入新建项目后才提供“选择已有文件夹”“新建文件夹”。手机浏览电脑用户目录中的普通文件夹，可进入子目录、返回上级、选择当前位置或创建子文件夹，再确认名称并添加项目。目录和会话的项目关联会持久保存。服务端拒绝覆盖已有文件夹、路径穿越、隐藏目录及越界符号链接，只读设备不能进行目录操作。
 
-Codex 未登记过的新目录通过与桌面匹配的 app-server 准备原生会话，再由桌面正常提交首条消息；使用持久创建编号避免重放。真实接口已创建 `/home/giggle/workspace/Giggle/G-Collie-项目验收`，新目录会话 `01a16640-790f-73f2-8b28-047b4e6c9462` 的 cwd、项目关联和回复 `FOLDER_PROJECT_OK` 均已核对。模型未操作文件。为兼容版本，优先使用桌面附带的 Codex CLI，允许通过 ORBIT_CODEX_BIN 明确配置。
+Codex 未登记过的新目录通过与桌面匹配的 app-server 准备原生会话，再由桌面正常提交首条消息；使用持久创建编号避免重放。真实接口已在专用测试目录创建会话，并核对 cwd、项目关联及预期回复；具体本机路径与会话编号仅保留在本地验收记录。模型未操作文件。为兼容版本，优先使用桌面附带的 Codex CLI，允许通过 ORBIT_CODEX_BIN 明确配置。
 
 验证：Flutter 全量 19 项测试通过，布局压紧后再次通过会话控件测试及静态分析；服务端全量 45 项测试通过，新增目录建会话去重用例及目录/项目关联用例另通过；TypeScript 类型检查、Python 6 项消息显示及 5 项过程记录测试通过。真机已安装 0.1.5（2007），ADB reverse 为空，已检查卡片设置页、“＋ 新建项目”和底部未选择时禁用确认的布局；截图 screenshots/flutter/new-session-project-cards.png（最终紧凑尺寸，三个助手同行）。最终 APK v2 签名通过，SHA-256 与产物一起保存。
 

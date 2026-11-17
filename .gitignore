@@ -24,3 +24,22 @@ __pycache__/
 
 # Generated shared Flutter UI preview (rebuild with scripts/build-ui-prototype.py)
 docs/开发/交互原型/flutter/
+
+# Local collaboration rules and private acceptance evidence
+/AGENTS.md
+/docs/开发/问题截图/
+/docs/开发/问题视频/
+/docs/开发/发布验收/
+
+# Machine-specific settings, logs and credentials
+.codex/
+.idea/
+.vscode/
+*.log
+*.swp
+*.swo
+*.key
+*.pem
+*.pfx
+**/local.properties
+**/key.properties
