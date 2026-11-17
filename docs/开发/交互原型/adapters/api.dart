@@ -9,9 +9,25 @@ typedef Json = Map<String, dynamic>;
 class ApiException implements Exception {
   final String message;
   final int status;
-  ApiException(this.message, [this.status = 0]);
+  final String? code;
+  final String? outcome;
+  ApiException(this.message, [this.status = 0, this.code, this.outcome]);
   @override
   String toString() => message;
+}
+
+/// A received HTTP rejection can still describe a write with unknown outcome.
+/// Prefer the server's structured result over its status or localized message.
+bool operationResultUnknown(Object error) {
+  if (error is! ApiException) return true;
+  if (error.outcome == 'unknown' ||
+      error.code == 'hermes_result_unknown' ||
+      error.code == 'desktop_result_unknown') {
+    return true;
+  }
+  return error.status == 0 ||
+      error.status >= 500 ||
+      RegExp('结果未知|结果可能未知|已提交|超时').hasMatch('$error');
 }
 
 Uri serverUri(String input) {
@@ -115,7 +131,7 @@ class CollieApi {
   void configurePreviewScenario() {
     final page = Uri.base.queryParameters['page'];
     final focus = Uri.base.queryParameters['detail'];
-    final demo = sessions['hermes:demo'];
+    final demo = sessions[page == 'chat' && ['image-view','image-view-multiple','image-view-failure','image-view-command'].contains(focus) ? 'codex:demo' : 'hermes:demo'];
     if (demo == null) return;
     if (page == 'video')
       demo['events'] = [
@@ -138,6 +154,12 @@ class CollieApi {
     }
     if (focus == 'long-history') {
       demo['events'] = List.generate(260, (i) => {'id':'history-$i','role':i.isEven?'user':'assistant','text':'第 ${i+1} 条演示记录\n向上滑查看历史，输入框上方显示跳到最新消息箭头。'});
+    }
+    if (['image-view','image-view-multiple','image-view-failure','image-view-command'].contains(focus)) {
+      demo['events'] = [
+        {'id':'image-context','role':'assistant','text':'我查看了会话中的图片，继续核对画面细节。'},
+        {'id':'view-image','role':'tool','name':focus == 'image-view-command' ? 'exec_command' : 'view_image','commands':focus == 'image-view-command' ? [{'command':'printf 仅演示，不执行','output':'已查看演示图片','exitCode':0}] : [],'imageView':true,'imageCount':focus == 'image-view-multiple' ? 3 : 1,'status':focus == 'image-view-failure' ? 'failed' : 'completed','input':'view_image · 演示图片','text':focus == 'image-view-failure' ? '图片暂时不可用' : '已读取图像内容','media':focus == 'image-view-multiple' ? ['/demo/image-1.jpg','/demo/image-2.jpg','/demo/image-3.jpg'] : ['/demo/image-1.jpg']},
+      ];
     }
     if (focus == 'tool-records') {
       demo['events'] = [
@@ -260,7 +282,7 @@ class CollieApi {
         return {
           'resources': [
             for (var i=1;i<=3;i++) {'id':'image-$i','name':'示例图片-$i.jpg','ref':'/demo/image-$i.jpg','image':true},
-            {
+            if (!['image-view','image-view-multiple','image-view-failure'].contains(Uri.base.queryParameters['detail'])) {
               'id': 'preview-video',
               'name': '示例视频.mp4',
               'ref': '/demo/preview.mp4',

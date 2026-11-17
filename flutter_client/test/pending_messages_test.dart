@@ -3,6 +3,70 @@ import 'package:g_collie_flutter/pending_messages.dart';
 
 void main() {
   test(
+    'failed retry compares actual attachments and only trims failed text',
+    () {
+      final p = PendingMessages();
+      p.add(
+        's',
+        'a',
+        ' hello ',
+        [],
+        attachments: true,
+        attachmentIds: ['image-a'],
+      );
+      p.update('s', 'a', 'failed');
+      p.add(
+        's',
+        'b',
+        'hello',
+        [],
+        attachments: true,
+        attachmentIds: ['image-b'],
+      );
+      expect(p.sessions['s'], hasLength(2));
+      p.update('s', 'b', 'failed');
+      p.add(
+        's',
+        'c',
+        'hello',
+        [],
+        attachments: true,
+        attachmentIds: ['image-a'],
+      );
+      expect(p.sessions['s']!.map((r) => r['id']), ['b', 'c']);
+      p.update('s', 'c', 'unknown');
+      p.add(
+        's',
+        'd',
+        'hello',
+        [],
+        attachments: true,
+        attachmentIds: ['image-a'],
+      );
+      expect(p.sessions['s']!.map((r) => r['id']), ['b', 'c', 'd']);
+      p.update('s', 'd', 'sent');
+      p.add(
+        's',
+        'e',
+        'hello',
+        [],
+        attachments: true,
+        attachmentIds: ['image-a'],
+      );
+      expect(p.sessions['s'], hasLength(4));
+    },
+  );
+
+  test('failed legacy previews with different media are not discarded', () {
+    final p = PendingMessages();
+    p.add('s', 'a', 'photo', [], attachments: true, media: ['preview-a']);
+    p.update('s', 'a', 'failed');
+    p.add('s', 'b', 'photo', [], attachments: true, media: ['preview-b']);
+    expect(p.sessions['s'], hasLength(2));
+    p.add('s', 'c', 'photo', [], attachments: true, media: ['preview-a']);
+    expect(p.sessions['s']!.map((r) => r['id']), ['b', 'c']);
+  });
+  test(
     'retry replaces identical failed receipt but preserves unknown sends',
     () {
       final p = PendingMessages();

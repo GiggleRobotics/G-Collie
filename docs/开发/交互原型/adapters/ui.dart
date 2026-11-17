@@ -525,12 +525,41 @@ class _CollieShellState extends State<CollieShell> {
   );
 
   final Map<String, SessionResources> _resourceSessions = {};
+  final Map<String, int> _imageViewSelections = {};
   SessionResources get resources {
     final id = widget.detail?['id'] as String? ?? '';
     return _resourceSessions.putIfAbsent(
       id,
       () => SessionResources(widget.api, id),
     );
+  }
+
+  // Browser-only media demo: the native gallery uses dart:ui descriptor APIs.
+  // Keep its existing main-image/side-thumbnail arrangement with bundled assets.
+  Widget imageViewBody(Json e) {
+    final refs = List<String>.from(e['media'] ?? []);
+    if (refs.length < 2) return refs.isEmpty ? const SizedBox.shrink() : SessionImage(resources: resources, source: refs.first, alignment: Alignment.centerLeft);
+    final selectionKey = '${widget.detail?['id']}:${e['id']}';
+    var selected = _imageViewSelections[selectionKey] ?? 0;
+    return StatefulBuilder(builder: (context, update) => Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(child: SessionImage(resources: resources, source: refs[selected], alignment: Alignment.centerLeft)),
+        const SizedBox(width: 8),
+        SizedBox(width: 52, child: Column(children: [
+          for (var i = 0; i < refs.length; i++) Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Semantics(label: '选择第 ${i + 1} 张图片', button: true, selected: selected == i,
+              child: InkWell(onTap: () => update(() { selected = i; _imageViewSelections[selectionKey] = i; }), child: Container(
+                width: 52, height: 52, padding: const EdgeInsets.all(2),
+                decoration: BoxDecoration(borderRadius: BorderRadius.circular(8), border: Border.all(color: selected == i ? Theme.of(context).colorScheme.primary : Colors.grey.shade300, width: selected == i ? 2 : 1)),
+                child: ClipRRect(borderRadius: BorderRadius.circular(5), child: Image.asset(i == 1 ? 'assets/ui/demo-video-poster.jpg' : i == 2 ? 'assets/collie-mark-v2.png' : 'assets/collie-companion-v2.png', fit: BoxFit.cover)),
+              )),
+            ),
+          ),
+        ])),
+      ],
+    ));
   }
 
   Widget eventBody(Json e) {
@@ -2265,6 +2294,9 @@ class _CollieShellState extends State<CollieShell> {
           ProcessRecord(
             key: ValueKey('process:${d['id']}:${e['id']}'),
             record: Map<String, dynamic>.from(e),
+            media: e['imageView'] == true ? (e['status'] == 'failed'
+              ? Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: Text('图片暂时不可用 · 原记录保留', style: TextStyle(fontSize: 12, color: mutedColor(context))))
+              : imageViewBody(Map<String, dynamic>.from(e))) : null,
             live:
                 widget.online &&
                 d['desktopLive'] == true &&

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -70,6 +72,34 @@ void main() {
             );
           }
         }
+        final token = base64Url.encode(
+          List<int>.generate(24, (i) => (252 + i * 71) % 256),
+        );
+        final submit = find.widgetWithText(FilledButton, '配对并连接');
+        for (final field in [0, 1]) {
+          await tester.enterText(
+            fields.at(field),
+            'https://qa:4310/#pair=$token',
+          );
+          await tester.pump();
+          expect(
+            tester.widget<TextField>(fields.at(0)).controller!.text,
+            'https://qa:4310/',
+          );
+          expect(
+            tester.widget<TextField>(fields.at(1)).controller!.text,
+            isEmpty,
+          );
+          expect(tester.widget<FilledButton>(submit).onPressed, isNotNull);
+          expect(find.textContaining(token), findsNothing);
+          expect(
+            await const FlutterSecureStorage().read(key: 'server'),
+            isNull,
+          );
+        }
+        await tester.enterText(fields.at(0), 'https://other:4310/');
+        await tester.pump();
+        expect(tester.widget<FilledButton>(submit).onPressed, isNull);
         await tester.enterText(fields.at(1), '');
         await tester.pump();
         expect(tester.widget<TextField>(fields.at(1)).controller!.text, '');
@@ -79,6 +109,7 @@ void main() {
           tester.widget<TextField>(fields.at(1)).controller!.text,
           '123456',
         );
+        expect(tester.widget<FilledButton>(submit).onPressed, isNotNull);
         expect(find.text('正在配对…'), findsNothing);
         expect(find.byType(Workspace), findsNothing);
         expect(await const FlutterSecureStorage().read(key: 'server'), isNull);

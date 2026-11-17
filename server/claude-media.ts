@@ -1,12 +1,36 @@
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {existsSync} from 'node:fs';
-import {readFile,mkdir,stat} from 'node:fs/promises';
+import {readFile,mkdir,stat,writeFile,rename,rm,chmod} from 'node:fs/promises';
 import {join,dirname} from 'node:path';
+import {randomUUID} from 'node:crypto';
 import type {Attachment} from './attachments.js';
 const exec=promisify(execFile);
 export const ffmpeg=()=>process.env.GCOLLIE_FFMPEG||[join(process.cwd(),'ffmpeg'),join(process.cwd(),'.tools/ffmpeg/ffmpeg'),'/usr/lib/g-collie/ffmpeg'].find(existsSync)||'ffmpeg';
 async function convert(args:string[],timeout:number){try{return await exec(ffmpeg(),args,{timeout,maxBuffer:1024*1024})}catch(e:any){if(e.code==='ENOENT')throw Error('电脑服务缺少图片／视频处理组件，请更新或修复安装包后重试');throw e}}
+
+// The LGPL release build (--disable-x86asm) corrupts MJPEG with its selected
+// CPU optimisation paths. Decode/scale to PNG is unaffected; scalar JPEG is
+// verified on the release binary. Keep both input and output flags explicit.
+export const IMAGE_CACHE_VERSION='jpeg-scalar-v2';
+const conversions=new Map<string,Promise<boolean>>();
+async function cachedJpeg(input:string,output:string,args:string[],timeout:number){
+ const existing=conversions.get(output);if(existing)return existing;
+ const job=(async()=>{
+  const source=await stat(input),marker=output+'.version.json';
+  const stamp={version:IMAGE_CACHE_VERSION,size:source.size,mtimeMs:source.mtimeMs};
+  try{if(existsSync(output)&&JSON.stringify(JSON.parse(await readFile(marker,'utf8')))===JSON.stringify(stamp))return false}catch{}
+  await mkdir(dirname(output),{recursive:true,mode:0o700});
+  const temporary=join(dirname(output),`.image-${randomUUID()}.jpg`),temporaryMarker=temporary+'.json';
+  try{
+   await convert(['-hide_banner','-loglevel','error','-nostdin','-cpuflags','0','-threads','1',...args,'-y',temporary],timeout);
+   await chmod(temporary,0o600);await rename(temporary,output);
+   await writeFile(temporaryMarker,JSON.stringify(stamp),{mode:0o600});await rename(temporaryMarker,marker);return true;
+  }finally{await rm(temporary,{force:true});await rm(temporaryMarker,{force:true})}
+ })();conversions.set(output,job);try{return await job}finally{if(conversions.get(output)===job)conversions.delete(output)}
+}
+/** Regenerate only the derived JPEG, retaining the historic resource path. */
+export async function repairCachedImage(path:string,timeout=10000){return cachedJpeg(path,join(dirname(path),'media','image.jpg'),['-i',path,'-frames:v','1','-vf','scale=2048:2048:force_original_aspect_ratio=decrease','-q:v','3'],timeout)}
 
 async function image(path:string){const data=await readFile(path);if(!data.length||data.length>5*1024*1024)throw Error('图片转换后仍超过 5 MB，请压缩后重试');return{type:'image',_path:path,source:{type:'base64',media_type:'image/jpeg',data:data.toString('base64')}}}
 export async function claudeMediaInput(text:string,files:Attachment[]=[]){
@@ -16,9 +40,9 @@ export async function claudeMediaInput(text:string,files:Attachment[]=[]){
  for(const file of files){
   if(!file.image&&!file.video){content.push({type:'text',text:`用户主动附加的文件：${JSON.stringify({name:file.name,path:file.path})}`});continue}
   const cache=join(dirname(file.path),'media');await mkdir(cache,{recursive:true,mode:0o700});
-  const run=(args:string[])=>convert(['-hide_banner','-loglevel','error','-nostdin','-threads','1',...args],Math.max(1,Math.min(10000,deadline-Date.now())));
+  const timeout=()=>Math.max(1,Math.min(10000,deadline-Date.now()));
   if(file.image){
-   const output=join(cache,'image.jpg');if(!existsSync(output))await run(['-i',file.path,'-frames:v','1','-vf','scale=2048:2048:force_original_aspect_ratio=decrease','-q:v','3','-y',output]);
+   const output=join(cache,'image.jpg');await repairCachedImage(file.path,timeout());
    content.push(await image(output));
   }else{
    let duration=0;
@@ -28,7 +52,7 @@ export async function claudeMediaInput(text:string,files:Attachment[]=[]){
    for(let i=0;i<count;i++){
     const time=duration?Math.min(duration-.05,(i+.5)*duration/count):i*3;
     const output=join(cache,`frame-${i}.jpg`);
-    try{if(!existsSync(output))await run(['-ss',Math.max(0,time).toFixed(3),'-i',file.path,'-frames:v','1','-vf','scale=960:960:force_original_aspect_ratio=decrease','-q:v','4','-y',output]);await stat(output)}catch{if(!duration&&i>0)break;throw Error('视频画面提取失败，请选择可正常播放的 MP4、MOV 或 WebM 视频')}
+    try{await cachedJpeg(file.path,output,['-ss',Math.max(0,time).toFixed(3),'-i',file.path,'-frames:v','1','-vf','scale=960:960:force_original_aspect_ratio=decrease','-q:v','4'],timeout());await stat(output)}catch{if(!duration&&i>0)break;throw Error('视频画面提取失败，请选择可正常播放的 MP4、MOV 或 WebM 视频')}
     content.push({type:'text',text:`视频画面 ${i+1} · ${Math.max(0,time).toFixed(1)} 秒`},await image(output));
    }
   }

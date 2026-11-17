@@ -1,7 +1,7 @@
 {
   "source": "flutter_client/lib",
-  "git_commit": "e0611330302d12ede44fba304db8b547ee079f8d",
-  "pubspec_sha256": "d08bfdb5f7525d8495a3787f4e9c37ea45dfa83dc59d69554ade857f9b45bd83",
+  "git_commit": "3be1c3b6618ef31f9c68f2bebf6c11df2e48f7df",
+  "pubspec_sha256": "f19e17dffee49b838994b0e70cb53e9b2df859f2cee5cd0071eacce035fea724",
   "unchanged_widget_sources_sha256": {
     "account_limits.dart": "b7ee221ff72fc6e3291a32b6488e3522e0220604df6c99c6ef41d12c3d2b8da5",
     "codex_capabilities.dart": "5f337239ed60de9e0233b5d7751bb732610f36d5ba0c17817241f8714940272e",
@@ -10,11 +10,11 @@
     "diagnostic_sync.dart": "53982593a1326abcb8f59567e6706716e1a67375df6bcbaecc51425c9bef25af",
     "diagnostics.dart": "d12f5107953d1a968d150c26f25af573441fbd526f0b2bc60f719307483f3d09",
     "downloads.dart": "8d2a44f1c55267246b6bfd5e1425dc5d505556528f9c9ff18d710420203c47ab",
-    "main.dart": "543be57d0cf1c6805c77ceae62a43a9260b721a05effd4c307be6369985d7d48",
+    "main.dart": "18192190b11c3daa069303b5830e84f89151eb3d06e5c8c8e0d56e2703e9e8f6",
     "network_authorization.dart": "068c88ac3d9aa3b49af87e3dde5c680370b8a6031b0b66b51e276cbf9114dd6b",
     "network_test.dart": "97c86002a198cc86441aede0836feebe6c10733e52bd53f1b2051885137516b8",
     "offline_assets.dart": "8ab9a42eef84ed55bfba20bdf312c6624974c03b745b5d4e3ae9c33f9fb6d7d3",
-    "pending_messages.dart": "3a6f8db80feefe466fcb0f69f6f546a56ff102560f758c37e52d6fe5b8f24138",
+    "pending_messages.dart": "565b4475dea8bf684ce22e4f77cf425e27a48ae7712cd5f4983e6e0cbd163635",
     "preview.dart": "3e89dcd0dbc44bf9b71e5708e5f647fb132469bfac05b8e54caeb4958f9f185c",
     "profile.dart": "713018c2a5590ecc219999b35ff5e3b964f48d22c4f9c8dc3744d090ac7065c2",
     "project_picker.dart": "3e71b0ed2454a574bd682667293a54ef095e4d73605e882d54854346aa5e55a9",

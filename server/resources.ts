@@ -2,6 +2,7 @@ import {previewPage,pdfPreview} from './preview-page.js';
 import {createHash,randomBytes} from 'node:crypto';
 import {realpath,stat,readFile} from 'node:fs/promises';
 import {resolve,basename,extname,dirname,relative} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import type {Express} from 'express';
 import mammoth from 'mammoth';
 import {marked} from 'marked';
@@ -11,11 +12,11 @@ const resolvePackage=resourceRequire(import.meta.url);
 const extensions=new Set(['.png','.jpg','.jpeg','.gif','.webp','.pdf','.docx','.doc','.md','.txt','.csv','.xlsx','.pptx','.zip','.mp4','.mov','.m4v','.webm']);
 const images=new Set(['.png','.jpg','.jpeg','.gif','.webp']);
 export type Resource={id:string;name:string;image:boolean;ref:string};
-// Only references present in user/assistant messages become addressable resources.
+// Message references and explicit structured tool images become addressable resources.
 export function references(d:any):Resource[]{
  const refs=new Set<string>();const media=new Set<string>();const names=new Map<string,string>();
  const add=(ref:string)=>{refs.delete(ref);refs.add(ref)};
- for(const e of d.events||[]){if(!['user','assistant'].includes(e.role))continue;
+ for(const e of d.events||[]){if(e.role==='tool'){for(const r of e.media||[])if(typeof r==='string'&&(/^data:image\/(png|jpeg|gif|webp);base64,/i.test(r)||(!/^[a-z][a-z0-9+.-]*:/i.test(r.replace(/^file:\/\//,''))&&images.has(extname(r).toLowerCase())))){add(r);media.add(r)}continue}if(!['user','assistant'].includes(e.role))continue;
   for(const r of e.media||[])if(typeof r==='string'){add(r);media.add(r);}
   for(const m of String(e.text||'').matchAll(/^MEDIA:[ \t]*(.+)$/gm)){const r=m[1].trim().replace(/^"|"$/g,'');if(/\.(mp4|mov|m4v|webm)$/i.test(r))add(r)}
   for(const m of String(e.text||'').matchAll(/!?\[([^\]]*)\]\(\s*(<[^>]+>|[^\n]*?)\s*\)/g)){let r=m[2];if(r.startsWith('<'))r=r.slice(1,-1);else r=r.replace(/\s+"[^"]*"$/,'');add(r);if(/\.(mp4|mov|m4v|webm)$/i.test(m[1]))names.set(r,m[1]);}
@@ -28,7 +29,10 @@ export function compactDetail(d:any){if(!d?.id||!Array.isArray(d.events))return 
 export async function resourceFile(d:any,id:string){
  const r=references(d).find(r=>r.id===id);if(!r)throw Error('文件未被此会话引用');
  if(r.ref.startsWith('data:')){const m=r.ref.match(/^data:(image\/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/=]+)$/);if(!m||m[2].length>8*1024*1024)throw Error('图片格式或大小不支持');const data=Buffer.from(m[2],'base64');return {...r,path:'',data,mime:m[1],size:data.length,mtime:0,extension:'.png'};}
- let ref=decodeURIComponent(r.ref).replace(/^sandbox:/,'');if(ref.startsWith('file:'))ref=new URL(ref).pathname;
+ const localRef=r.ref.replace(/^sandbox:/,'');
+ const fileUrl=/^file:/i.test(localRef)?new URL(localRef):null;
+ if(fileUrl&&(fileUrl.hostname||/%(?:2f|5c)/i.test(fileUrl.pathname)))throw Error('不支持此文件地址');
+ const ref=fileUrl?fileURLToPath(fileUrl):decodeURIComponent(r.ref).replace(/^sandbox:/,'');
  if(/^[a-z][a-z0-9+.-]*:/i.test(ref)||ref.includes('\0'))throw Error('不支持此文件地址');
  const path=await realpath(resolve(d.cwd||'.',ref));
  // Block credentials and hidden configuration even when a generated link points at them.
@@ -70,8 +74,8 @@ export function installPreviews(app:Express,read:(id:string)=>Promise<any>,autho
     const assets=new Map<string,string>(),urls=new Map<string,string>();
     for(const ref of refs){if(/^data:image\/(png|jpeg|gif|webp);base64,/i.test(ref)){urls.set(decodeURIComponent(ref),ref);continue}try{await markdownImage(file.path,ref,t.session);const id=createHash('sha256').update(ref).digest('hex').slice(0,32);assets.set(id,ref);urls.set(decodeURIComponent(ref),'./asset?id='+id)}catch{}}
     t.assets=assets;
-    body=sanitize(await marked.parser(tokens),{allowedTags:sanitize.defaults.allowedTags.concat(['img','h1','h2']),allowedAttributes:{a:['href'],img:['src','alt','loading'],td:['colspan','rowspan'],th:['colspan','rowspan']},allowedSchemes:['http','https','data'],allowedSchemesByTag:{img:['data']},allowProtocolRelative:false,transformTags:{img:(_tag,attrs):sanitize.Tag=>{let ref=attrs.src;try{ref=decodeURIComponent(ref)}catch{}return urls.has(ref)?{tagName:'img',attribs:{src:urls.get(ref)!,alt:attrs.alt||'文档图片',loading:'eager'}}:{tagName:'span',attribs:{},text:'图片不可用（文件缺失或无权访问）'+(attrs.alt?'：'+attrs.alt:'')}}}});
-    body+=`<script>(()=>{for(const image of document.querySelectorAll('main img')){const failed=()=>{const note=document.createElement('span');note.textContent='图片加载失败，请检查电脑连接后返回重试。';image.replaceWith(note)};image.addEventListener('error',failed,{once:true});if(image.complete&&image.naturalWidth===0)failed()}})()</script>`;
+    body=sanitize(await marked.parser(tokens),{allowedTags:sanitize.defaults.allowedTags.concat(['img','h1','h2']),allowedAttributes:{a:['href'],span:['class','title','role','aria-label'],img:['src','alt','loading'],td:['colspan','rowspan'],th:['colspan','rowspan']},allowedSchemes:['http','https','data'],allowedSchemesByTag:{img:['data']},allowProtocolRelative:false,transformTags:{img:(_tag,attrs):sanitize.Tag=>{let ref=attrs.src;try{ref=decodeURIComponent(ref)}catch{}const name=attrs.alt||basename(ref.split(/[?#]/)[0])||'文档图片';return urls.has(ref)?{tagName:'img',attribs:{src:urls.get(ref)!,alt:name,loading:'eager'}}:{tagName:'span',attribs:{class:'markdown-image-unavailable',role:'img',title:'图片不可用','aria-label':name+'：图片不可用'},text:name}}}});
+    body+=`<script>(()=>{const decorate=note=>{note.style.cssText='display:inline-flex;align-items:center;gap:6px';const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('width','20');svg.setAttribute('height','20');svg.setAttribute('fill','none');svg.setAttribute('stroke','currentColor');svg.setAttribute('stroke-width','1.5');svg.setAttribute('aria-hidden','true');svg.style.flexShrink='0';const path=document.createElementNS(svg.namespaceURI,'path');path.setAttribute('d','M3 3h18v18H3zM3 17l6-6 4 4 3-3 5 5M16 7h.01M2 2l20 20');svg.append(path);note.prepend(svg)};for(const note of document.querySelectorAll('main .markdown-image-unavailable'))decorate(note);for(const image of document.querySelectorAll('main img')){const failed=()=>{const note=document.createElement('span');note.textContent=image.alt||'文档图片';note.className='markdown-image-unavailable';note.setAttribute('role','img');note.title='图片加载失败';note.setAttribute('aria-label',note.textContent+'：图片加载失败');decorate(note);image.replaceWith(note)};image.addEventListener('error',failed,{once:true});if(image.complete&&image.naturalWidth===0)failed()}})()</script>`;
    }else body=`<pre>${esc(text)}</pre>`;}
   else body='<p>此格式请下载后使用手机上的应用打开。</p>';
   if(['.mp4','.mov','.m4v','.webm'].includes(file.extension)){

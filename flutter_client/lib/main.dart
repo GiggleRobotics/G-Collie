@@ -196,6 +196,7 @@ class _ConnectionState extends State<ConnectionPage> {
   bool rePairing = false;
   bool workspaceOpen = false;
   final computers = ComputerStore(storage);
+  final pairingDraft = PairingLinkDraft();
   @override
   void initState() {
     super.initState();
@@ -321,11 +322,8 @@ class _ConnectionState extends State<ConnectionPage> {
         return;
       }
       client.close();
-      final secret = parsePairingLink(value)?.code;
-      if (secret != null) {
-        code.text = secret;
-        await pair();
-      }
+      final invite = parsePairingLink(value);
+      if (invite != null) await pair(invite: invite);
     } catch (e) {
       if (mounted) setState(() => error = '$e');
     } finally {
@@ -397,10 +395,9 @@ class _ConnectionState extends State<ConnectionPage> {
       final base = serverUri(normalized.toString());
       address.text = '$base';
       await storage.write(key: 'server', value: '$base');
-      final pairCode = parsePairingLink(normalized.toString())?.code;
-      if (pairCode != null) {
-        code.text = pairCode;
-        await pair();
+      final invite = parsePairingLink(normalized.toString());
+      if (invite != null) {
+        await pair(invite: invite);
         return;
       }
       final client = await makeApi(
@@ -675,6 +672,7 @@ class _ConnectionState extends State<ConnectionPage> {
     } else if (selected == '__add__') {
       setState(() {
         addingComputer = true;
+        pairingDraft.clear();
         address.clear();
         code.clear();
         error = null;
@@ -685,26 +683,23 @@ class _ConnectionState extends State<ConnectionPage> {
     }
   }
 
-  Future<void> pair() async {
+  Future<void> pair({PairingInvite? invite}) async {
     setState(() {
       busy = true;
       error = null;
     });
     try {
-      final raw = Uri.tryParse(address.text.trim());
-      final linked = parsePairingLink(address.text)?.code;
-      if (raw?.hasFragment == true && linked == null) {
-        throw const FormatException('无效配对链接');
-      }
-      final base = serverUri(
-        raw == null ? address.text : raw.replace(fragment: '').toString(),
-      );
+      final base = serverUri(invite?.address ?? address.text);
+      final secret = invite?.code ?? pairingDraft.codeFor('$base', code.text);
+      if (secret == null) throw const FormatException('请输入有效配对码或完整配对链接');
       final client = await makeApi('$base', '');
       final result = await client.call('/auth/pair', {
-        'code': linked ?? code.text.trim(),
+        'code': secret,
         'name': name.text.trim().isEmpty ? '我的手机' : name.text.trim(),
       });
       await storage.write(key: 'server', value: '$base');
+      pairingDraft.clear();
+      code.clear();
       await enter(client, result['device']['role']);
     } catch (e) {
       api?.close();
@@ -800,7 +795,14 @@ class _ConnectionState extends State<ConnectionPage> {
                       const SizedBox(height: 18),
                       TextField(
                         controller: address,
-                        inputFormatters: [PairingLinkFormatter(address: address, code: code)],
+                        inputFormatters: [
+                          PairingLinkFormatter(
+                            address: address,
+                            code: code,
+                            draft: pairingDraft,
+                            onInviteChanged: () => setState(() {}),
+                          ),
+                        ],
                         enabled: !busy,
                         keyboardType: TextInputType.url,
                         autocorrect: false,
@@ -820,11 +822,19 @@ class _ConnectionState extends State<ConnectionPage> {
                         enabled: !busy,
                         keyboardType: TextInputType.number,
                         inputFormatters: [
-                          PairingLinkFormatter(address: address, code: code, codeField: true),
+                          PairingLinkFormatter(
+                            address: address,
+                            code: code,
+                            codeField: true,
+                            draft: pairingDraft,
+                            onInviteChanged: () => setState(() {}),
+                          ),
                         ],
                         onChanged: (_) => setState(() {}),
                         decoration: InputDecoration(
-                          hintText: '6 位配对码',
+                          hintText: pairingDraft.hasInvite
+                              ? '已读取配对链接'
+                              : '6 位配对码',
                           filled: true,
                           fillColor: panelColor(context),
                         ),
@@ -858,7 +868,8 @@ class _ConnectionState extends State<ConnectionPage> {
                         onPressed:
                             busy ||
                                 address.text.trim().isEmpty ||
-                                code.text.trim().length != 6
+                                pairingDraft.codeFor(address.text, code.text) ==
+                                    null
                             ? null
                             : pair,
                         style: FilledButton.styleFrom(
@@ -1738,11 +1749,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       return true;
     } catch (e) {
       if (mounted && token == generation) {
-        final uncertain =
-            e is! ApiException ||
-            e.status == 0 ||
-            e.status >= 500 ||
-            RegExp('结果未知|结果可能未知|已提交|超时').hasMatch('$e');
+        final uncertain = operationResultUnknown(e);
         if (action == 'send') {
           pendingMessages.update(
             d['id'],

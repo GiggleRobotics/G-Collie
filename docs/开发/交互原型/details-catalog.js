@@ -1,4 +1,9 @@
 window.prototypeDetails = [
+ {group:'文件预览',page:'chat',detail:'markdown-image-failure',label:'Markdown 文件 · 缺图与加载失败',help:'待确认原型：文件正文保留缺图图标、替代文字和简短提示；不改正式实现。',state:'normal'},
+ {group:'工具与批准',page:'chat',detail:'image-view',label:'已查看图像 · 单图',help:'原型演示：工具图像结果，点击图片复用大图预览；正式 App 已同步，真机资源链路独立验收。',state:'normal'},
+ {group:'工具与批准',page:'chat',detail:'image-view-command',label:'命令与图像 · 独立折叠',help:'已确认方向：命令和图像两行各自默认收起，点击各自行展开与收起。',state:'normal'},
+ {group:'工具与批准',page:'chat',detail:'image-view-multiple',label:'已查看图像 · 多图',help:'原型演示：三张图片保留顺序，复用现有图库切换与大图。',state:'normal'},
+ {group:'工具与批准',page:'chat',detail:'image-view-failure',label:'已查看图像 · 失败',help:'原型演示：图片不可用时保留工具记录，不显示假成功。',state:'normal'},
  {group:'会话管理',page:'chat',detail:'delete-session',label:'删除会话确认',help:'仅演示；不可恢复提示、取消、失败保留及禁删状态。真实删除尚未实现。',state:'normal'},
  {group:'会话管理',page:'hermes',detail:'delete-session',label:'删除会话确认',help:'仅演示；不可恢复提示、取消、失败保留及禁删状态。真实删除尚未实现。',state:'normal'},
  {group:'会话管理',page:'claude',detail:'delete-session',label:'删除会话确认',help:'仅演示；不可恢复提示、取消、失败保留及禁删状态。真实删除尚未实现。',state:'normal'},

@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,writeFile,mkdir,symlink} from 'node:fs/promises';
+import {mkdtemp,writeFile,readFile,mkdir,symlink} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {pathToFileURL} from 'node:url';
 import express from 'express';
 import {references,compactDetail,compactReferences,resourceFile,installPreviews} from './resources.js';
 const fixture=async()=>{const cwd=await mkdtemp(join(tmpdir(),'collie-resource-'));await writeFile(join(cwd,'report.md'),'# Report\n<script>alert(1)</script>\n[bad](javascript:alert(1))');return {cwd,id:'codex:test',events:[{role:'assistant',text:'[报告](report.md)'}]};};
@@ -45,10 +46,55 @@ test('extensionless uploaded videos preserve the attachment label for media clas
 });
 test('Markdown dependency images are ticket scoped, relative to document, and recheck revocation/traversal',async()=>{
  const d=await fixture();await mkdir(join(d.cwd,'子目录'));await mkdir(join(d.cwd,'.private'));const png=Buffer.from('89504e470d0a1a0a','hex');await writeFile(join(d.cwd,'中文 图片.png'),png);await writeFile(join(d.cwd,'子目录','图片.png'),png);await writeFile(join(d.cwd,'.private','hidden.png'),png);await symlink('/etc/passwd',join(d.cwd,'leak.png'));
- await writeFile(join(d.cwd,'report.md'),'# 报告\n![同目录](中文%20图片.png)\n![子目录](子目录/图片.png)\n![缺失](missing.png)\n![隐藏](.private/hidden.png)\n![越界](../outside.png)\n![软链](leak.png)\n![外网](https://example.com/pixel.png)');let allowed=true;const app=express(),issue=installPreviews(app,async()=>d,()=>allowed),server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));try{
- const base='http://127.0.0.1:'+(server.address() as any).port,path=await issue(d.id,references(d)[0].id,'phone'),html=await(await fetch(base+path)).text();const links=[...html.matchAll(/src="(\.\/asset\?id=[a-f0-9]+)"/g)].map(m=>new URL(m[1],base+path).href);assert.equal(links.length,2);assert.match(html,/图片不可用/);assert.doesNotMatch(html,/src="https:/);
+ await writeFile(join(d.cwd,'report.md'),'# 报告\n![同目录](中文%20图片.png)\n![子目录](子目录/图片.png)\n![缺失](missing.png)\n![](unnamed.png)\n![隐藏](.private/hidden.png)\n![越界](../outside.png)\n![软链](leak.png)\n![外网](https://example.com/pixel.png)');let allowed=true;const app=express(),issue=installPreviews(app,async()=>d,()=>allowed),server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));try{
+ const base='http://127.0.0.1:'+(server.address() as any).port,path=await issue(d.id,references(d)[0].id,'phone'),html=await(await fetch(base+path)).text();const links=[...html.matchAll(/src="(\.\/asset\?id=[a-f0-9]+)"/g)].map(m=>new URL(m[1],base+path).href);assert.equal(links.length,2);assert.match(html,/class="markdown-image-unavailable"[^>]*>缺失<\/span>/);assert.match(html,/class="markdown-image-unavailable"[^>]*>unnamed.png<\/span>/);assert.match(html,/svg.setAttribute\('aria-hidden','true'\)/);assert.match(html,/note.textContent=image.alt\|\|'文档图片'/);assert.doesNotMatch(html,/文件缺失或无权访问|请检查电脑连接后返回重试/);assert.doesNotMatch(html,/src="https:/);
  for(const link of links){const r=await fetch(link);assert.equal(r.status,200);assert.match(r.headers.get('content-type')||'',/image\/png/);assert.deepEqual(Buffer.from(await r.arrayBuffer()),png)}
  assert.equal((await fetch(base+path.replace('/view','/asset?id=arbitrary'))).status,404);
  await writeFile(join(d.cwd,'子目录','图片.png'),'changed');const {unlink}=await import('node:fs/promises');await unlink(join(d.cwd,'子目录','图片.png'));await symlink('/etc/passwd',join(d.cwd,'子目录','图片.png'));assert.equal((await fetch(links[1])).status,404);allowed=false;assert.equal((await fetch(links[0])).status,410);
  }finally{server.close();}
+});
+
+test('explicit tool images are session scoped while tool text and non-image media grant no access',async()=>{
+ const cwd=await mkdtemp(join(tmpdir(),'collie-tool-image-'));
+ try{
+ const png=Buffer.from('89504e470d0a1a0a','hex');await writeFile(join(cwd,'screen.png'),png);await writeFile(join(cwd,'other.png'),png);
+ const d={id:'codex:tool-image',cwd,events:[{role:'tool',media:['screen.png','report.pdf','https://evil.test/track.png'],text:'![other](other.png)'}]};
+ const refs=references(d);assert.deepEqual(refs.map(r=>r.ref),['screen.png']);assert.equal(refs[0].image,true);
+ assert.deepEqual(await readFile((await resourceFile(d,refs[0].id)).path),png);
+ await assert.rejects(resourceFile({...d,id:'codex:another'},refs[0].id));
+ const inline='data:image/png;base64,aGVsbG8=';const data={id:d.id,events:[{role:'tool',media:[inline]}]};
+ const id=references(data)[0].id;assert.equal(compactDetail(data).events[0].media[0],'gcollie-resource:'+id);assert.equal((await resourceFile(data,id)).data?.toString(),'hello');
+ }finally{await rm(cwd,{recursive:true,force:true})}
+});
+test('tool image authorization keeps hidden, credential and symlink checks',async()=>{
+ const cwd=await mkdtemp(join(tmpdir(),'collie-tool-secret-'));
+ try{
+ await mkdir(join(cwd,'.private'));await writeFile(join(cwd,'.private','secret.png'),'private');await writeFile(join(cwd,'auth.png'),'private');await symlink(join(cwd,'.private','secret.png'),join(cwd,'alias.png'));
+ for(const path of ['.private/secret.png','auth.png','alias.png']){
+ const d={id:'codex:tool-secret',cwd,events:[{role:'tool',media:[path]}]};await assert.rejects(resourceFile(d,references(d)[0].id));
+ }
+ }finally{await rm(cwd,{recursive:true,force:true})}
+});
+
+
+test('tool image file URLs resolve encoded Unicode and spaces without relaxing access checks',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'gcollie-file-uri-'));
+ try{
+  const image=join(root,'红色 图片.png'),hidden=join(root,'.private','禁止.png'),link=join(root,'link.png');
+  const png=Buffer.from('89504e470d0a1a0a','hex');
+  await mkdir(join(root,'.private'));
+  await writeFile(image,png);await writeFile(hidden,png);await symlink(hidden,link);
+  const encoded=pathToFileURL(image).href;
+  const remote=new URL(encoded);remote.hostname='example.invalid';
+  const invalidSlash=encoded.replace('%20','%2F'),invalidBackslash=encoded.replace('%20','%5c');
+  const forbidden=[remote.href,invalidSlash,invalidBackslash,pathToFileURL(hidden).href,pathToFileURL(link).href];
+  const d={id:'codex:image-uri',cwd:root,events:[{role:'tool',media:[image,encoded,...forbidden]}]};
+  const listing=references(d);
+  const lookup=(ref:string)=>{const r=listing.find(rec=>rec.ref===ref);assert.ok(r);return resourceFile(d,r.id);};
+  const plain=await lookup(image),uri=await lookup(encoded);
+  assert.equal(uri.ref,encoded);assert.notEqual(uri.id,plain.id);assert.equal(uri.path,plain.path);
+  assert.deepEqual(await readFile(uri.path),png);
+  for(const address of forbidden.slice(0,3))await assert.rejects(lookup(address),/不支持此文件地址/);
+  for(const blocked of forbidden.slice(3))await assert.rejects(lookup(blocked),/不允许预览/);
+ }finally{await rm(root,{recursive:true,force:true});}
 });

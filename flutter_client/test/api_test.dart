@@ -4,6 +4,40 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:g_collie_flutter/api.dart';
 
 void main() {
+  test(
+    'structured unknown write outcomes override HTTP 409 and localized text',
+    () {
+      expect(
+        operationResultUnknown(
+          ApiException(
+            'native rejection',
+            409,
+            'hermes_result_unknown',
+            'unknown',
+          ),
+        ),
+        true,
+      );
+      expect(
+        operationResultUnknown(
+          ApiException('native rejection', 409, 'hermes_result_unknown'),
+        ),
+        true,
+      );
+      expect(
+        operationResultUnknown(
+          ApiException('native rejection', 409, 'desktop_result_unknown'),
+        ),
+        true,
+      );
+      expect(operationResultUnknown(ApiException('请求已过期', 409)), false);
+      expect(operationResultUnknown(ApiException('只读设备', 403)), false);
+      expect(operationResultUnknown(ApiException('旧版结果未知', 409)), true);
+      expect(operationResultUnknown(ApiException('timeout', 0)), true);
+      expect(operationResultUnknown(ApiException('internal', 500)), true);
+      expect(operationResultUnknown(StateError('connection lost')), true);
+    },
+  );
   test('reject non-server URLs and preserve host port', () {
     expect(
       serverUri('http://192.168.1.2:4310').toString(),

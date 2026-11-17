@@ -3,6 +3,33 @@ import 'package:flutter/services.dart';
 
 import 'api.dart';
 
+// Tool images come only from explicit media, never tool output Markdown.
+List<String> toolImageReferences(Json record) {
+  if (record['role'] != 'tool') return [];
+  return (record['media'] as List? ?? [])
+      .whereType<String>()
+      .where((ref) {
+        if (ref.startsWith('gcollie-resource:')) {
+          return RegExp(r'^gcollie-resource:[a-f0-9]{32}$').hasMatch(ref);
+        }
+        if (ref.startsWith('data:')) {
+          return RegExp(
+            r'^data:image/(png|jpeg|gif|webp);base64,',
+            caseSensitive: false,
+          ).hasMatch(ref);
+        }
+        final uri = Uri.tryParse(ref);
+        return uri != null &&
+            ['', 'file'].contains(uri.scheme) &&
+            RegExp(
+              r'\.(png|jpe?g|gif|webp)$',
+              caseSensitive: false,
+            ).hasMatch(ref);
+      })
+      .toSet()
+      .toList();
+}
+
 String processDuration(dynamic value) {
   if (value is! num || value <= 0) return '';
   final seconds = (value / 1000).round();
@@ -11,15 +38,76 @@ String processDuration(dynamic value) {
   return '${seconds ~/ 60} 分 ${seconds % 60} 秒';
 }
 
-class ProcessRecord extends StatefulWidget {
+class ProcessRecord extends StatelessWidget {
   final Json record;
   final bool live;
-  const ProcessRecord({super.key, required this.record, this.live = false});
+  final Widget? media;
+  const ProcessRecord({
+    super.key,
+    required this.record,
+    this.live = false,
+    this.media,
+  });
+
   @override
-  State<ProcessRecord> createState() => _ProcessRecordState();
+  Widget build(BuildContext context) {
+    if (toolImageReferences(record).isEmpty) {
+      return _ProcessRecordRow(
+        key: const ValueKey('detail'),
+        record: record,
+        live: live,
+      );
+    }
+    final commands = record['commands'];
+    final hasCommand =
+        commands is List && commands.isNotEmpty ||
+        const [
+              'exec',
+              'wait',
+              'exec_command',
+              'write_stdin',
+              'terminal',
+            ].contains(record['name']) &&
+            '${record['input'] ?? ''}'.trim().isNotEmpty;
+    final image = _ProcessRecordRow(
+      key: const ValueKey('image'),
+      record: record,
+      live: live,
+      media: media,
+      imageOnly: true,
+    );
+    if (!hasCommand) return image;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _ProcessRecordRow(
+          key: const ValueKey('detail'),
+          record: record,
+          live: live,
+        ),
+        image,
+      ],
+    );
+  }
 }
 
-class _ProcessRecordState extends State<ProcessRecord> {
+class _ProcessRecordRow extends StatefulWidget {
+  final Json record;
+  final bool live;
+  final Widget? media;
+  final bool imageOnly;
+  const _ProcessRecordRow({
+    super.key,
+    required this.record,
+    required this.live,
+    this.media,
+    this.imageOnly = false,
+  });
+  @override
+  State<_ProcessRecordRow> createState() => _ProcessRecordRowState();
+}
+
+class _ProcessRecordRowState extends State<_ProcessRecordRow> {
   bool expanded = false;
   String get command {
     final commands = widget.record['commands'] as List? ?? [];
@@ -46,7 +134,16 @@ class _ProcessRecordState extends State<ProcessRecord> {
         : status == 'submitted'
         ? '已提交'
         : '已运行';
-    final description = thought
+    final imageCount = widget.imageOnly ? toolImageReferences(e).length : 0;
+    final description = imageCount > 0
+        ? (failed
+              ? '图像加载失败'
+              : pending || status == 'submitted'
+              ? (widget.live ? '正在查看 $imageCount 张图像' : '图像查看结果未记录')
+              : status != 'completed'
+              ? '图像查看结果未知'
+              : '已查看 $imageCount 张图像')
+        : thought
         ? (pending && widget.live ? '正在思考' : '已思考')
         : commands.length > 1
         ? '$verb ${commands.length} 条命令 · $command'
@@ -63,7 +160,9 @@ class _ProcessRecordState extends State<ProcessRecord> {
       if (commands.isEmpty && '${e['text'] ?? ''}'.isNotEmpty)
         '${thought ? '' : '输出\n'}${e['text']}',
     ].join('\n\n');
-    final canExpand = !thought || detail.trim().isNotEmpty;
+    final canExpand = widget.imageOnly
+        ? widget.media != null
+        : !thought || detail.trim().isNotEmpty;
     final showDetail = expanded && canExpand;
     final detailLines = detail.split('\n');
     final detailHeading = thought ? '思考详情' : detailLines.first;
@@ -87,6 +186,8 @@ class _ProcessRecordState extends State<ProcessRecord> {
                         ? Icons.lightbulb_outline
                         : failed
                         ? Icons.error_outline
+                        : widget.imageOnly
+                        ? Icons.image_outlined
                         : Icons.terminal,
                     size: 14,
                     color: failed ? const Color(0xffb66350) : muted,
@@ -100,7 +201,7 @@ class _ProcessRecordState extends State<ProcessRecord> {
                       style: TextStyle(fontSize: 12, height: 1.4, color: muted),
                     ),
                   ),
-                  if (duration.isNotEmpty)
+                  if (!widget.imageOnly && duration.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(left: 8),
                       child: Text(
@@ -121,7 +222,12 @@ class _ProcessRecordState extends State<ProcessRecord> {
               ),
             ),
           ),
-          if (showDetail)
+          if (showDetail && widget.media != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: widget.media!,
+            ),
+          if (showDetail && !widget.imageOnly)
             Container(
               margin: const EdgeInsets.only(right: 21, top: 3, bottom: 8),
               padding: const EdgeInsets.all(12),

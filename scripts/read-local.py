@@ -95,6 +95,43 @@ def photo_names(media,text):
 def codexdb():
  files=list((HOME/'.codex').glob('state_*.sqlite'))
  return db(max(files,key=lambda p:p.stat().st_mtime)) if files else None
+def codex_subagent(source=None,thread_source=None):
+ # Parent/fork IDs and empty titles also occur in user conversations. Only
+ # authoritative agent provenance distinguishes internal worker histories.
+ if thread_source=='subagent' or source=='subagent':return True
+ if isinstance(source,str):
+  try:source=json.loads(source)
+  except (ValueError,TypeError):return False
+ return isinstance(source,dict) and 'subagent' in source
+def codex_internal(source,thread_source,rollout_path):
+ if codex_subagent(source,thread_source):return True
+ if source or thread_source:return False
+ # Older databases may lack provenance columns. Inspect only a bounded native
+ # metadata header inside the already allowlisted history roots, never content.
+ try:
+  path=pathlib.Path(rollout_path).resolve()
+  if not any(is_relative_to(path,root.resolve()) for root in [HOME/'.codex/sessions',HOME/'.codex/archived_sessions']):return False
+  with path.open() as stream:
+   first=stream.readline(65537)
+  if len(first)>65536:return False
+  header=json.loads(first)
+  payload=header.get('payload',{})
+  return header.get('type')=='session_meta' and codex_subagent(payload.get('source'),payload.get('thread_source'))
+ except (OSError,ValueError,TypeError,AttributeError):return False
+def codex_columns(connection):
+ columns={row['name'] for row in connection.execute('PRAGMA table_info(threads)')}
+ if not {'id','rollout_path','cwd'}.issubset(columns):raise ValueError('Codex 会话数据库缺少必要字段')
+ return columns
+def codex_projection(columns,detail=False):
+ fields=['id','title','name','cwd','git_branch','model','updated_at_ms','updated_at','archived']
+ if detail:fields.append('rollout_path')
+ return ','.join(field if field in columns else 'NULL AS '+field for field in fields)
+def codex_visible_filter(connection,columns):
+ source='source' if 'source' in columns else 'NULL'
+ thread_source='thread_source' if 'thread_source' in columns else 'NULL'
+ rollout='rollout_path' if 'rollout_path' in columns else 'NULL'
+ connection.create_function('gcollie_internal_agent',3,codex_internal)
+ return 'gcollie_internal_agent('+','.join([source,thread_source,rollout])+')=0'
 mode=sys.argv[1]; key=sys.argv[2] if len(sys.argv)>2 else ''
 options=json.loads(sys.argv[3]) if len(sys.argv)>3 else {}
 result={'sessions':[],'projects':[],'warnings':[]}
@@ -102,7 +139,9 @@ if mode=='list':
  try:
   c=codexdb()
   if c:
-   for row in c.execute('SELECT id,title,name,cwd,git_branch,model,updated_at_ms,updated_at,archived FROM threads ORDER BY updated_at DESC LIMIT 500'):result['sessions'].append(summary('Codex',dict(row)))
+   columns=codex_columns(c)
+   order='COALESCE(updated_at_ms,updated_at*1000,0)' if {'updated_at_ms','updated_at'}.issubset(columns) else 'updated_at_ms' if 'updated_at_ms' in columns else 'updated_at' if 'updated_at' in columns else 'id'
+   for row in c.execute('SELECT '+codex_projection(columns)+' FROM threads WHERE '+codex_visible_filter(c,columns)+' ORDER BY '+order+' DESC LIMIT 500'):result['sessions'].append(summary('Codex',dict(row)))
  except Exception as e:result['warnings'].append('Codex: '+str(e))
  try:
   with db(HOME/'.hermes/state.db') as c:
@@ -119,7 +158,7 @@ if mode=='list':
 else:
  agent,native=key.split(':',1);events=[];usage=None;modern_usage=False;process=ProcessRecords(events)
  if agent=='codex':
-  c=codexdb();row=c.execute('SELECT id,title,name,cwd,git_branch,model,updated_at_ms,updated_at,archived,rollout_path FROM threads WHERE id=?',(native,)).fetchone()
+  c=codexdb();columns=codex_columns(c);visible=codex_visible_filter(c,columns);row=c.execute('SELECT '+codex_projection(columns,True)+' FROM threads WHERE id=? AND '+visible,(native,)).fetchone()
   if not row:raise ValueError('会话不存在')
   row=dict(row);result=summary('Codex',row);path=pathlib.Path(row['rollout_path']).resolve();allowed=[(HOME/'.codex/sessions').resolve(),(HOME/'.codex/archived_sessions').resolve()]
   if not any(is_relative_to(path, root) for root in allowed):raise ValueError('会话文件超出允许范围')

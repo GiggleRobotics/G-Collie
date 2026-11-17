@@ -310,6 +310,10 @@ class _CollieShellState extends State<CollieShell> {
     );
     final refs = <String>{};
     for (final event in widget.detail?['events'] as List? ?? []) {
+      if (event['role'] == 'tool') {
+        refs.addAll(toolImageReferences(Map<String, dynamic>.from(event)));
+        continue;
+      }
       if (!['user', 'assistant'].contains(event['role'])) continue;
       for (final ref in event['media'] as List? ?? []) {
         if (ref is String) refs.add(ref);
@@ -330,6 +334,92 @@ class _CollieShellState extends State<CollieShell> {
     value.scopeReferences = refs.toList();
     value.offline = !widget.online;
     return value;
+  }
+
+  final Map<String, int> _imageViewSelections = {};
+  Widget? toolImageBody(Json e) {
+    final refs = toolImageReferences(e);
+    if (refs.isEmpty) return null;
+    if (e['status'] == 'failed') {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: muted(context, '图片暂时不可用 · 原记录保留', size: 12),
+      );
+    }
+    if (refs.length == 1) {
+      return SessionImage(
+        resources: resources,
+        source: refs.first,
+        alignment: Alignment.centerLeft,
+      );
+    }
+    final selectionKey = '${widget.detail?['id']}:${e['id']}';
+    var selected = (_imageViewSelections[selectionKey] ?? 0).clamp(
+      0,
+      refs.length - 1,
+    );
+    return StatefulBuilder(
+      builder: (context, update) => Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: SessionImage(
+              key: ValueKey('$selectionKey:${refs[selected]}'),
+              resources: resources,
+              source: refs[selected],
+              alignment: Alignment.centerLeft,
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 52,
+            child: Column(
+              children: [
+                for (var i = 0; i < refs.length; i++)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Semantics(
+                      label: '选择第 ${i + 1} 张图片',
+                      button: true,
+                      selected: selected == i,
+                      child: InkWell(
+                        onTap: () => update(() {
+                          selected = i;
+                          _imageViewSelections[selectionKey] = i;
+                        }),
+                        child: Container(
+                          width: 52,
+                          height: 52,
+                          padding: const EdgeInsets.all(2),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: selected == i
+                                  ? Theme.of(context).colorScheme.primary
+                                  : Colors.grey.shade300,
+                              width: selected == i ? 2 : 1,
+                            ),
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(5),
+                            child: IgnorePointer(
+                              child: SessionImage(
+                                resources: resources,
+                                source: refs[i],
+                                inset: false,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget eventBody(Json e) {
@@ -1803,6 +1893,7 @@ class _CollieShellState extends State<CollieShell> {
               ProcessRecord(
                 key: ValueKey('process:${d['id']}:${e['id']}'),
                 record: Map<String, dynamic>.from(e),
+                media: toolImageBody(Map<String, dynamic>.from(e)),
                 live:
                     widget.online &&
                     d['desktopLive'] == true &&
@@ -4192,6 +4283,7 @@ class AddComputerPane extends StatefulWidget {
 
 class _AddComputerPaneState extends State<AddComputerPane> {
   final address = TextEditingController(), code = TextEditingController();
+  final pairingDraft = PairingLinkDraft();
   bool busy = false;
   String error = '';
   Future<void> pair() async {
@@ -4202,12 +4294,9 @@ class _AddComputerPaneState extends State<AddComputerPane> {
     });
     CollieApi? client;
     try {
-      final raw = Uri.parse(address.text.trim());
-      final base = serverUri(raw.replace(fragment: '').toString());
-      final invite = parsePairingLink(address.text)?.code;
-      if (raw.hasFragment && invite == null) {
-        throw const FormatException('无效配对链接');
-      }
+      final base = serverUri(address.text);
+      final secret = pairingDraft.codeFor('$base', code.text);
+      if (secret == null) throw const FormatException('请输入有效配对码或完整配对链接');
       client = CollieApi(
         base,
         cookie: '',
@@ -4216,7 +4305,7 @@ class _AddComputerPaneState extends State<AddComputerPane> {
       );
       await NativeBridge.connect(client);
       final result = await client.call('/auth/pair', {
-        'code': invite ?? code.text.trim(),
+        'code': secret,
         'name': '我的手机',
       });
       await widget.computers.remember(
@@ -4249,8 +4338,16 @@ class _AddComputerPaneState extends State<AddComputerPane> {
       const SizedBox(height: 16),
       TextField(
         controller: address,
-        inputFormatters: [PairingLinkFormatter(address: address, code: code)],
+        inputFormatters: [
+          PairingLinkFormatter(
+            address: address,
+            code: code,
+            draft: pairingDraft,
+            onInviteChanged: () => setState(() {}),
+          ),
+        ],
         enabled: !busy,
+        onChanged: (_) => setState(() {}),
         decoration: const InputDecoration(
           labelText: '服务地址或完整配对链接',
           hintText: 'http://100.x.x.x:4310',
@@ -4259,11 +4356,23 @@ class _AddComputerPaneState extends State<AddComputerPane> {
       const SizedBox(height: 16),
       TextField(
         controller: code,
-        inputFormatters: [PairingLinkFormatter(address: address, code: code, codeField: true)],
+        inputFormatters: [
+          PairingLinkFormatter(
+            address: address,
+            code: code,
+            codeField: true,
+            draft: pairingDraft,
+            onInviteChanged: () => setState(() {}),
+          ),
+        ],
         enabled: !busy,
         keyboardType: TextInputType.number,
         maxLength: 6,
-        decoration: const InputDecoration(labelText: '配对码（完整配对链接可不填）'),
+        onChanged: (_) => setState(() {}),
+        decoration: InputDecoration(
+          labelText: '配对码（完整配对链接可不填）',
+          hintText: pairingDraft.hasInvite ? '已读取配对链接' : null,
+        ),
       ),
       if (error.isNotEmpty)
         Text(
@@ -4271,7 +4380,12 @@ class _AddComputerPaneState extends State<AddComputerPane> {
           style: TextStyle(color: Theme.of(context).colorScheme.error),
         ),
       FilledButton(
-        onPressed: busy ? null : pair,
+        onPressed:
+            busy ||
+                address.text.trim().isEmpty ||
+                pairingDraft.codeFor(address.text, code.text) == null
+            ? null
+            : pair,
         child: Text(busy ? '正在配对…' : '配对并连接'),
       ),
       TextButton(

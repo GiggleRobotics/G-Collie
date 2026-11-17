@@ -21,8 +21,11 @@ class PendingMessages {
     rows.removeWhere(
       (e) =>
           e['sendStatus'] == 'failed' &&
-          e['text'] == (text.isEmpty && attachments ? '附件消息' : text) &&
-          e['attachments'] == attachments,
+          '${e['text'] ?? ''}'.trim() ==
+              (text.isEmpty && attachments && media.isEmpty ? '附件消息' : text)
+                  .trim() &&
+          e['attachments'] == attachments &&
+          _sameAttachments(e, attachmentIds, media),
     );
     rows.add({
       'id': id,
@@ -35,6 +38,18 @@ class PendingMessages {
       'attachmentIds': attachmentIds,
       'baseline': baseline.map((e) => e['id']).toList(),
     });
+  }
+
+  bool _sameAttachments(Json row, List<String> ids, List<String> media) {
+    bool same(List<dynamic> left, List<dynamic> right) =>
+        left.length == right.length &&
+        List.generate(left.length, (i) => left[i] == right[i]).every((v) => v);
+    final previousIds = row['attachmentIds'] as List? ?? [];
+    if (previousIds.isNotEmpty || ids.isNotEmpty) {
+      return same(previousIds, ids);
+    }
+    // Legacy callers without IDs still need the exact preview references.
+    return same(row['media'] as List? ?? [], media);
   }
 
   void update(String session, String id, String status, {String? turnId}) {

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'read_budget.dart';
 import 'diagnostic_log.dart';
 import 'dart:convert';
@@ -15,6 +16,20 @@ class ApiException implements Exception {
   ApiException(this.message, [this.status = 0, this.code, this.outcome]);
   @override
   String toString() => message;
+}
+
+/// A received HTTP rejection can still describe a write with unknown outcome.
+/// Prefer the server's structured result over its status or localized message.
+bool operationResultUnknown(Object error) {
+  if (error is! ApiException) return true;
+  if (error.outcome == 'unknown' ||
+      error.code == 'hermes_result_unknown' ||
+      error.code == 'desktop_result_unknown') {
+    return true;
+  }
+  return error.status == 0 ||
+      error.status >= 500 ||
+      RegExp('结果未知|结果可能未知|已提交|超时').hasMatch('$error');
 }
 
 Uri serverUri(String input) {
@@ -164,12 +179,21 @@ class CollieApi {
     request.followRedirects = false;
     request.headers.set(HttpHeaders.cookieHeader, requestCookie);
     final response = await request.close();
-    if (response.statusCode != 200) throw ApiException('图片暂时无法加载');
+    debugPrint(
+      'GCollieImage http status=${response.statusCode} '
+      'type=${response.headers.contentType?.mimeType ?? 'unknown'} '
+      'declaredLength=${response.contentLength}',
+    );
+    if (response.statusCode != 200) {
+      await response.drain<void>();
+      throw ApiException('图片暂时无法加载', response.statusCode);
+    }
     final bytes = <int>[];
     await for (final part in response) {
       bytes.addAll(part);
       if (bytes.length > 15 * 1024 * 1024) throw ApiException('图片超过 15 MB');
     }
+    debugPrint('GCollieImage http complete length=${bytes.length}');
     return bytes;
   }
 

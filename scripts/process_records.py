@@ -1,6 +1,8 @@
 """Public process records only; never project raw/encrypted reasoning fields."""
 import json
 import re
+from pathlib import PurePosixPath
+from urllib.parse import urlsplit
 
 
 def decoded(value):
@@ -15,6 +17,35 @@ def public_summary(value):
     if isinstance(value, list):
         return '\n'.join(x if isinstance(x,str) else str(x.get('text','')) if isinstance(x,dict) else '' for x in value)[:12000]
     return ''
+
+
+def image_reference(value):
+    if not isinstance(value,str) or len(value)>8*1024*1024 or '\x00' in value:return None
+    if re.fullmatch(r'data:image/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+',value):return value
+    if urlsplit(value).scheme not in ['', 'file']:return None
+    return value if PurePosixPath(value).suffix.lower() in {'.png','.jpg','.jpeg','.gif','.webp'} else None
+
+
+def structured_images(output):
+    """Only explicit image blocks, never URLs/paths found in arbitrary tool text."""
+    obj=decoded(output)
+    blocks=obj if isinstance(obj,list) else obj.get('content',[]) if isinstance(obj,dict) else []
+    refs=[]
+    for block in blocks if isinstance(blocks,list) else []:
+        if not isinstance(block,dict):continue
+        kind=block.get('type')
+        ref=None
+        if kind in ['local_image','localImage']:ref=block.get('path')
+        elif kind in ['image','image_url','input_image','output_image']:
+            ref=block.get('image_url') or block.get('url')
+            if isinstance(ref,dict):ref=ref.get('url')
+            if not ref and kind=='image' and block.get('mimeType') in ['image/png','image/jpeg','image/gif','image/webp'] and isinstance(block.get('data'),str):ref='data:'+block['mimeType']+';base64,'+block['data']
+        ref=image_reference(ref)
+        if ref and ref not in refs:refs.append(ref)
+    return refs
+
+def merge_tool_images(existing,incoming):
+    return list(dict.fromkeys([*existing,*incoming]))
 
 
 def command_text(command):
@@ -49,6 +80,9 @@ class ProcessRecords:
         self.turn_start=0
         self.thoughts=set()
         self.background={}
+        self.image_views={}
+        self.image_calls={}
+        self.native_image_records=set()
 
     def start(self,key,name,value,time,event_id):
         args=decoded(value)
@@ -61,6 +95,7 @@ class ProcessRecords:
         e=dict(id=str(event_id),role='tool',text='',name=name or '工具',input=tool_input(value),status='pending',time=time,turnId=self.turn)
         self.events.append(e)
         self.calls[key]=e
+        if name=='view_image' and isinstance(args,dict):self.image_calls[key]=image_reference(args.get('path'))
         self.open.append(key)
         return e
 
@@ -71,6 +106,17 @@ class ProcessRecords:
         e['text']=str(output or '')[:24000]
         e['status']='completed'
         obj=decoded(output)
+        media=structured_images(output)
+        if media:
+            blocks=obj if isinstance(obj,list) else obj.get('content',[])
+            e['text']='\n'.join(b.get('text','') for b in blocks if isinstance(b,dict) and b.get('type')=='text' and isinstance(b.get('text'),str))[:24000]
+        if id(e) in self.native_image_records:
+            # Native ImageView is the authority for this call. Inline images
+            # are the tool response representation (often resized/re-encoded).
+            # Explicit additional local images and other calls remain independent.
+            media=[ref for ref in media if not ref.startswith('data:')]
+        if media:
+            e['media']=merge_tool_images(e.get('media',[]),media)
         if isinstance(obj,dict):
             exit_code=obj.get('exit_code')
             if exit_code is None and isinstance(obj.get('result'),dict): exit_code=obj['result'].get('exit_code')
@@ -113,6 +159,22 @@ class ProcessRecords:
                     return True
             if t=='item_completed':
                 item=p.get('item') or {};it=item.get('type')
+                if it=='ImageView':
+                    ref=image_reference(item.get('path'))
+                    identity=item.get('id')
+                    if ref and isinstance(identity,str) and identity not in self.image_views:
+                        # Prefer the explicit view_image invocation; code-mode wrappers
+                        # may contain several views and are not matched by their raw text.
+                        parent=next((self.calls[key] for key in reversed(self.image_calls) if self.image_calls[key]==ref and not any(row is self.calls[key] for row in self.image_views.values())),None)
+                        if parent is None:
+                            parent=next((self.calls[k] for k in reversed(self.open) if self.calls[k].get('name') in ['exec','wait']),None)
+                        if parent is None:
+                            parent=self.start('image:'+identity,'view_image','',time,'image:'+identity)
+                            self.finish('image:'+identity,'',time)
+                        parent['media']=merge_tool_images(parent.get('media',[]),[ref])
+                        self.image_views[identity]=parent
+                        self.native_image_records.add(id(parent))
+                    return True
                 if it=='Reasoning': self.summary(item.get('summary_text'),item.get('id'),time)
                 if it=='CommandExecution':
                     parent=next((self.calls[k] for k in reversed(self.open) if self.calls[k]['name'] in ['exec','wait','exec_command','write_stdin']),None)

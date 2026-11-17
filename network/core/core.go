@@ -5,12 +5,15 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/http/httputil"
 	"net/netip"
 	"net/url"
@@ -42,7 +45,48 @@ type Diagnostics struct {
 	LastEventAgeSeconds int64                    `json:"lastEventAgeSeconds"`
 	Counts              map[string]uint64        `json:"counts"`
 	Network             MobileNetworkDiagnostics `json:"network"`
+	Open                OpenDiagnostics          `json:"open"`
 }
+
+// Open is kept separately so subsequent upstream logs cannot erase the failure.
+// Stage and class are fixed labels; no target, error text, or credentials persist.
+type OpenDiagnostics struct {
+	Attempts   uint64 `json:"attempts"`
+	Stage      string `json:"stage,omitempty"`
+	ErrorClass string `json:"errorClass,omitempty"`
+	DurationMs int64  `json:"durationMs"`
+}
+
+func (d *diagnosticBuffer) recordOpen(stage, class string, began time.Time) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.open.Attempts++
+	d.open.Stage, d.open.ErrorClass = stage, class
+	d.open.DurationMs = time.Since(began).Milliseconds()
+}
+func openErrorClass(err error) string {
+	if err == nil {
+		return "none"
+	}
+	var dns *net.DNSError
+	var cert *tls.CertificateVerificationError
+	var unknown x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	var network net.Error
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.As(err, &dns):
+		return "name-resolution"
+	case errors.As(err, &cert), errors.As(err, &unknown), errors.As(err, &hostname):
+		return "tls"
+	case errors.As(err, &network) && network.Timeout():
+		return "timeout"
+	default:
+		return "transport"
+	}
+}
+
 type MobileNetworkDiagnostics struct {
 	InterfaceType string `json:"interfaceType"`
 	DNSv4         int    `json:"dnsV4"`
@@ -83,6 +127,7 @@ type diagnosticBuffer struct {
 	count             uint64
 	stage, errorClass string
 	counts            map[string]uint64
+	open              OpenDiagnostics
 }
 
 func logClassification(message string) (stage, class string) {
@@ -153,7 +198,7 @@ func (d *diagnosticBuffer) snapshot() Diagnostics {
 	mobileDiagnosticMu.Lock()
 	network := mobileDiagnosticNetwork
 	mobileDiagnosticMu.Unlock()
-	return Diagnostics{uptime, d.count, d.stage, d.errorClass, age, counts, network}
+	return Diagnostics{uptime, d.count, d.stage, d.errorClass, age, counts, network, d.open}
 }
 
 type Computer struct {
@@ -396,6 +441,9 @@ func GatewayHandler(target *url.URL, token, localOrigin string, transport http.R
 
 // Check the selected service before creating a gateway; never follow redirects.
 func probe(client *http.Client, target *url.URL) error {
+	return probeObserved(client, target, func(string, string) {})
+}
+func probeObserved(client *http.Client, target *url.URL, observe func(string, string)) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cancel()
 	health := *target
@@ -403,38 +451,75 @@ func probe(client *http.Client, target *url.URL) error {
 	health.RawPath = ""
 	health.RawQuery = ""
 	health.Fragment = ""
+	var traceMu sync.Mutex
+	stage := "connect"
+	setStage := func(next string) { traceMu.Lock(); stage = next; traceMu.Unlock() }
+	report := func(class string) { traceMu.Lock(); current := stage; traceMu.Unlock(); observe(current, class) }
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		DNSStart:             func(httptrace.DNSStartInfo) { setStage("dns") },
+		ConnectStart:         func(string, string) { setStage("connect") },
+		TLSHandshakeStart:    func() { setStage("tls") },
+		GotConn:              func(httptrace.GotConnInfo) { setStage("response") },
+		GotFirstResponseByte: func() { setStage("response") },
+	})
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, health.String(), nil)
 	if err != nil {
+		observe("target", "invalid-target")
 		return errors.New("电脑地址无效，请重新选择")
 	}
 	copy := *client
 	copy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	response, err := copy.Do(request)
 	if err != nil {
+		report(openErrorClass(err))
 		return fmt.Errorf("无法访问电脑 %s。请确认电脑在线、G-Collie 服务已启动，且两台设备在同一网络并允许互访。正式版本端口为 4310。", target.Host)
 	}
 	defer response.Body.Close()
+	setStage("body")
 	var value struct {
 		OK      bool   `json:"ok"`
 		Version string `json:"version"`
 	}
-	if response.StatusCode != http.StatusOK || json.NewDecoder(http.MaxBytesReader(nil, response.Body, 4096)).Decode(&value) != nil || !value.OK || value.Version == "" {
+	if response.StatusCode != http.StatusOK {
+		observe("response", "http-status")
 		return errors.New("该地址没有响应 G-Collie 服务，请从电脑的“内置远程连接”复制完整地址，检查协议和端口")
 	}
+	if err := json.NewDecoder(http.MaxBytesReader(nil, response.Body, 4096)).Decode(&value); err != nil {
+		class := openErrorClass(err)
+		if class == "transport" {
+			class = "invalid-response"
+		}
+		report(class)
+		return errors.New("该地址没有响应 G-Collie 服务，请从电脑的“内置远程连接”复制完整地址，检查协议和端口")
+	}
+	if !value.OK || value.Version == "" {
+		observe("body", "invalid-response")
+		return errors.New("该地址没有响应 G-Collie 服务，请从电脑的“内置远程连接”复制完整地址，检查协议和端口")
+	}
+	observe("health", "none")
 	return nil
 }
 func (n *Node) Open(raw string) (Gateway, error) {
+	began := time.Now()
+	stage, class := "target", "invalid-target"
+	defer func() { n.diagnostics.recordOpen(stage, class, began) }()
 	target, e := Target(raw)
 	if e != nil {
 		return Gateway{}, e
 	}
+	stage, class = "state", "not-running"
 	if n.Status().State != "Running" {
 		return Gateway{}, errors.New("请先登录内置 Tailscale 并等待连接")
 	}
-	if e := probe(n.ts.HTTPClient(), target); e != nil {
+	if e := probeObserved(n.ts.HTTPClient(), target, func(s, c string) { stage, class = s, c }); e != nil {
 		return Gateway{}, e
 	}
-	return n.openGateway(target, n.ts.HTTPClient().Transport)
+	stage, class = "gateway", "local-gateway"
+	gateway, err := n.openGateway(target, n.ts.HTTPClient().Transport)
+	if err == nil {
+		stage, class = "ready", "none"
+	}
+	return gateway, err
 }
 
 func (n *Node) openGateway(target *url.URL, transport http.RoundTripper) (Gateway, error) {

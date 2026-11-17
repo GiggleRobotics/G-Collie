@@ -1,13 +1,18 @@
 package core
 
 import (
+	"context"
+	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"net/url"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestTarget(t *testing.T) {
@@ -243,5 +248,80 @@ func TestMobileDiagnosticsOnlyExposeAllowlistedTypeAndCounts(t *testing.T) {
 		if d.snapshot().Network.InterfaceType != kind {
 			t.Fatal("valid category lost")
 		}
+	}
+}
+
+type diagnosticTransport func(*http.Request) (*http.Response, error)
+
+func (f diagnosticTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+func TestOpenProbeDiagnostics(t *testing.T) {
+	for _, tc := range []struct {
+		name, stage, class string
+		transport          diagnosticTransport
+	}{
+		{"dns", "dns", "name-resolution", func(r *http.Request) (*http.Response, error) {
+			httptrace.ContextClientTrace(r.Context()).DNSStart(httptrace.DNSStartInfo{Host: "private-host"})
+			return nil, &net.DNSError{Err: "private-secret", Name: "private-host"}
+		}},
+		{"timeout", "connect", "timeout", func(r *http.Request) (*http.Response, error) { return nil, context.DeadlineExceeded }},
+		{"response", "response", "timeout", func(r *http.Request) (*http.Response, error) {
+			httptrace.ContextClientTrace(r.Context()).GotConn(httptrace.GotConnInfo{})
+			return nil, context.DeadlineExceeded
+		}},
+		{"http", "response", "http-status", func(r *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 403, Body: io.NopCloser(strings.NewReader("private-secret")), Header: make(http.Header)}, nil
+		}},
+		{"invalid", "body", "invalid-response", func(r *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("private-secret")), Header: make(http.Header)}, nil
+		}},
+		{"ready", "health", "none", func(r *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"ok":true,"version":"test"}`)), Header: make(http.Header)}, nil
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target, _ := url.Parse("http://100.64.0.1:4310/#pair=private-secret")
+			var d diagnosticBuffer
+			err := probeObserved(&http.Client{Transport: tc.transport}, target, func(stage, class string) { d.recordOpen(stage, class, time.Now()) })
+			if (err == nil) != (tc.class == "none") {
+				t.Fatalf("unexpected outcome: %v", err)
+			}
+			d.logf("ordinary log after failed open")
+			result := d.snapshot()
+			if result.Open.Stage != tc.stage || result.Open.ErrorClass != tc.class || result.Open.Attempts != 1 {
+				t.Fatalf("wrong diagnostic: %+v", result.Open)
+			}
+			encoded, _ := json.Marshal(result)
+			for _, secret := range []string{"private-secret", "100.64.0.1", "private-host", "pair="} {
+				if strings.Contains(string(encoded), secret) {
+					t.Fatal("diagnostic leaked private text")
+				}
+			}
+		})
+	}
+}
+func TestOpenTargetFailureDiagnostic(t *testing.T) {
+	n := &Node{}
+	_, err := n.Open("http://private-host/#pair=private-secret")
+	if err == nil {
+		t.Fatal("invalid target accepted")
+	}
+	d := n.diagnostics.snapshot().Open
+	if d.Stage != "target" || d.ErrorClass != "invalid-target" || d.Attempts != 1 {
+		t.Fatalf("wrong diagnostic: %+v", d)
+	}
+}
+
+func TestOpenProbeRealTraceTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
+	defer server.Close()
+	target, _ := url.Parse(server.URL)
+	client := server.Client()
+	client.Timeout = 30 * time.Millisecond
+	var stage, class string
+	if err := probeObserved(client, target, func(s, c string) { stage, class = s, c }); err == nil {
+		t.Fatal("expected timeout")
+	}
+	if stage != "response" || class != "timeout" {
+		t.Fatalf("unexpected trace classification %s/%s", stage, class)
 	}
 }

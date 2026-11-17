@@ -28,6 +28,7 @@ class SessionResources {
       r'^gcollie-resource:([a-f0-9]{32})$',
     ).firstMatch(ref);
     if (embedded != null) {
+      debugPrint('GCollieImage listing hit embedded');
       return {'id': embedded[1], 'ref': ref, 'name': '会话图片.png', 'image': true};
     }
     final hadListing = _listing != null;
@@ -43,13 +44,16 @@ class SessionResources {
       for (final r in items) {
         if (r['ref'] == ref ||
             Uri.tryParse(r['ref'] as String)?.toString() == ref) {
+          debugPrint('GCollieImage listing hit count=${items.length}');
           return r;
         }
       }
+      debugPrint('GCollieImage listing miss count=${items.length}');
       _listing = null;
       if (hadListing) return await find(ref);
       return null;
     } catch (_) {
+      debugPrint('GCollieImage listing failure');
       _listing = null;
       rethrow;
     }
@@ -265,12 +269,14 @@ class SessionImage extends StatefulWidget {
   final String source;
   final String? alt;
   final bool inset;
+  final AlignmentGeometry alignment;
   const SessionImage({
     super.key,
     required this.resources,
     required this.source,
     this.alt,
     this.inset = true,
+    this.alignment = Alignment.center,
   });
   @override
   State<SessionImage> createState() => _SessionImageState();
@@ -279,10 +285,12 @@ class SessionImage extends StatefulWidget {
 class _SessionImageState extends State<SessionImage> {
   late Future<Uint8List> bytes;
   bool failed = false;
+  bool codecReported = false;
   DateTime lastAttempt = DateTime.fromMillisecondsSinceEpoch(0);
   Future<Uint8List> load() async {
     lastAttempt = DateTime.now();
     failed = false;
+    codecReported = false;
     for (var attempt = 0; ; attempt++) {
       try {
         final data = await widget.resources.image(widget.source);
@@ -319,6 +327,12 @@ class _SessionImageState extends State<SessionImage> {
     if (!remote) bytes = load();
   }
 
+  void reportCodec(bool success) {
+    if (codecReported) return;
+    codecReported = true;
+    debugPrint('GCollieImage codec ${success ? 'success' : 'failure'}');
+  }
+
   @override
   Widget build(BuildContext context) {
     Widget error() => OutlinedButton.icon(
@@ -336,6 +350,7 @@ class _SessionImageState extends State<SessionImage> {
             widget.source,
             width: double.infinity,
             fit: BoxFit.contain,
+            alignment: widget.alignment,
             errorBuilder: (_, _, _) => error(),
           )
         : FutureBuilder<Uint8List>(
@@ -351,15 +366,22 @@ class _SessionImageState extends State<SessionImage> {
               return Image.memory(
                 state.data!,
                 width: double.infinity,
-                frameBuilder: (context, child, frame, synchronous) =>
-                    frame != null || synchronous
-                    ? child
-                    : SizedBox(
-                        height: MediaQuery.sizeOf(context).height * .5,
-                        child: child,
-                      ),
+                frameBuilder: (context, child, frame, synchronous) {
+                  if (frame != null || synchronous) {
+                    reportCodec(true);
+                    return child;
+                  }
+                  return SizedBox(
+                    height: MediaQuery.sizeOf(context).height * .5,
+                    child: child,
+                  );
+                },
                 fit: BoxFit.contain,
-                errorBuilder: (_, _, _) => error(),
+                alignment: widget.alignment,
+                errorBuilder: (_, _, _) {
+                  reportCodec(false);
+                  return error();
+                },
               );
             },
           );

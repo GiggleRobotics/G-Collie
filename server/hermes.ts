@@ -85,17 +85,38 @@ export function mergeHermesDetail(detail:any,live:any){
 export class HermesBridge{
  private socket?:WebSocket;private token='';private ready?:Promise<void>;private seq=0;private pending=new Map<string,{resolve:(v:any)=>void;reject:(e:Error)=>void;timer:ReturnType<typeof setTimeout>}>();private ledger:Record<string,any>={};private busy=new Set<string>();private origin='';private nativeAuth=false;private closed=false;private gatewayStates=new Map<string,{epoch:string;seq:number;generation:number;prompts:any[];complete:boolean}>();
  constructor(private root:string,private notify:()=>void){try{this.ledger=JSON.parse(readFileSync(join(root,'hermes-ledger.json'),'utf8'))}catch{}}
+ operationOutcome(key:string,requestId:unknown):'unknown'|'done'|undefined{if(typeof requestId!=='string'||!/^[a-zA-Z0-9_-]{8,100}$/.test(requestId))return;const state=this.ledger[key+':'+requestId]?.state;return state==='done'?'done':['sending','unknown'].includes(state)?'unknown':undefined}
  private save(){const p=join(this.root,'hermes-ledger.json');writeFileSync(p+'.tmp',JSON.stringify(this.ledger),{mode:0o600});renameSync(p+'.tmp',p)}
  private async discover(){if(process.env.ORBIT_HERMES_URL){const u=new URL(process.env.ORBIT_HERMES_URL);if(u.protocol!=='http:'||u.hostname!=='127.0.0.1'||u.username||u.password)throw Error('仅支持本机回环 Hermes 后端');return u.origin}const{stdout}=await exec('ss',['-ltnpH'],{timeout:3000});const ports=stdout.split('\n').filter(l=>/users:\(\("hermes"/.test(l)).map(l=>l.match(/127\.0\.0\.1:(\d+)/)?.[1]).filter(Boolean);if(ports.length!==1)throw Error('未唯一发现 Hermes 本机后端');return'http://127.0.0.1:'+ports[0]}
  private async connect(){if(this.socket?.readyState===WebSocket.OPEN)return;if(this.ready)return this.ready;this.ready=(async()=>{this.origin=await this.discover();const status=await(await fetch(this.origin+'/api/status',{signal:AbortSignal.timeout(4000)})).json();if(status.auth_required)throw Error('Hermes 要求登录，请通过其正常登录流程接入');const html=await(await fetch(this.origin+'/',{signal:AbortSignal.timeout(4000)})).text();const match=html.match(/window\.__HERMES_SESSION_TOKEN__\s*=\s*("[^"]+")/);this.nativeAuth=!match;const token=match?JSON.parse(match[1]):await hermesGatewayTicket(this.origin,'interactive');this.token=match?token:'';const ws=this.socket=this.nativeAuth?new WebSocket(this.origin.replace('http:','ws:')+'/api/ws',['hermes-gateway-v1','hermes-gateway-ticket.'+token]):new WebSocket(this.origin.replace('http:','ws:')+'/api/ws?token='+encodeURIComponent(token));ws.onmessage=({data})=>{for(const line of String(data).split('\n')){if(!line.trim())continue;let m;try{m=JSON.parse(line)}catch{continue}if(m.id!==undefined&&!m.method){const p=this.pending.get(String(m.id));if(p){this.pending.delete(String(m.id));clearTimeout(p.timer);m.error?p.reject(Error(m.error.message)):p.resolve(m.result)}}else this.notify()}};ws.onclose=()=>{this.ready=undefined;this.gatewayStates.clear();for(const p of this.pending.values()){clearTimeout(p.timer);p.reject(Error('Hermes 后端已断开，操作结果可能未知'))}this.pending.clear();this.notify()};await new Promise<void>((r,j)=>{const timer=setTimeout(()=>{ws.close();j(Error('Hermes 连接超时'))},6000);ws.onopen=()=>{clearTimeout(timer);r()};ws.onerror=()=>{clearTimeout(timer);j(Error('Hermes 连接失败'))}});await this.rpc('client.capabilities',{server_requests:true})})();try{await this.ready}catch(e){this.socket?.close();this.ready=undefined;throw e}}
  private rpc(method:string,params:any={}):Promise<any>{if(this.socket?.readyState!==WebSocket.OPEN)return Promise.reject(Error('Hermes 未连接'));const id='orbit-'+ ++this.seq;return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{this.pending.delete(id);reject(Error('Hermes 响应超时；请勿重复提交'))},20000);this.pending.set(id,{resolve,reject,timer});this.socket!.send(JSON.stringify({jsonrpc:'2.0',id,method,params}))})}
  async active(){await this.connect();const r=await this.rpc('session.active_list');return r.sessions||[]}
- async snapshot(key:string,attach=false){if(!/^[a-zA-Z0-9_-]+$/.test(key))throw Error('无效 Hermes 会话 ID');const sessions=await this.active();const row=sessions.find((s:any)=>s.session_key===key);if(!row)throw Error('此会话未在 Hermes 桌面后端加载，请先在电脑打开它');const raw=this.nativeAuth?(attach?this.rememberGateway(row.id,await this.rpc('session.resume',{session_id:row.id,omit_messages:true})):await this.readGateway(row.id,row)):await this.rpc('session.activate',{session_id:row.id,omit_messages:true});return{row,raw}}
- async load(key:string){if(!/^[a-zA-Z0-9_-]+$/.test(key))throw Error('无效会话编号');const rows=await this.active();if(!this.nativeAuth&&rows.some((r:any)=>r.session_key===key))return key;const r=await this.rpc('session.resume',this.nativeAuth?{session_id:key,omit_messages:true}:{session_id:key,source:'desktop',omit_messages:true,defer_history:true,close_on_disconnect:false});const resumed=r.session_key||r.resumed||(this.nativeAuth?r.session_id:undefined);if(!resumed)throw Error('Hermes 未返回恢复后的会话编号');if(this.nativeAuth)this.rememberGateway(resumed,r);return resumed}
- private rememberGateway(id:string,reply:any){
-  const raw=hermesGatewaySnapshot(reply);
-  if(typeof reply.replay_epoch==='string'&&Number.isSafeInteger(reply.last_sequence))this.gatewayStates.set(id,{epoch:reply.replay_epoch,seq:reply.last_sequence,generation:reply.execution_generation,prompts:reply.prompts||[],complete:true});
-  return raw;
+ async snapshot(key:string,attach=false){
+  if(!/^[a-zA-Z0-9_-]+$/.test(key))throw Error('无效 Hermes 会话 ID');
+  const sessions=await this.active();let row=sessions.find((s:any)=>s.session_key===key);
+  if(!row)throw Error('此会话未在 Hermes 桌面后端加载，请先在电脑打开它');
+  if(this.nativeAuth&&attach)row=await this.attachGateway(key,row);
+  const raw=this.nativeAuth?await this.readGateway(row.id,row):await this.rpc('session.activate',{session_id:row.id,omit_messages:true});
+  return{row,raw};
+ }
+ async load(key:string){
+  if(!/^[a-zA-Z0-9_-]+$/.test(key))throw Error('无效会话编号');
+  const rows=await this.active();const row=rows.find((r:any)=>r.session_key===key);
+  if(this.nativeAuth){
+   // active_list is discovery, not an ownership preflight. activate itself only binds a live runtime.
+   if(!row)throw Error('Hermes 尚无可验证的跨实例原子恢复接口，请先在电脑原实例打开此会话');
+   const current=await this.attachGateway(key,row);this.gatewayStates.delete(current.id);await this.readGateway(current.id,current);return key;
+  }
+  if(row)return key;
+  const r=await this.rpc('session.resume',{session_id:key,source:'desktop',omit_messages:true,defer_history:true,close_on_disconnect:false});
+  const resumed=r.session_key||r.resumed;if(!resumed)throw Error('Hermes 未返回恢复后的会话编号');return resumed;
+ }
+ private async attachGateway(key:string,row:any){
+  const attached=await this.rpc('session.activate',{session_id:row.id,omit_messages:true});
+  if(attached?.session_id!==row.id||attached.session_key!==key)throw Error('Hermes 附着会话已变化，请刷新');
+  const current=(await this.active()).find((s:any)=>s.id===row.id&&s.session_key===key);
+  if(!current)throw Error('Hermes 运行实例已变化，请刷新；不会自动恢复会话');
+  return current;
  }
  private async gatewayMetadata(id:string){const ticket=await hermesGatewayTicket(this.origin,'native-http');const response=await fetch(this.origin+'/api/sessions/'+encodeURIComponent(id),{headers:{'x-hermes-gateway-ticket':ticket},signal:AbortSignal.timeout(5000)});if(!response.ok)throw Error('Hermes 会话状态读取失败');return await response.json() as any;}
  private async readGateway(id:string,row:any){
@@ -157,6 +178,7 @@ export class HermesBridge{
     if(!raw.running||String(raw.turn_started_at)!==b.turnId)throw Error('执行轮次已变化，请刷新');method='session.interrupt';params={session_id:row.id,...(this.nativeAuth?{execution_generation:raw.execution_generation}:{})};
    }else if(b.action==='answer'){
     if(this.nativeAuth){
+     if(raw.replayComplete!==true)throw Error('Hermes 实时事件记录不完整，拒绝回答，请重新连接同步审批状态');
      if(!Number.isSafeInteger(b.expectedGeneration)||b.expectedGeneration!==raw.execution_generation)throw Error('请求轮次已变化，请刷新后回答');
      if(typeof b.requestEpoch!=='string'||!b.requestEpoch||b.requestEpoch!==raw.replay_epoch)throw Error('请求连接已变化，请刷新后回答');
      if(raw.prompts?.some((p:any)=>p.prompt_id===b.pendingId)){const answer=hermesGatewayAnswer(raw,b,row.id);method=answer.method;params=answer.params}
