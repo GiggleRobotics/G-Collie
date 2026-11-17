@@ -6,7 +6,7 @@ import{attachmentInput}from'./attachments.js';
 import{execFile}from'node:child_process';import{promisify}from'node:util';import{readFileSync,writeFileSync,renameSync}from'node:fs';import{join}from'node:path';
 const exec=promisify(execFile);
 /** Same-user gateway bootstrap. Credentials stay local and every grant is used once. */
-export async function hermesGatewayTicket(origin:string,purpose:'interactive'|'native-http',home=process.env.HERMES_HOME||join(homedir(),'.hermes')){
+export async function hermesGatewayTicket(origin:string,purpose:'interactive'|'native-http',home=process.env.HERMES_HOME||join(homedir(),'.hermes'),verified?:(identity:any,profileId:string)=>void){
  const uid=process.getuid?.();if(uid===undefined)throw Error('当前系统不支持 Hermes 本机凭据接入');
  const root=await realpath(home),socket=join(root,'gateway.sock');
  const directory=await lstat(root),node=await lstat(socket);
@@ -21,9 +21,11 @@ export async function hermesGatewayTicket(origin:string,purpose:'interactive'|'n
   client.on('end',()=>{if(!done)finish(Error('Hermes 本机控制响应不完整'))});
  })}
  const identity=await query('identify');
- if(identity.api_origin!==origin||identity.runtime_protocol!==1||typeof identity.instance_id!=='string'||!identity.instance_id)throw Error('Hermes 本机后端与控制入口不匹配');
+ if(!identity||identity.api_origin!==origin||identity.runtime_protocol!==1||typeof identity.instance_id!=='string'||!identity.instance_id)throw Error('Hermes 本机后端与控制入口不匹配');
  const profiles=Array.isArray(identity.served_profiles)?identity.served_profiles.filter((p:any)=>p?.home===root&&typeof p.profile_id==='string'&&p.profile_id):[];
  if(profiles.length!==1)throw Error('未唯一确定 Hermes 当前用户配置');
+ if(!['session-authority-v1','durable-admission-v1','event-replay-v1'].every(c=>identity.capabilities?.includes(c)))throw Error('Hermes 原生会话控制能力尚未验证');
+ verified?.(identity,profiles[0].profile_id);
  const grant=await query('session-ticket',{instance_id:identity.instance_id,profile_id:profiles[0].profile_id,purpose});
  if(typeof grant.ticket!=='string'||! /^[A-Za-z0-9_-]{16,256}$/.test(grant.ticket))throw Error('Hermes 未返回有效的本机连接凭据');
  return grant.ticket as string;
@@ -83,12 +85,12 @@ export function mergeHermesDetail(detail:any,live:any){
  result.events=events;result.liveInflight={...inflight,assistant:undefined};return result;
 }
 export class HermesBridge{
- private socket?:WebSocket;private token='';private ready?:Promise<void>;private seq=0;private pending=new Map<string,{resolve:(v:any)=>void;reject:(e:Error)=>void;timer:ReturnType<typeof setTimeout>}>();private ledger:Record<string,any>={};private busy=new Set<string>();private origin='';private nativeAuth=false;private closed=false;private gatewayStates=new Map<string,{epoch:string;seq:number;generation:number;prompts:any[];complete:boolean}>();
+ private socket?:WebSocket;private token='';private ready?:Promise<void>;private seq=0;private pending=new Map<string,{resolve:(v:any)=>void;reject:(e:Error)=>void;timer:ReturnType<typeof setTimeout>}>();private ledger:Record<string,any>={};private busy=new Set<string>();private origin='';private nativeAuth=false;private gatewayIdentity?:{instanceId:string;profileId:string};private closed=false;private gatewayStates=new Map<string,{epoch:string;seq:number;generation:number;prompts:any[];complete:boolean}>();
  constructor(private root:string,private notify:()=>void){try{this.ledger=JSON.parse(readFileSync(join(root,'hermes-ledger.json'),'utf8'))}catch{}}
  operationOutcome(key:string,requestId:unknown):'unknown'|'done'|undefined{if(typeof requestId!=='string'||!/^[a-zA-Z0-9_-]{8,100}$/.test(requestId))return;const state=this.ledger[key+':'+requestId]?.state;return state==='done'?'done':['sending','unknown'].includes(state)?'unknown':undefined}
  private save(){const p=join(this.root,'hermes-ledger.json');writeFileSync(p+'.tmp',JSON.stringify(this.ledger),{mode:0o600});renameSync(p+'.tmp',p)}
  private async discover(){if(process.env.ORBIT_HERMES_URL){const u=new URL(process.env.ORBIT_HERMES_URL);if(u.protocol!=='http:'||u.hostname!=='127.0.0.1'||u.username||u.password)throw Error('仅支持本机回环 Hermes 后端');return u.origin}const{stdout}=await exec('ss',['-ltnpH'],{timeout:3000});const ports=stdout.split('\n').filter(l=>/users:\(\("hermes"/.test(l)).map(l=>l.match(/127\.0\.0\.1:(\d+)/)?.[1]).filter(Boolean);if(ports.length!==1)throw Error('未唯一发现 Hermes 本机后端');return'http://127.0.0.1:'+ports[0]}
- private async connect(){if(this.socket?.readyState===WebSocket.OPEN)return;if(this.ready)return this.ready;this.ready=(async()=>{this.origin=await this.discover();const status=await(await fetch(this.origin+'/api/status',{signal:AbortSignal.timeout(4000)})).json();if(status.auth_required)throw Error('Hermes 要求登录，请通过其正常登录流程接入');const html=await(await fetch(this.origin+'/',{signal:AbortSignal.timeout(4000)})).text();const match=html.match(/window\.__HERMES_SESSION_TOKEN__\s*=\s*("[^"]+")/);this.nativeAuth=!match;const token=match?JSON.parse(match[1]):await hermesGatewayTicket(this.origin,'interactive');this.token=match?token:'';const ws=this.socket=this.nativeAuth?new WebSocket(this.origin.replace('http:','ws:')+'/api/ws',['hermes-gateway-v1','hermes-gateway-ticket.'+token]):new WebSocket(this.origin.replace('http:','ws:')+'/api/ws?token='+encodeURIComponent(token));ws.onmessage=({data})=>{for(const line of String(data).split('\n')){if(!line.trim())continue;let m;try{m=JSON.parse(line)}catch{continue}if(m.id!==undefined&&!m.method){const p=this.pending.get(String(m.id));if(p){this.pending.delete(String(m.id));clearTimeout(p.timer);m.error?p.reject(Error(m.error.message)):p.resolve(m.result)}}else this.notify()}};ws.onclose=()=>{this.ready=undefined;this.gatewayStates.clear();for(const p of this.pending.values()){clearTimeout(p.timer);p.reject(Error('Hermes 后端已断开，操作结果可能未知'))}this.pending.clear();this.notify()};await new Promise<void>((r,j)=>{const timer=setTimeout(()=>{ws.close();j(Error('Hermes 连接超时'))},6000);ws.onopen=()=>{clearTimeout(timer);r()};ws.onerror=()=>{clearTimeout(timer);j(Error('Hermes 连接失败'))}});await this.rpc('client.capabilities',{server_requests:true})})();try{await this.ready}catch(e){this.socket?.close();this.ready=undefined;throw e}}
+ private async connect(){if(this.socket?.readyState===WebSocket.OPEN)return;if(this.ready)return this.ready;this.ready=(async()=>{this.origin=await this.discover();const status=await(await fetch(this.origin+'/api/status',{signal:AbortSignal.timeout(4000)})).json();if(status.auth_required)throw Error('Hermes 要求登录，请通过其正常登录流程接入');const html=await(await fetch(this.origin+'/',{signal:AbortSignal.timeout(4000)})).text();const match=html.match(/window\.__HERMES_SESSION_TOKEN__\s*=\s*("[^"]+")/);this.nativeAuth=!match;const token=match?JSON.parse(match[1]):await hermesGatewayTicket(this.origin,'interactive',undefined,(identity,profileId)=>{this.gatewayIdentity={instanceId:identity.instance_id,profileId}});this.token=match?token:'';const ws=this.socket=this.nativeAuth?new WebSocket(this.origin.replace('http:','ws:')+'/api/ws',['hermes-gateway-v1','hermes-gateway-ticket.'+token]):new WebSocket(this.origin.replace('http:','ws:')+'/api/ws?token='+encodeURIComponent(token));ws.onmessage=({data})=>{for(const line of String(data).split('\n')){if(!line.trim())continue;let m;try{m=JSON.parse(line)}catch{continue}if(m.id!==undefined&&!m.method){const p=this.pending.get(String(m.id));if(p){this.pending.delete(String(m.id));clearTimeout(p.timer);m.error?p.reject(Error(m.error.message)):p.resolve(m.result)}}else this.notify()}};ws.onclose=()=>{this.ready=undefined;this.gatewayStates.clear();for(const p of this.pending.values()){clearTimeout(p.timer);p.reject(Error('Hermes 后端已断开，操作结果可能未知'))}this.pending.clear();this.notify()};await new Promise<void>((r,j)=>{const timer=setTimeout(()=>{ws.close();j(Error('Hermes 连接超时'))},6000);ws.onopen=()=>{clearTimeout(timer);r()};ws.onerror=()=>{clearTimeout(timer);j(Error('Hermes 连接失败'))}});await this.rpc('client.capabilities',{server_requests:true})})();try{await this.ready}catch(e){this.socket?.close();this.ready=undefined;throw e}}
  private rpc(method:string,params:any={}):Promise<any>{if(this.socket?.readyState!==WebSocket.OPEN)return Promise.reject(Error('Hermes 未连接'));const id='orbit-'+ ++this.seq;return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{this.pending.delete(id);reject(Error('Hermes 响应超时；请勿重复提交'))},20000);this.pending.set(id,{resolve,reject,timer});this.socket!.send(JSON.stringify({jsonrpc:'2.0',id,method,params}))})}
  async active(){await this.connect();const r=await this.rpc('session.active_list');return r.sessions||[]}
  async snapshot(key:string,attach=false){
@@ -103,22 +105,34 @@ export class HermesBridge{
   if(!/^[a-zA-Z0-9_-]+$/.test(key))throw Error('无效会话编号');
   const rows=await this.active();const row=rows.find((r:any)=>r.session_key===key);
   if(this.nativeAuth){
-   // active_list is discovery, not an ownership preflight. activate itself only binds a live runtime.
+   // Only attach a live authority-owned runtime; never cold-resume history.
    if(!row)throw Error('Hermes 尚无可验证的跨实例原子恢复接口，请先在电脑原实例打开此会话');
-   const current=await this.attachGateway(key,row);this.gatewayStates.delete(current.id);await this.readGateway(current.id,current);return key;
+   const current=await this.attachGateway(key,row);await this.readGateway(current.id,current);return key;
   }
   if(row)return key;
   const r=await this.rpc('session.resume',{session_id:key,source:'desktop',omit_messages:true,defer_history:true,close_on_disconnect:false});
   const resumed=r.session_key||r.resumed;if(!resumed)throw Error('Hermes 未返回恢复后的会话编号');return resumed;
  }
  private async attachGateway(key:string,row:any){
-  const attached=await this.rpc('session.activate',{session_id:row.id,omit_messages:true});
-  if(attached?.session_id!==row.id||attached.session_key!==key)throw Error('Hermes 附着会话已变化，请刷新');
+  // Canonical gateway/session_controls.py uses idempotent session.resume for
+  // viewer attachment. Only an already discovered authority-owned live row is
+  // eligible; never use this verb to mount a cold historical session.
+  const identity=this.gatewayIdentity;
+  if(!identity)throw Error('Hermes 原生会话身份尚未验证');
+  const descriptor=await this.rpc('runtime.describe',{});
+  if(descriptor?.instance_id!==identity.instanceId||descriptor.profile_id!==identity.profileId||!Number.isSafeInteger(descriptor.authority_epoch)||descriptor.authority_epoch<0||!['durable-admission-v1','event-replay-v1'].every(c=>descriptor.capabilities?.includes(c)))throw Error('Hermes 原生会话实例或能力已变化，请刷新');
   const current=(await this.active()).find((s:any)=>s.id===row.id&&s.session_key===key);
   if(!current)throw Error('Hermes 运行实例已变化，请刷新；不会自动恢复会话');
-  return current;
+  const attached=await this.rpc('session.resume',{session_id:row.id,omit_messages:true});
+  if(attached?.session_id!==row.id||attached.stored_session_id!==key||attached.authority_epoch!==descriptor.authority_epoch)throw Error('Hermes 附着会话已变化，请刷新');
+  const after=(await this.active()).find((s:any)=>s.id===row.id&&s.session_key===key);
+  if(!after)throw Error('Hermes 运行实例已变化，请刷新；不会自动恢复会话');
+  const snapshot=hermesGatewaySnapshot(attached);
+  if(typeof snapshot.replay_epoch!=='string'||!snapshot.replay_epoch||!Number.isSafeInteger(snapshot.last_sequence)||snapshot.last_sequence<0||!Array.isArray(snapshot.prompts))throw Error('Hermes 附着快照不完整');
+  this.gatewayStates.set(row.id,{epoch:snapshot.replay_epoch,seq:snapshot.last_sequence,generation:snapshot.execution_generation,prompts:snapshot.prompts,complete:true});
+  return after;
  }
- private async gatewayMetadata(id:string){const ticket=await hermesGatewayTicket(this.origin,'native-http');const response=await fetch(this.origin+'/api/sessions/'+encodeURIComponent(id),{headers:{'x-hermes-gateway-ticket':ticket},signal:AbortSignal.timeout(5000)});if(!response.ok)throw Error('Hermes 会话状态读取失败');return await response.json() as any;}
+ private async gatewayMetadata(id:string){const ticket=await hermesGatewayTicket(this.origin,'native-http',undefined,(identity,profileId)=>{if(identity.instance_id!==this.gatewayIdentity?.instanceId||profileId!==this.gatewayIdentity?.profileId)throw Error('Hermes 原生会话实例已变化，请重新连接')});const response=await fetch(this.origin+'/api/sessions/'+encodeURIComponent(id),{headers:{'x-hermes-gateway-ticket':ticket},signal:AbortSignal.timeout(5000)});if(!response.ok)throw Error('Hermes 会话状态读取失败');return await response.json() as any;}
  private async readGateway(id:string,row:any){
   if(!['idle','working','waiting','starting'].includes(row.status))throw Error('Hermes 运行状态无法确认，请刷新');
   const info=await this.rpc('session.info',{session_id:id});
@@ -141,10 +155,17 @@ export class HermesBridge{
   this.gatewayStates.set(id,{epoch:replay.replay_epoch,seq:replay.last_sequence,generation,prompts:current,complete});
   return hermesGatewaySnapshot({...info,nativeGateway:true,running:['working','waiting'].includes(row.status),status:row.status,execution_generation:generation,prompts:current,open_requests:replay.open_requests,replay_epoch:replay.replay_epoch,replayComplete:complete});
  }
+ // Legacy sidecars identify a turn with fractional Unix seconds; gateways use
+ // integer execution generations. Preserve the exact value without rounding.
+ private turnIdentity(raw:any){
+  const gateway=this.nativeAuth||raw.nativeGateway===true,value=gateway?raw.execution_generation:raw.turn_started_at;
+  if(typeof value!=='number'||!Number.isFinite(value)||value<0||value>Number.MAX_SAFE_INTEGER||gateway&&!Number.isSafeInteger(value))return;
+  return String(value);
+ }
  async view(key:string){
   const{row,raw}=await this.snapshot(key);const running=!!raw.running;const pending=hermesPending(raw);const launch=raw.launch_request||raw.info?.launch_request||{};const privateInput=launch.ignore_user_config!==true&&launch.safe_mode!==true;
   if(pending&&this.nativeAuth)Object.assign(pending,{generation:raw.execution_generation,requestEpoch:raw.replay_epoch});
-  return{desktopLive:true,hermesLive:true,desktopControl:true,readOnly:false,status:pending||raw.status==='waiting'?'waiting':running?'running':raw.status==='starting'||raw.hydrating||raw.status==='resuming'||raw.pending?.some((p:any)=>p.status==='queued')?'starting':'idle',turnId:running&&Number.isSafeInteger(raw.turn_started_at)?String(raw.turn_started_at):undefined,model:row.model,...(this.nativeAuth?{gatewayCapabilities:{textSend:true,stop:true,answer:true,images:true,secrets:privateInput},...(raw.replayComplete===false?{desktopError:'实时事件记录不完整，请重新连接此会话同步审批状态'}:{})}:{}),pending,liveInflight:running?raw.inflight:undefined}
+  return{desktopLive:true,hermesLive:true,desktopControl:true,readOnly:false,status:pending||raw.status==='waiting'?'waiting':running?'running':raw.status==='starting'||raw.hydrating||raw.status==='resuming'||raw.pending?.some((p:any)=>p.status==='queued')?'starting':'idle',turnId:running?this.turnIdentity(raw):undefined,model:row.model,...(this.nativeAuth?{gatewayCapabilities:{textSend:true,stop:true,answer:true,images:true,secrets:privateInput},...(raw.replayComplete===false?{desktopError:'实时事件记录不完整，请重新连接此会话同步审批状态'}:{})}:{}),pending,liveInflight:running?raw.inflight:undefined}
  }
 
  async create(b:any){if(typeof b.requestId!=='string'||!/^[a-zA-Z0-9_-]{8,100}$/.test(b.requestId))throw Error('无效操作编号');const id='create:'+b.requestId;const old=this.ledger[id];if(old){if(old.state==='done')return old.result;throw Error('新建已提交或结果未知，请刷新会话列表，勿重复新建')}this.ledger[id]={state:'sending'};this.save();try{await this.connect();let result=await this.rpc('session.create',this.nativeAuth?{source:'gui',request_id:b.requestId,title:b.title,cwd:b.cwd}:{source:'desktop',title:b.title,cwd:b.cwd,close_on_disconnect:false});if(this.nativeAuth){if(!result.session_id)throw Error('Hermes 未返回新会话编号');result={...result,session_key:result.session_id}};this.ledger[id]={state:'done',result};this.save();return result}catch(e){this.ledger[id]={state:'unknown'};this.save();throw e}}
@@ -175,7 +196,7 @@ export class HermesBridge{
     const prepared=await prepareAgentMedia(b.text,b.attachments||[]);media=prepared.files.filter(f=>f.image);if(media.length>10)throw Error('每次最多发送 10 张图片');
     const input=attachmentInput(prepared.text,prepared.files,64000);method='prompt.submit';params={session_id:row.id,text:input.filter(i=>i.type==='text').map(i=>i.text).join('\n')||'请查看附加的图片',...(this.nativeAuth?{submission_id:b.requestId}:{})};
    }else if(b.action==='stop'){
-    if(!raw.running||String(raw.turn_started_at)!==b.turnId)throw Error('执行轮次已变化，请刷新');method='session.interrupt';params={session_id:row.id,...(this.nativeAuth?{execution_generation:raw.execution_generation}:{})};
+    const turnId=this.turnIdentity(raw);if(!raw.running||!turnId||turnId!==b.turnId)throw Error('执行轮次已变化，请刷新');method='session.interrupt';params={session_id:row.id,...(this.nativeAuth?{execution_generation:raw.execution_generation}:{})};
    }else if(b.action==='answer'){
     if(this.nativeAuth){
      if(raw.replayComplete!==true)throw Error('Hermes 实时事件记录不完整，拒绝回答，请重新连接同步审批状态');
