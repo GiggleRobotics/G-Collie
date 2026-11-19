@@ -104,3 +104,42 @@ test('明确终止systemError允许用户发起新轮，但不把未知或仍执
  const pending=desktopView({...ended,id:'thread',requests:[{id:7,method:'item/commandExecution/requestApproval',params:{threadId:'thread',turnId:'ended'}}]});
  assert.equal(pending.status,'waiting');assert.throws(()=>desktopSend('thread',pending,b),/尚未同步/);
 });
+
+import {DesktopBridge} from './desktop.js';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+function streamHarness(){
+ const root=mkdtempSync(join(tmpdir(),'g-collie-stream-'));let notifications=0;const sent:any[]=[];
+ const bridge=new DesktopBridge(root,()=>notifications++),internal=bridge as any;
+ internal.socket={writable:true,write:(b:Buffer)=>sent.push(JSON.parse(b.subarray(4).toString())),destroy(){}};
+ internal.followed.set('thread',{owner:'desktop-owner',at:Date.now(),ok:false});
+ const receive=(version:number,change:any,sourceClientId='desktop-owner',hostId='local')=>{
+  const body=Buffer.from(JSON.stringify({type:'broadcast',method:'thread-stream-state-changed',version,sourceClientId,params:{hostId,conversationId:'thread',change}}));const header=Buffer.alloc(4);header.writeUInt32LE(body.length);
+  // Exercise fragmented length-prefixed IPC rather than bypassing frame handling.
+  internal.receive(header.subarray(0,2));internal.receive(Buffer.concat([header.subarray(2),body]));
+ };
+ return {bridge,receive,sent,notifications:()=>notifications,cleanup:()=>rmSync(root,{recursive:true,force:true})};
+}
+for(const version of [11,13])test(`桌面流协议v${version}附着后快照和增量恢复实时状态`,()=>{
+ const h=streamHarness();try{
+  h.receive(version,{type:'snapshot',revision:4,conversationState:{id:'thread',threadRuntimeStatus:{type:'idle'},turns:[]}});
+  assert.equal(h.bridge.view('thread').desktopLive,true);assert.equal(h.bridge.view('thread').status,'idle');
+  h.receive(version,{type:'patches',baseRevision:4,revision:5,patches:[{op:'replace',path:['threadRuntimeStatus'],value:{type:'active',activeFlags:[]}},{op:'add',path:['turns',0],value:{turnId:'active-turn',status:'inProgress'}}]});
+  assert.equal(h.bridge.view('thread').status,'running');assert.equal((h.bridge.view('thread') as any).turnId,'active-turn');assert.equal(h.notifications(),2);
+  h.receive(version,{type:'patches',baseRevision:3,revision:6,patches:[]});
+  assert.equal(h.bridge.view('thread').desktopLive,false);assert.equal(h.sent.at(-1).params.following,true);
+  h.receive(version,{type:'snapshot',revision:7,conversationState:{id:'thread',threadRuntimeStatus:{type:'idle'},turns:[]}});
+  assert.equal(h.bridge.view('thread').status,'idle');
+ }finally{h.cleanup()}
+});
+test('桌面流拒绝未知版本、其他owner、远端host及错会话快照',()=>{
+ const h=streamHarness();try{
+  const snapshot={type:'snapshot',revision:1,conversationState:{id:'thread',threadRuntimeStatus:{type:'idle'}}};
+  for(const version of [10,12,14])h.receive(version,snapshot);
+  h.receive(13,snapshot,'other-owner');h.receive(13,snapshot,'desktop-owner','remote');
+  assert.equal(h.bridge.view('thread').desktopLive,false);assert.equal(h.notifications(),0);
+  h.receive(13,{...snapshot,conversationState:{...snapshot.conversationState,id:'other-thread'}});
+  assert.equal(h.bridge.view('thread').desktopLive,false);assert.equal(h.sent.length,1);
+ }finally{h.cleanup()}
+});
