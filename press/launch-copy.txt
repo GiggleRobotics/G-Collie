@@ -8,8 +8,8 @@ G-Collie · Agent 会话控制台
 
 G-Collie 支持 Codex、Hermes 和 Claude Code。Codex 和 Hermes 的控制能力取决于本机接口和会话状态。Claude Code 的外部终端记录可查看，通过 G-Collie 创建的 Claude Code 会话还可以继续发送或停止当前轮。手机一次可以配对多台电脑，每台电脑单独管理设备授权。
 
-目前公开版提供 Linux amd64 安装包（电脑服务和网页 0.3.35），以及 Android 0.1.51。先在运行 Agent 的电脑安装服务，再用手机配对连接。
+目前公开版提供 Linux amd64 安装包（电脑服务和网页 0.3.36），以及 Android 0.1.52。先在运行 Agent 的电脑安装服务，再用手机配对连接。
 
 官网 https://gigglerobotics.github.io/G-Collie/
 项目 https://github.com/GiggleRobotics/G-Collie
-下载 https://github.com/GiggleRobotics/G-Collie/releases/tag/v0.3.35
+下载 https://github.com/GiggleRobotics/G-Collie/releases/tag/v0.3.36
