@@ -2,7 +2,11 @@
 
 **帮你照看每一个Agent**
 
-在手机或浏览器上查看电脑里正在执行的 Agent 会话、接着发消息，也可以选助手和项目，新建会话。任务始终在自己的电脑上执行。支持 Codex、Hermes 和 Claude Code，具体操作取决于会话来源。
+G-Collie 让你用手机或另一台电脑，远程查看和使用自己电脑上的 AI 助手。
+
+比如，你让电脑上的 Codex 跑测试，接着就出门了。路上打开手机，就能看到测试跑到了哪一步；如果有测试失败，还可以在支持续聊的原对话里说「看看这项为什么失败」，让 Codex 在那台电脑上接着查。
+
+支持 Codex、Hermes 和 Claude Code。你也可以直接从手机或浏览器发起新任务。
 
 [官网自动演示](https://gigglerobotics.github.io/G-Collie/#demo) · [下载 Linux amd64 电脑端（DEB 0.3.36）](https://github.com/GiggleRobotics/G-Collie/releases/download/v0.3.36/g-collie_0.3.36_amd64.deb) · [下载 Android arm64 手机端（APK 0.1.52）](https://github.com/GiggleRobotics/G-Collie/releases/download/v0.3.36/g-collie-0.1.52-android-arm64-release.apk)
 
