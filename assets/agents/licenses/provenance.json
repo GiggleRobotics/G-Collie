@@ -1,0 +1,22 @@
+[
+  {
+    "asset": "Codex",
+    "repository": "https://github.com/tiann/hapi",
+    "revision": "6557dda7f6c55a73795e8c06d6eb11471f91b4a9",
+    "sourcePath": "ios/Hapi/Assets.xcassets/AgentIcons/codex.imageset/icon.svg",
+    "license": "AGPL-3.0",
+    "sourceSHA256": "4e7de67fcefb3bf7258f6b688ff568bb7ced6bb8f59d9a4b721f91beda32325b",
+    "transformation": "none; byte-identical SVG",
+    "licenseURL": "https://raw.githubusercontent.com/tiann/hapi/6557dda7f6c55a73795e8c06d6eb11471f91b4a9/LICENSE"
+  },
+  {
+    "asset": "Hermes",
+    "repository": "https://github.com/NousResearch/hermes-agent",
+    "revision": "4b7229d612324adcf86ede7c181df542a1697fd6",
+    "sourcePath": "apps/desktop/assets/icon.png",
+    "license": "MIT",
+    "sourceSHA256": "2bee6240d4986546a970247988aff4bf46567a90d5f25adf9e2225a00f77060f",
+    "transformation": "1024 to256 LANCZOS resize; decoded RGBA pixels exact",
+    "licenseURL": "https://raw.githubusercontent.com/NousResearch/hermes-agent/4b7229d612324adcf86ede7c181df542a1697fd6/LICENSE"
+  }
+]
