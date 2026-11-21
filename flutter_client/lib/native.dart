@@ -25,7 +25,7 @@ class NativeBridge {
       final version = await invoke<String>('appVersion');
       return version == null || version.trim().isEmpty
           ? '版本未知'
-          : '内测版 ${version.trim()}';
+          : '版本 ${version.trim()}';
     } catch (_) {
       return '版本未知';
     }

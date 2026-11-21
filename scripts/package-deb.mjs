@@ -37,6 +37,14 @@ const publicRepo = 'https://github.com/GiggleRobotics/G-Collie';
 const images = new Set();
 for (const guide of guidePaths) {
   const markdown = await readFile(guide, 'utf8');
+  // The README uses a picture element to offer a still cover for reduced motion.
+  for (const [, sources] of markdown.matchAll(/<(?:img|source)\b[^>]*?\s(?:src|srcset)="([^"]+)"/gi)) {
+    for (const variant of sources.split(',')) {
+      const [target] = variant.trim().split(/\s+/);
+      const file = relative(root, resolve(dirname(guide), target));
+      if (file.startsWith('docs/使用示例/')) images.add(file);
+    }
+  }
   const packaged = markdown.replace(/(!?)\[([^\]\n]*)\]\(([^)\s]+)\)/g, (match, image, label, target) => {
     if (/^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(target)) return match;
     const [reference, fragment] = target.split('#');
@@ -48,8 +56,8 @@ for (const guide of guidePaths) {
     }
     if (file === 'docs') return '[' + label + '](' + join(reference, 'README.md') + ')';
     const directory = sourceDirectories.has(file);
-    if (!directory && !file.startsWith('docs/开发/')) return match;
-    const url = publicRepo + (directory ? '/tree/main/' : '/blob/main/') + file.split('/').map(encodeURIComponent).join('/');
+    if (!directory && (!file.startsWith('docs/') || guidePaths.includes(file))) return match;
+    const url = publicRepo + (directory ? '/tree/' : '/blob/') + 'v' + version + '/' + file.split('/').map(encodeURIComponent).join('/');
     return '[' + label + '](' + url + (fragment ? '#' + fragment : '') + ')';
   });
   await mkdir(dirname(join(docRoot, guide)), {recursive: true});

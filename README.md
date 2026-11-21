@@ -4,7 +4,7 @@
 
 在手机或浏览器上查看电脑里正在执行的 Agent 会话、接着发消息，也可以选助手和项目，新建会话。任务始终在自己的电脑上执行。支持 Codex、Hermes 和 Claude Code，具体操作取决于会话来源。
 
-[官网自动演示](https://gigglerobotics.github.io/G-Collie/#demo) · [下载 Linux amd64 电脑端（DEB 0.3.35）](https://github.com/GiggleRobotics/G-Collie/releases/download/v0.3.35/g-collie_0.3.35_amd64.deb) · [下载 Android arm64 手机端（APK 0.1.51）](https://github.com/GiggleRobotics/G-Collie/releases/download/v0.3.35/g-collie-0.1.51-android-arm64-release.apk)
+[官网自动演示](https://gigglerobotics.github.io/G-Collie/#demo) · [下载 Linux amd64 电脑端（DEB 0.3.36）](https://github.com/GiggleRobotics/G-Collie/releases/download/v0.3.36/g-collie_0.3.36_amd64.deb) · [下载 Android arm64 手机端（APK 0.1.52）](https://github.com/GiggleRobotics/G-Collie/releases/download/v0.3.36/g-collie-0.1.52-android-arm64-release.apk)
 
 <picture>
   <source media="(prefers-reduced-motion: reduce)" srcset="docs/使用示例/g-collie-cover.jpg">
@@ -18,7 +18,7 @@
 - **手机 App**：两端加入同一私网，在 Android App 输入电脑地址和六位配对码，打开原会话。[看手机配对演示（30 秒）](https://gigglerobotics.github.io/G-Collie/start/#phone-demo)
 - **另一台电脑**：用浏览器打开执行电脑的私网地址，填写设备名称和配对码，即可查看原会话。任务继续在原电脑上执行。[看浏览器配对演示（20 秒）](https://gigglerobotics.github.io/G-Collie/start/#browser-demo)
 
-其他架构、SHA256 校验文件和旧内测用户的同签名升级包见 [v0.3.35 发行页](https://github.com/GiggleRobotics/G-Collie/releases/tag/v0.3.35)。
+其他架构、SHA256 校验文件和旧内测用户的同签名升级包见 [v0.3.36 发行页](https://github.com/GiggleRobotics/G-Collie/releases/tag/v0.3.36)。
 
 ## 继续已有会话
 

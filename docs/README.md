@@ -11,7 +11,7 @@ G-Collie 让你在手机或另一台电脑的浏览器里查看、继续原有�
 | Android 手机 | 安装 App，加入执行电脑所在的私网，填写电脑地址和六位码，再从「最近使用」打开会话。[手机 App 配对图文与视频](https://gigglerobotics.github.io/G-Collie/start/#phone-demo) |
 | 另一台电脑的浏览器 | 打开执行电脑提供的完整地址，填写设备名称和六位码，在浏览器中查看原会话。[浏览器配对步骤](https://gigglerobotics.github.io/G-Collie/start/#browser-pair) · [观看电脑浏览器演示](https://gigglerobotics.github.io/G-Collie/start/#browser-demo) |
 
-公开版的电脑服务为 **0.3.35**，Android 为 **0.1.51**。Linux amd64 安装包、各架构 APK 及校验文件见 [v0.3.35 发行页](https://github.com/GiggleRobotics/G-Collie/releases/tag/v0.3.35)。
+公开版的电脑服务为 **0.3.36**，Android 为 **0.1.52**。Linux amd64 安装包、各架构 APK 及校验文件见 [v0.3.36 发行页](https://github.com/GiggleRobotics/G-Collie/releases/tag/v0.3.36)。
 
 | 需要做什么 | 对应手册 |
 | --- | --- |

@@ -12,7 +12,7 @@ void main() {
       expect(call.method, 'appVersion');
       return '0.1.38';
     });
-    expect(await NativeBridge.appVersion(), '内测版 0.1.38');
+    expect(await NativeBridge.appVersion(), '版本 0.1.38');
   });
   test('missing platform version is explicitly unknown', () async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

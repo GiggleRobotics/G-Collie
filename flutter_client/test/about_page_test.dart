@@ -99,7 +99,7 @@ void main() {
             ),
           );
           await tester.pumpAndSettle();
-          expect(find.text('内测版 0.1.38 · By Giggle'), findsOneWidget);
+          expect(find.text('版本 0.1.38 · By Giggle'), findsOneWidget);
           expect(find.byType(SingleChildScrollView), findsOneWidget);
           expect(find.byType(BottomSheet), findsNothing);
           expect(
