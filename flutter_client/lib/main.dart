@@ -1358,10 +1358,20 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   Future<void> open(String id) async {
     retryOpenId = null;
     if (id.startsWith('draft-agent:') && detail?['draft'] == true) {
+      if (busy ||
+          uncertainDrafts.containsKey(detail?['id']) ||
+          effectiveRole == 'view') {
+        return;
+      }
       setState(() => detail = {...detail!, 'agent': id.substring(12)});
       return;
     }
     if (id.startsWith('draft-project:') && detail?['draft'] == true) {
+      if (busy ||
+          uncertainDrafts.containsKey(detail?['id']) ||
+          effectiveRole == 'view') {
+        return;
+      }
       setState(() => detail = {...detail!, 'cwd': id.substring(14)});
       return;
     }
@@ -1383,7 +1393,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         detail = cached is Map
             ? localDetail(id, cached)
             : detail?['draft'] == true
-            ? localDetail(id, {...detail!, 'draft': false})
+            ? mergeHistory(localDetail(id, {...detail!, 'draft': false}))
             : null;
         draft.text = savedDrafts[id] ?? '';
         answers.clear();
@@ -1481,18 +1491,11 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     olderHistory[id] = events.values
         .where((e) => e['sendStatus'] == null)
         .toList();
-    final merged = pendingMessages.merge({
-      ...incoming,
-      'events': events.values.toList(),
-    });
-    if (uncertainSendId != null &&
-        pendingMessages.isAcknowledged(id, uncertainSendId!)) {
-      final submitted = jsonDecode(uncertainSendKey!) as Map;
-      consumeSubmittedDraft(id, '${submitted['text'] ?? ''}');
-      uncertainSendKey = null;
-      uncertainSendId = null;
-    }
-    return merged;
+    return pendingMessages.merge(
+      {...incoming, 'events': events.values.toList()},
+      onAcknowledged: (request, text) =>
+          consumeSubmittedDraft(id, text, request),
+    );
   }
 
   void historyScroll() {
@@ -1591,7 +1594,19 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback(settle);
   }
 
-  void consumeSubmittedDraft(String session, String submitted) {
+  final composerUploads = <Json>[];
+  // Bind each selection to its submission, including when a skill is removed
+  // and added again with the same server ID before a late receipt arrives.
+  final uploadRequest = Expando<String>();
+
+  void markSubmittedUploads(String request, List<String> ids) {
+    for (final upload in composerUploads) {
+      if (ids.contains(upload['id'])) uploadRequest[upload] = request;
+    }
+  }
+
+  void consumeSubmittedDraft(String session, String submitted, String request) {
+    composerUploads.removeWhere((upload) => uploadRequest[upload] == request);
     // Consume only the submitted snapshot, including its persisted draft.
     // A delayed receipt must never erase text written after that submission.
     if (detail?['id'] == session && draft.text == submitted) {
@@ -1604,6 +1619,111 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       cacheWrite = cacheWrite
           .catchError((_) {})
           .then((_) => storage.write(key: draftKey, value: snapshot));
+    }
+  }
+
+  final uncertainDrafts = <String, ({String text, List<String> attachments})>{};
+
+  Future<void> acknowledgeDraft(
+    String session,
+    String text,
+    List<String> ids,
+    Json receipt,
+    int token,
+  ) async {
+    final id = receipt['id'] as String;
+    uncertainDrafts.remove(session);
+    for (final attachment in ids) {
+      final preview = widget.api.attachmentPreviews[attachment];
+      if (preview != null && preview['session'] == session) {
+        preview['session'] = id;
+      }
+    }
+    pendingMessages.move(session, id);
+    pendingMessages.update(
+      id,
+      session.substring(6),
+      'sent',
+      turnId: receipt['turnId'] as String?,
+    );
+    if (!mounted) return;
+    consumeSubmittedDraft(session, text, session.substring(6));
+    if (token != generation) return;
+    final remainingDraft = draft.text;
+    await open(id);
+    if (mounted && detail?['id'] == id && remainingDraft != text) {
+      draft.text = remainingDraft;
+      persistDraft();
+    }
+    await load();
+  }
+
+  void rejectDraft(
+    String session,
+    String request,
+    String? message,
+    Object? code,
+    Object? attachmentId,
+  ) {
+    final reason = message?.trim() ?? '';
+    // Legacy bridge errors may contain local paths, subprocess arguments or stderr.
+    final technical =
+        reason.length > 160 ||
+        RegExp(
+          r'[\r\n/\\]|ffmpeg|command failed',
+          caseSensitive: false,
+        ).hasMatch(reason);
+    pendingMessages.failFirstSend(
+      session,
+      request,
+      reason.isEmpty || technical ? '请检查附件或电脑服务后重试。' : reason,
+      invalidImage:
+          code == 'session_create_invalid_image' && attachmentId is String
+          ? attachmentId
+          : null,
+    );
+  }
+
+  Future<void> reconcileDraft(String session, int token) async {
+    final pending = uncertainDrafts[session];
+    if (pending == null) return;
+    final request = session.substring(6);
+    final dynamic reply;
+    try {
+      reply = await widget.api.call('/sessions/requests/$request');
+    } on ApiException catch (e) {
+      if (mounted && token == generation && e.status == 401) failure(e);
+      return;
+    } catch (_) {
+      // Older servers and interrupted reads leave the write outcome unknown.
+      return;
+    }
+    if (!mounted || !active || reply is! Map) return;
+    if (reply['state'] == 'done' && reply['result'] is Map) {
+      final receipt = Map<String, dynamic>.from(reply['result']);
+      if (receipt['id'] is String && (receipt['id'] as String).isNotEmpty) {
+        await acknowledgeDraft(
+          session,
+          pending.text,
+          pending.attachments,
+          receipt,
+          token,
+        );
+      }
+    } else if (reply['state'] == 'failed') {
+      uncertainDrafts.remove(session);
+      rejectDraft(
+        session,
+        request,
+        reply['error'] is String ? reply['error'] : null,
+        reply['code'],
+        reply['attachmentId'],
+      );
+      if (token == generation) {
+        setState(() {
+          detail = mergeHistory(detail!);
+        });
+      }
     }
   }
 
@@ -1625,6 +1745,9 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       if (retryOpenId != null) {
         await open(retryOpenId!);
         return;
+      }
+      if (current?['draft'] == true && token == generation && !busy) {
+        await reconcileDraft(current!['id'], token);
       }
       if (current != null && current['draft'] != true) {
         final d = await widget.api.call(
@@ -1653,8 +1776,6 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   }
 
   final pendingMessages = PendingMessages();
-  String? uncertainSendKey;
-  String? uncertainSendId;
   Future<bool> control(String action, [Json extra = const {}]) async {
     final d = detail;
     if (d == null ||
@@ -1665,22 +1786,24 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       return false;
     }
     final token = generation;
-    final fingerprint = action == 'send'
-        ? jsonEncode({'session': d['id'], ...extra})
-        : '';
-    final operationId = action == 'send' && uncertainSendKey == fingerprint
-        ? uncertainSendId!
-        : requestId();
+    final session = d['id'] as String;
+    final text = '${extra['text'] ?? ''}';
+    final attachments = List<String>.from(extra['attachments'] ?? []);
+    final retryId = action == 'send'
+        ? pendingMessages.unknownRequest(session, text, attachments)
+        : null;
+    final operationId = retryId ?? requestId();
     if (action == 'send') {
+      markSubmittedUploads(operationId, attachments);
       pendingMessages.add(
-        d['id'],
+        session,
         operationId,
-        '${extra['text'] ?? ''}',
+        text,
         d['events'] ?? [],
-        attachments: (extra['attachments'] as List? ?? []).isNotEmpty,
-        attachmentIds: List<String>.from(extra['attachments'] ?? []),
+        attachments: attachments.isNotEmpty,
+        attachmentIds: attachments,
         media: [
-          for (final id in extra['attachments'] as List? ?? [])
+          for (final id in attachments)
             if (widget.api.attachmentPreviews[id]?['session'] == d['id'])
               'gcollie-upload:$id',
         ],
@@ -1702,20 +1825,24 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         ...extra,
       });
       if (action == 'send') {
+        final alreadyConfirmed = pendingMessages.isAcknowledged(
+          session,
+          operationId,
+        );
         pendingMessages.update(
-          d['id'],
+          session,
           operationId,
           'sent',
           turnId: receipt is Map ? receipt['turnId'] as String? : null,
         );
-        if (mounted) consumeSubmittedDraft(d['id'], '${extra['text'] ?? ''}');
+        if (mounted && !alreadyConfirmed) {
+          consumeSubmittedDraft(session, text, operationId);
+        }
       }
       if (mounted && token == generation) {
         setState(() {
           if (action == 'send') {
             detail = mergeHistory(detail!);
-            uncertainSendKey = null;
-            uncertainSendId = null;
           }
           busy = false;
         });
@@ -1748,19 +1875,22 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       }
       return true;
     } catch (e) {
+      // History may confirm the write while its HTTP response is still in flight.
+      if (action == 'send' &&
+          pendingMessages.isAcknowledged(session, operationId)) {
+        return true;
+      }
+      final uncertain = operationResultUnknown(e);
+      if (action == 'send') {
+        pendingMessages.update(
+          session,
+          operationId,
+          uncertain || retryId != null ? 'unknown' : 'failed',
+        );
+      }
       if (mounted && token == generation) {
-        final uncertain = operationResultUnknown(e);
-        if (action == 'send') {
-          pendingMessages.update(
-            d['id'],
-            operationId,
-            uncertain ? 'unknown' : 'failed',
-          );
-          setState(() => detail = mergeHistory(detail!));
-        }
+        if (action == 'send') setState(() => detail = mergeHistory(detail!));
         if (action == 'send' && uncertain) {
-          uncertainSendKey = fingerprint;
-          uncertainSendId = operationId;
           setState(() => error = '发送结果待确认，正在同步电脑状态；请勿重复发送');
         } else {
           failure(e);
@@ -1798,13 +1928,26 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   }
 
   Future<bool> sendDraft(List<String> ids) async {
-    final d = detail!;
-    if (busy || !online || (draft.text.trim().isEmpty && ids.isEmpty)) {
+    final d = detail;
+    if (d == null ||
+        d['draft'] != true ||
+        busy ||
+        loading ||
+        !active ||
+        !online ||
+        effectiveRole == 'view' ||
+        uncertainDrafts.containsKey(d['id']) ||
+        ids.contains(
+          pendingMessages.sessions[d['id']]?.lastOrNull?['invalidImage'],
+        ) ||
+        (draft.text.trim().isEmpty && ids.isEmpty)) {
       return false;
     }
     final text = draft.text;
     final token = generation;
-    final operationId = (d['id'] as String).substring(6);
+    final session = d['id'] as String;
+    final operationId = session.substring(6);
+    markSubmittedUploads(operationId, ids);
     pendingMessages.add(
       d['id'],
       operationId,
@@ -1825,50 +1968,42 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
     });
     bottom();
     try {
-      final result = await widget.api.call('/sessions', {
-        'agent': d['agent'],
-        'cwd': d['cwd'],
-        'prompt': text,
-        'draftId': d['id'],
-        'attachments': ids,
-        'requestId': (d['id'] as String).substring(6),
-      });
-      for (final id in ids) {
-        final preview = widget.api.attachmentPreviews[id];
-        if (preview != null && preview['session'] == d['id']) {
-          preview['session'] = result['id'];
+      final Json receipt;
+      try {
+        final result = await widget.api.call('/sessions', {
+          'agent': d['agent'],
+          'cwd': d['cwd'],
+          'prompt': text,
+          'draftId': session,
+          'attachments': ids,
+          'requestId': operationId,
+        });
+        if (result is! Map ||
+            result['id'] is! String ||
+            (result['id'] as String).isEmpty) {
+          throw ApiException('电脑返回了无效响应，请检查服务地址');
         }
-      }
-      pendingMessages.move(d['id'], result['id']);
-      pendingMessages.update(
-        result['id'],
-        operationId,
-        'sent',
-        turnId: result['turnId'] as String?,
-      );
-      if (mounted && token == generation) {
-        // Consume the acknowledged first message before open() saves the
-        // outgoing draft, otherwise it is restored by the next new session.
-        consumeSubmittedDraft(d['id'], text);
-        final remainingDraft = draft.text;
-        await open(result['id']);
-        if (mounted &&
-            detail?['id'] == result['id'] &&
-            remainingDraft != text) {
-          draft.text = remainingDraft;
-          persistDraft();
+        receipt = Map<String, dynamic>.from(result);
+      } catch (e) {
+        final failed =
+            e is ApiException &&
+            (e.outcome == 'failed' || e.status == 401 || e.status == 403);
+        if (failed) {
+          rejectDraft(session, operationId, e.message, e.code, e.attachmentId);
+        } else {
+          uncertainDrafts[session] = (text: text, attachments: List.of(ids));
+          pendingMessages.update(session, operationId, 'unknown');
         }
-        await load();
+        if (mounted && token == generation) {
+          setState(() => detail = mergeHistory(detail!));
+          if (e is ApiException && (e.status == 401 || e.status == 403)) {
+            failure(e);
+          }
+        }
+        return false;
       }
+      await acknowledgeDraft(session, text, ids, receipt, token);
       return true;
-    } catch (e) {
-      pendingMessages.update(d['id'], operationId, 'unknown');
-      if (mounted && token == generation) {
-        setState(() => detail = mergeHistory(detail!));
-      }
-      // Keep the draft and its request id: an uncertain submission must not replay.
-      if (mounted && token == generation) setState(() => error = '$e');
-      return false;
     } finally {
       if (mounted) setState(() => busy = false);
     }
@@ -1935,14 +2070,14 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final d = detail;
-    final enabled =
+    final attachmentEnabled =
         d != null &&
-        !busy &&
-        !loading &&
-        active &&
         (d['draft'] == true
-            ? online && effectiveRole != 'view'
+            ? online &&
+                  effectiveRole != 'view' &&
+                  !uncertainDrafts.containsKey(d['id'])
             : canControl(d, effectiveRole, online));
+    final enabled = attachmentEnabled && !busy && !loading && active;
     void home() {
       persistDraft();
       draftTimer?.cancel();
@@ -1966,6 +2101,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
       },
       child: CollieShell(
         api: widget.api,
+        uploads: composerUploads,
         connecting: reconnecting || (refreshingConnection && !online),
         reconnecting: reconnecting,
         onReconnect: reconnect,
@@ -2017,10 +2153,7 @@ class _WorkspaceState extends State<Workspace> with WidgetsBindingObserver {
         loading: loading,
         busy: busy,
         enabled: enabled,
-        attachmentEnabled: d != null &&
-            (d['draft'] == true
-                ? online && effectiveRole != 'view'
-                : canControl(d, effectiveRole, online)),
+        attachmentEnabled: attachmentEnabled,
         running: d != null && isActive(d),
         sessions: sessions,
         projects: projects,

@@ -10,10 +10,10 @@ import {videoPoster} from './video-poster.js';
 import {DiagnosticStore,installDiagnostics} from './diagnostic-store.js';
 import {installNetworkTest} from './network-test.js';
 import {Schedules} from './schedules.js';
-import {prepareAgentMedia} from './claude-media.js';
+import {InvalidImageAttachment,prepareAgentMedia} from './claude-media.js';
 import {FolderProjects,prepareFolderThread} from './projects.js';
 import {ClaudeBridge} from './claude.js';
-import {SessionCreation,sessionTitle} from './session-create.js';
+import {SessionCreation,SessionCreateError,createNotSubmitted,sessionTitle} from './session-create.js';
 import {attachmentInput} from './attachments.js';
 import {references,compactReferences,compactDetail,resourceFile,installPreviews} from './resources.js';
 import{UsageService,ResetService,exhaustedCodexWindows,readQuotaWithFallback,accountRevision}from'./usage.js';
@@ -31,6 +31,7 @@ import {DesktopBridge} from './desktop.js';
 import {CodexAppServerBridge} from './codex-app-server.js';
 import {codexBackend} from './codex-control.js';
 import {CodexBridge} from './codex.js';
+import {historyPage} from './history.js';
 import {listLocal,detailLocal,invalidateLocal} from './local.js';
 import express from 'express';
 
@@ -60,13 +61,32 @@ const hermes=new HermesBridge(dir,broadcast);
 const sessionDeletion=new SessionDeletion(dir,hermesDeletionProvider(()=>hermes.active()));
 const hermesMisses=new Map<string,number>();
 const folderProjects=new FolderProjects(dir);
-const desktopCreator=new DesktopCreator(dir,undefined,async b=>{
+const desktopCreator=new DesktopCreator(dir,undefined,async(b,checkpoint)=>{
  if(codexBackendMode==='app-server')return nativeControl.create({...b,cwd:b.cwd||homedir()});
- const cwd=b.cwd?await folderProjects.folder(b.cwd):'';
- const threadId=await prepareFolderThread(dir,cwd,b.title||'新会话');
- if(cwd)await folderProjects.assign(threadId,cwd);
- await desktopCreator.load(threadId);
- let lastError:unknown;const deadline=Date.now()+8000;for(let attempt=0;attempt<20;attempt++){try{await desktop.follow(threadId);lastError=undefined;break}catch(e){lastError=e;if(Date.now()>=deadline||!/no-client-found|未收到桌面快照/.test(String(e)))throw e;await new Promise(r=>setTimeout(r,250))}}if(lastError)throw lastError;
+ let cwd:string;
+ try{
+  // Resolve the desktop tools before any session is prepared.
+  const status=await desktopCreator.status();
+  if(!status.available)throw Error(status.reason);
+  cwd=b.cwd?await folderProjects.folder(b.cwd):'';
+ }catch(e){throw createNotSubmitted(e,'session_create_desktop_prepare')}
+ const threadId=checkpoint.prepared?.threadId??await prepareFolderThread(dir,cwd,b.title||'新会话');
+ if(!checkpoint.prepared)checkpoint.savePrepared(threadId);
+ try{
+  if(cwd)await folderProjects.assign(threadId,cwd);
+  await desktopCreator.load(threadId);
+  let lastError:unknown;
+  const deadline=Date.now()+8000;
+  for(let attempt=0;attempt<20;attempt++){
+   try{await desktop.follow(threadId);lastError=undefined;break}
+   catch(e){
+    lastError=e;
+    if(Date.now()>=deadline||!/no-client-found|未收到桌面快照/.test(String(e)))throw e;
+    await new Promise(r=>setTimeout(r,250));
+   }
+  }
+  if(lastError)throw lastError;
+ }catch(e){throw createNotSubmitted(e,'session_create_desktop_prepare')}
  const sent=await desktop.action(threadId,{action:'send',text:b.prompt,requestId:b.requestId,mediaPrepared:true,attachments:[]});
  return{threadId,turnId:sent.turnId};
 });const shares=new ShareStore(dir);
@@ -77,7 +97,7 @@ notifications.restore(async(id:string)=>{const d=await detailLocal(id);if(d.arch
 process.once('SIGTERM',()=>{embeddedNetwork.close();notifications.close();claude.close();hermes.close();desktop.close();codex.close();process.exit(0)});process.once('SIGINT',()=>{embeddedNetwork.close();notifications.close();claude.close();hermes.close();desktop.close();codex.close();process.exit(0)});
 app.use((req,res,next)=>{let path=req.path;try{path=decodeURIComponent(path)}catch{res.sendStatus(400);return}if(/(^|\/)\.data(\/|$)/.test(path)||/(^|\/)\.env[^/]*(\/|$)/.test(path)){res.sendStatus(404);return}next()});
 app.get('/share/:key',(req,res)=>{const s=shares.get(req.params.key);res.set({'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Robots-Tag':'noindex, nofollow','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'"});if(!s){res.status(404).send('分享已撤销、过期或不存在');return}res.type('html').send(shareHTML(s))});
-const resourceDetail=(id:string)=>id.startsWith('claude:')?claude.detail(id.slice(7),{all:true}):detailLocal(id,{all:true});
+const resourceDetail=(id:string)=>sessionHistory(id,{all:true});
 const issuePreview=installPreviews(app,resourceDetail,id=>id==='local-owner'||auth.list().some(d=>d.id===id));
 app.use('/api/attachments',express.json({limit:'15mb'}));
 app.use('/api/diagnostics/phone',express.json({limit:'512kb'}));
@@ -124,30 +144,72 @@ app.post('/api/push/unsubscribe',(_req,res)=>{if(res.locals.device)notifications
 app.post('/api/push/test',async(_req,res)=>{const sent=res.locals.device?await notifications.test(res.locals.device.id):false;res.json({sent})});
 app.get('/healthz',(_req,res)=>res.json({ok:true,version:releasePackage.version}));
 const draftsPath=join(dir,'created-sessions.json');let created:Record<string,any>={};try{created=JSON.parse(await readFile(draftsPath,'utf8'))}catch{}
-async function detailWithCreated(id:string){try{return await detailLocal(id)}catch(e){if(!created[id])throw e;return created[id]}}
+type ReadOptions={all?:boolean;before?:string};
+function memoryHistory(detail:any,options:ReadOptions){
+ return options.all||!options.before?detail:{...detail,...historyPage(detail.events||[],options.before)};
+}
+async function detailWithCreated(id:string,options:ReadOptions={}){
+ try{return await detailLocal(id,options)}catch(e){
+  if(!Object.hasOwn(created,id)||created[id].id!==id)throw e;
+  return memoryHistory(created[id],options);
+ }
+}
+async function sessionHistory(id:string,options:ReadOptions={}){
+ if(id.startsWith('claude:'))return claude.detail(id.slice(7),options);
+ if(id.startsWith('managed:')){
+  const legacy=codex.get(id);
+  if(!legacy.readOnly)return memoryHistory(legacy,options);
+  id='codex:'+legacy.nativeId;
+ }
+ return detailWithCreated(id,options);
+}
 const sessionCreation=new SessionCreation(dir);
+app.get('/api/sessions/requests/:requestId',(req,res)=>{
+ res.setHeader('Cache-Control','no-store');
+ try{res.json(sessionCreation.receipt(attachmentDevice(res),req.params.requestId))}
+ catch(e){res.status(400).json({error:(e as Error).message})}
+});
 app.post('/api/sessions',async(req,res)=>{try{
- const b=req.body;if(!['Hermes','Codex','Claude Code'].includes(b.agent))throw Error('未知助手');
- const local=await listLocal(),cwd=typeof b.cwd==='string'?b.cwd.trim():'';
- const project=cwd?[...local.projects,...await folderProjects.list()].find((p:any)=>p.path===cwd):undefined;
- if(cwd&&!project)throw Error('请选择已接入的项目目录');
- if(b.title!==undefined&&(typeof b.title!=='string'||b.title.length>100))throw Error('会话名称不能超过 100 字');
- const modern=typeof b.draftId==='string';
- if(modern&&b.draftId!=='draft:'+b.requestId)throw Error('无效新会话草稿');
- if(typeof b.prompt!=='string'&&modern)throw Error('请输入首条消息');
- const device=attachmentDevice(res);
+ const b=req.body??{},device=attachmentDevice(res);
  const result=await sessionCreation.run(device,b.requestId,async()=>{
-  const files=modern?attachments.resolve(b.attachments,device,b.draftId):[];
-  // The desktop create tool accepts a prompt string; explicitly reference selected files.
-  const prompt=modern?attachmentInput(b.prompt,files.map(f=>({...f,image:false}))).map(i=>i.text).join('\n'):b.prompt;
-  const title=typeof b.title==='string'&&b.title.trim()?b.title.trim():sessionTitle(b.prompt||files[0]?.name||'');
+  let fields;
+  try{
+   if(!['Hermes','Codex','Claude Code'].includes(b.agent))throw Error('未知助手');
+   const cwd=typeof b.cwd==='string'?b.cwd.trim():'';
+   const project=cwd?[...(await listLocal()).projects,...await folderProjects.list()].find((p:any)=>p.path===cwd):undefined;
+   if(cwd&&!project)throw Error('请选择已接入的项目目录');
+   if(b.title!==undefined&&(typeof b.title!=='string'||b.title.length>100))throw Error('会话名称不能超过 100 字');
+   const modern=typeof b.draftId==='string';
+   if(modern&&b.draftId!=='draft:'+b.requestId)throw Error('无效新会话草稿');
+   if(modern&&typeof b.prompt!=='string')throw Error('请输入首条消息');
+   const files=modern?attachments.resolve(b.attachments,device,b.draftId):[];
+   // The desktop create path uses a prompt string with local file references.
+   const prompt=modern?attachmentInput(b.prompt,files.map(f=>({...f,image:false}))).map(i=>i.text).join('\n'):b.prompt;
+   const title=typeof b.title==='string'&&b.title.trim()?b.title.trim():sessionTitle(b.prompt||files[0]?.name||'');
+   fields={cwd,project,modern,files,prompt,title};
+  }catch(e){throw createNotSubmitted(e,'session_create_validation')}
+  const {cwd,project,modern,files,prompt,title}=fields;
   if(b.agent==='Claude Code'){
    const r=await claude.create(title,cwd||homedir(),modern?b.prompt:prompt,files);
    if(modern)attachments.rebind(b.attachments||[],device,b.draftId,r.id);
    broadcast();return r;
   }
   if(b.agent==='Codex'){
-   const prepared=await prepareAgentMedia(modern?b.prompt:prompt,files);const codexPrompt=attachmentInput(prepared.text,prepared.files.map(f=>({...f,image:false})),64000).map(i=>i.text).join('\n');if(!await desktopControlEnabled())throw Error('Codex 控制尚未启用');const r=codexBackendMode==='app-server'?await nativeControl.create({...b,title,prompt:prepared.text,attachments:prepared.files,mediaPrepared:true,cwd:cwd||homedir()}):await desktopCreator.create({...b,title,prompt:codexPrompt,cwd,folderSelected:await folderProjects.contains(cwd)});
+   if(!await desktopControlEnabled())throw createNotSubmitted(Error('Codex 控制尚未启用'),'session_create_control_disabled');
+   let prepared, desktopPrompt, folderSelected;
+   try{
+    prepared=await prepareAgentMedia(modern?b.prompt:prompt,files);
+    if(codexBackendMode==='desktop'){
+     desktopPrompt=attachmentInput(prepared.text,prepared.files.map(f=>({...f,image:false})),64000).map(i=>i.text).join('\n');
+     folderSelected=await folderProjects.contains(cwd);
+    }
+   }catch(e){
+    if(e instanceof InvalidImageAttachment)throw new SessionCreateError(e.message,'failed','session_create_invalid_image',e.attachmentId);
+    throw createNotSubmitted(e,'session_create_prepare');
+   }
+   const r=codexBackendMode==='app-server'
+    ?await nativeControl.create({...b,title,prompt:prepared.text,attachments:prepared.files,mediaPrepared:true,cwd:cwd||homedir()})
+    :await desktopCreator.create({...b,title,prompt:desktopPrompt,cwd,folderSelected});
    if(codexBackendMode==='app-server'){const id='codex:'+r.threadId;created[id]={id,nativeId:r.threadId,agent:'Codex',title,cwd:cwd||homedir(),project:project?.name||'无项目',projectPath:cwd||null,updatedAt:Date.now(),archived:false,events:[],historyLimit:200,readOnly:true};await writeFile(draftsPath,JSON.stringify(created),{mode:0o600});r.id=id;if(cwd&&await folderProjects.contains(cwd))await folderProjects.assign(r.threadId,cwd);}
    if(modern)attachments.rebind(b.attachments||[],device,b.draftId,r.id);
    invalidateLocal();broadcast();return r;
@@ -164,7 +226,10 @@ app.post('/api/sessions',async(req,res)=>{try{
   if(modern){attachments.rebind(b.attachments||[],device,b.draftId,id);await hermes.action(nativeId,{action:'send',text:b.prompt,attachments:files,requestId:b.requestId+'-first'})}
   broadcast();return{id};
  });res.json(result);
-}catch(e){res.status(409).json({error:(e as Error).message})}});
+}catch(e){
+ const failure=e instanceof SessionCreateError?e:new SessionCreateError((e as Error).message,'unknown');
+ res.status(409).json({error:failure.message,code:failure.code,outcome:failure.outcome,attachmentId:failure.attachmentId});
+}});
 
 function shareLink(key:string){const ip=Object.values(networkInterfaces()).flat().find(n=>n?.family==='IPv4'&&!n.internal)?.address;return(process.env.ORBIT_PUBLIC_URL||embeddedNetwork.publicStatus().address||`http://${ip||'127.0.0.1'}:${port}`).replace(/\/$/,'')+'/share/'+key}
 app.get('/api/share/:id',(req,res)=>{const r=shares.latest(req.params.id);res.json(r?{kind:'orbit',...r,url:shareLink(r.key)}:null)});
@@ -178,8 +243,8 @@ app.post('/api/hermes/:id',async(req,res)=>{try{if(req.body.action==='attach'){c
 app.post('/api/desktop/:id',async(req,res)=>{try{if(req.body.action==='attach'){await desktop.follow(req.params.id);res.json(desktop.view(req.params.id));return}if(!await desktopControlEnabled())throw Error('Codex 控制尚未启用');res.json(await desktop.action(req.params.id,{...req.body,mode:codexOptions.get(req.params.id),skills:await resolveSkills(dir,(req.body.attachments||[]).filter((id:any)=>typeof id==='string'&&id.startsWith('skill:')).map((id:string)=>id.slice(6))),attachments:attachments.resolve((req.body.attachments||[]).filter((id:any)=>typeof id!=='string'||!id.startsWith('skill:')),attachmentDevice(res),'codex:'+req.params.id)}))}catch(e){if(req.body.action==='send'){try{const snapshot=await Promise.race([usage.readAccount(true),new Promise<never>((_,reject)=>{const t=setTimeout(()=>reject(Error('额度补查超时')),1500);t.unref()})]);const windows=exhaustedCodexWindows(snapshot.codexAccount);if(windows.length){res.status(429).json({code:'codex_quota_exhausted',error:windows.some((w:any)=>w.windowMinutes===300)?'Codex 5 小时额度已用完':'Codex 每周额度已用完',windows});return}}catch{}}res.status(409).json({code:/执行状态尚未同步|未收到桌面快照/.test(String(e))?'desktop_not_synced':/超时|结果未知/.test(String(e))?'desktop_result_unknown':/已提交|不重复/.test(String(e))?'desktop_already_submitted':'desktop_conflict',error:(e as Error).message})}});
 app.post('/api/control/:id',async(req,res)=>{try{res.json(await codex.action(req.params.id,req.body))}catch(e){res.status(409).json({error:(e as Error).message})}});
 app.get('/api/local',async(_req,res)=>{try{const d=structuredClone(await listLocal());for(const p of await folderProjects.list()){if(!d.projects.some((v:any)=>v.path===p.path))d.projects.push(p)}const cs=(await claude.list()).map(({_path,...s}:any)=>s);d.sessions=[...cs,...d.sessions];for(const s of cs){if(!s.projectPath)continue;const p=d.projects.find((p:any)=>p.path===s.projectPath);if(p){if(!p.agents.includes('Claude Code'))p.agents.push('Claude Code')}else d.projects.push({path:s.projectPath,name:s.project,agents:['Claude Code'],sessions:cs.filter((v:any)=>v.projectPath===s.projectPath).length})}const managed=codex.list().filter(s=>!s.readOnly||!d.sessions.some((v:any)=>v.nativeId===s.nativeId));const ids=new Set(managed.map(s=>s.nativeId));res.json({...d,sessions:[...Object.values(created).filter((s:any)=>!d.sessions.some((v:any)=>v.id===s.id)),...managed,...d.sessions.filter((s:any)=>!ids.has(s.nativeId))].sort((a:any,b:any)=>b.updatedAt-a.updatedAt)})}catch{res.status(503).json({error:'本地会话读取失败'})}});
-app.get('/api/local/:id/history',async(req,res)=>{try{const before=typeof req.query.before==='string'?req.query.before:undefined;const d=req.params.id.startsWith('claude:')?await claude.detail(req.params.id.slice(7),{before}):await detailLocal(req.params.id,{before});res.json(req.header('x-gcollie-media')==='references'?compactDetail(d):d)}catch(e){res.status(400).json({error:(e as Error).message})}});
-app.get('/api/local/:id',async(req,res)=>{const sendJson=res.json.bind(res);if(req.header('x-gcollie-media')==='references')res.json=(value:any)=>sendJson(compactDetail(value));try{let id=req.params.id;if(id.startsWith('claude:')){res.json(await claude.detail(id.slice(7)));return}if(id.startsWith('managed:')){const legacy=codex.get(id);if(!legacy.readOnly){res.json(legacy);return}id='codex:'+legacy.nativeId}let d;try{d=await detailLocal(id)}catch(e){if(!created[id])throw e;d=created[id]}if(!d.archived)notifications.watch(id,d.title,async()=>{if(id.startsWith('hermes:'))return hermes.view(d.nativeId);return desktop.view(d.nativeId)});if(d.archived){res.json({...d,desktopLive:false,readOnly:true,connectionState:'archived',desktopError:'此会话已归档，请先在电脑取消归档后继续'});return}if(id.startsWith('hermes:')){if(Date.now()<(hermesMisses.get(d.nativeId)||0)){res.json({...d,connectionState:'notLoaded',desktopError:'历史会话尚未连接，点击重新连接'});return}try{const live=await hermes.view(d.nativeId);res.json(mergeHermesDetail(d,live));hermesMisses.delete(d.nativeId)}catch(e){hermesMisses.set(d.nativeId,Date.now()+10000);res.json({...d,desktopError:(e as Error).message})}return}if(!id.startsWith('codex:')){res.json(d);return}const enabled=await desktopControlEnabled();let desktopError:string|undefined;if(enabled&&(!desktopMisses.has(d.nativeId)||Date.now()>(desktopMisses.get(d.nativeId)||0))){try{await desktop.follow(d.nativeId);desktopMisses.delete(d.nativeId)}catch{desktopMisses.set(d.nativeId,Date.now()+15000);desktopError=codexBackendMode==='app-server'?'Codex 终端后端暂不可达，请重新连接':'桌面未加载此会话或暂时不可达，请在桌面打开该聊天后重试'}}const live=desktop.view(d.nativeId);if(codexBackendMode==='app-server'&&enabled&&!live.desktopLive&&!desktopError)desktopError='此会话尚未连接，点击重新连接';res.json({...d,...live,sendReceipts:desktop.receipts(d.nativeId),desktopControl:enabled,desktopError})}catch{res.status(404).json({error:'会话不存在或无法读取'})}});
+app.get('/api/local/:id/history',async(req,res)=>{try{const before=typeof req.query.before==='string'?req.query.before:undefined;const d=await sessionHistory(req.params.id,{before});res.json(req.header('x-gcollie-media')==='references'?compactDetail(d):d)}catch(e){res.status(400).json({error:(e as Error).message})}});
+app.get('/api/local/:id',async(req,res)=>{const sendJson=res.json.bind(res);if(req.header('x-gcollie-media')==='references')res.json=(value:any)=>sendJson(compactDetail(value));try{const d=await sessionHistory(req.params.id),id=d.id;if(id.startsWith('claude:')||id.startsWith('managed:')){res.json(d);return}if(!d.archived)notifications.watch(id,d.title,async()=>{if(id.startsWith('hermes:'))return hermes.view(d.nativeId);return desktop.view(d.nativeId)});if(d.archived){res.json({...d,desktopLive:false,readOnly:true,connectionState:'archived',desktopError:'此会话已归档，请先在电脑取消归档后继续'});return}if(id.startsWith('hermes:')){if(Date.now()<(hermesMisses.get(d.nativeId)||0)){res.json({...d,connectionState:'notLoaded',desktopError:'历史会话尚未连接，点击重新连接'});return}try{const live=await hermes.view(d.nativeId);res.json(mergeHermesDetail(d,live));hermesMisses.delete(d.nativeId)}catch(e){hermesMisses.set(d.nativeId,Date.now()+10000);res.json({...d,desktopError:(e as Error).message})}return}if(!id.startsWith('codex:')){res.json(d);return}const enabled=await desktopControlEnabled();let desktopError:string|undefined;if(enabled&&(!desktopMisses.has(d.nativeId)||Date.now()>(desktopMisses.get(d.nativeId)||0))){try{await desktop.follow(d.nativeId);desktopMisses.delete(d.nativeId)}catch{desktopMisses.set(d.nativeId,Date.now()+15000);desktopError=codexBackendMode==='app-server'?'Codex 终端后端暂不可达，请重新连接':'桌面未加载此会话或暂时不可达，请在桌面打开该聊天后重试'}}const live=desktop.view(d.nativeId);if(codexBackendMode==='app-server'&&enabled&&!live.desktopLive&&!desktopError)desktopError='此会话尚未连接，点击重新连接';res.json({...d,...live,sendReceipts:desktop.receipts(d.nativeId),desktopControl:enabled,desktopError})}catch{res.status(404).json({error:'会话不存在或无法读取'})}});
 app.get('/api/tasks',(_req,res)=>res.json({tasks,revision,serverTime:Date.now()}));
 app.get('/api/events',(req,res)=>{res.setHeader('Content-Type','text/event-stream');res.setHeader('Connection','keep-alive');res.flushHeaders();clients.add(res);res.write(`event: refresh\ndata: {}\n\n`);const timer=setInterval(()=>{if(res.locals.device&&!auth.list().some(d=>d.id===res.locals.device.id)){res.end();return}res.write(': heartbeat\n\n')},15000);req.on('close',()=>{clearInterval(timer);clients.delete(res)})});
 let mutation=Promise.resolve();

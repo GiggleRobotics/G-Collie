@@ -1,7 +1,11 @@
 import {previewPage,pdfPreview} from './preview-page.js';
 import {createHash,randomBytes} from 'node:crypto';
-import {realpath,stat,readFile} from 'node:fs/promises';
-import {resolve,basename,extname,dirname,relative} from 'node:path';
+import {realpath,stat,readFile,open} from 'node:fs/promises';
+import {constants} from 'node:fs';
+import {execFile} from 'node:child_process';
+import {ffmpeg} from './claude-media.js';
+import os from 'node:os';
+import {resolve,basename,extname,dirname,relative,isAbsolute} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import type {Express} from 'express';
 import mammoth from 'mammoth';
@@ -26,6 +30,62 @@ export function references(d:any):Resource[]{
 // Compact responses keep image bytes behind the existing session-scoped resource checks.
 export function compactReferences(d:any){return references(d).map(r=>r.ref.startsWith('data:')?{...r,ref:'gcollie-resource:'+r.id}:r)}
 export function compactDetail(d:any){if(!d?.id||!Array.isArray(d.events))return d;const refs=new Map(references(d).filter(r=>r.ref.startsWith('data:')).map(r=>[r.ref,'gcollie-resource:'+r.id]));return{...d,events:d.events.map((e:any)=>({...e,media:(e.media||[]).map((ref:string)=>refs.get(ref)||ref)}))}}
+const sensitivePath=/(^|\/)(access-token|credentials|auth|settings|secrets)(\.|\/|$)/i;
+const rasterFormats=new Map([
+ ['.png',{format:'png_pipe',mime:'image/png'}],
+ ['.jpg',{format:'jpeg_pipe',mime:'image/jpeg'}],
+ ['.jpeg',{format:'jpeg_pipe',mime:'image/jpeg'}],
+ ['.gif',{format:'gif_pipe',mime:'image/gif'}],
+ ['.webp',{format:'webp_pipe',mime:'image/webp'}],
+]);
+
+function assistantReferencesImage(events:any[],ref:string){
+ return events.some(e=>{
+  if(e.role!=='assistant')return false;
+  if(Array.isArray(e.media)&&e.media.includes(ref))return true;
+  if(typeof e.text!=='string'||!e.text.includes(ref))return false;
+  let embedded=false;
+  marked.walkTokens(marked.lexer(e.text),token=>{if(token.type==='image'&&token.href===ref)embedded=true});
+  return embedded;
+ });
+}
+
+async function packagedSessionImage(d:any,r:Resource,ref:string,path:string,root:string){
+ const denied=()=>new Error('此文件不允许预览');
+ const extension=extname(path).toLowerCase(),raster=rasterFormats.get(extension);
+ const parts=[...dirname(root).split('/'),...relative(root,path).split('/')];
+ if(!raster||!path.startsWith(root+'/')||
+    resolve(d.cwd,ref)!==path||ref.split('/').includes('..')||
+    parts.some(part=>part.startsWith('.'))||sensitivePath.test(path)||!assistantReferencesImage(d.events,r.ref))throw denied();
+
+ // Validate and return a snapshot of the same file, including when a parent
+ // directory is replaced between realpath and open. Linux is the service host.
+ const file=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+ try{
+  if(await realpath('/proc/self/fd/'+file.fd)!==path)throw denied();
+  const st=await file.stat();
+  if(!st.isFile()||st.nlink!==1||st.size===0||st.size>50*1024*1024)throw denied();
+  const data=Buffer.alloc(st.size);
+  let offset=0;
+  while(offset<data.length){
+   const {bytesRead}=await file.read(data,offset,data.length-offset,offset);
+   if(!bytesRead)throw denied();
+   offset+=bytesRead;
+  }
+  // A forced raster decoder and pipe-only input cannot follow secondary files.
+  // A decoded RGB pixel proves this is an image, even if its suffix was forged.
+  await new Promise<void>((ok,fail)=>{
+   const child=execFile(ffmpeg(),['-hide_banner','-loglevel','error','-xerror','-nostdin','-protocol_whitelist','pipe',
+    '-f',raster.format,'-max_pixels','33554432','-threads','1','-i','pipe:0','-frames:v','1','-vf','scale=1:1',
+    '-pix_fmt','rgb24','-f','rawvideo','-threads','1','pipe:1'],{timeout:5000,maxBuffer:65536,encoding:'buffer'},
+    (err,pixel)=>err||pixel.length!==3?fail(denied()):ok());
+   child.stdin!.on('error',()=>fail(denied()));
+   child.stdin!.end(data);
+  });
+  return {...r,image:true,path:'',data,mime:raster.mime,size:data.length,mtime:st.mtimeMs,extension};
+ }finally{await file.close()}
+}
+
 export async function resourceFile(d:any,id:string){
  const r=references(d).find(r=>r.id===id);if(!r)throw Error('文件未被此会话引用');
  if(r.ref.startsWith('data:')){const m=r.ref.match(/^data:(image\/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/=]+)$/);if(!m||m[2].length>8*1024*1024)throw Error('图片格式或大小不支持');const data=Buffer.from(m[2],'base64');return {...r,path:'',data,mime:m[1],size:data.length,mtime:0,extension:'.png'};}
@@ -34,10 +94,24 @@ export async function resourceFile(d:any,id:string){
  if(fileUrl&&(fileUrl.hostname||/%(?:2f|5c)/i.test(fileUrl.pathname)))throw Error('不支持此文件地址');
  const ref=fileUrl?fileURLToPath(fileUrl):decodeURIComponent(r.ref).replace(/^sandbox:/,'');
  if(/^[a-z][a-z0-9+.-]*:/i.test(ref)||ref.includes('\0'))throw Error('不支持此文件地址');
- const path=await realpath(resolve(d.cwd||'.',ref));
+ const requestedPath=resolve(d.cwd||'.',ref);
+ const path=await realpath(requestedPath);
  // Block credentials and hidden configuration even when a generated link points at them.
  const uploads=resolve(process.env.GCOLLIE_DATA_DIR||resolve('.data'),'uploads');const storedAttachment=path.startsWith(uploads+'/')&&/\/uploads\/[a-f0-9-]{36}\/(content|media\/(image|frame-\d+)\.jpg)$/.test(path);
- if((!storedAttachment&&path.split('/').some(p=>p.startsWith('.')&&!['.codex','.hermes'].includes(p)))||/(^|\/)(access-token|credentials|auth|settings|secrets)(\.|\/|$)/i.test(path)||(!storedAttachment&&!extensions.has(extname(path).toLowerCase())))throw Error('此文件不允许预览');
+ const packageRoot=typeof d.cwd==='string'&&isAbsolute(d.cwd)?resolve(d.cwd,'.packaging'):null;
+ if(!storedAttachment&&packageRoot&&(requestedPath.startsWith(packageRoot+'/')||path.startsWith(packageRoot+'/'))){
+  return packagedSessionImage(d,r,ref,path,packageRoot);
+ }
+ // Only Hermes assistant attachments grant access to its native gallery.
+ const hermesImages=resolve(os.homedir(),'.media','images')+'/';
+ let hidden=path.split('/').some(p=>p.startsWith('.')&&!['.codex','.hermes'].includes(p));
+ if(requestedPath.startsWith(hermesImages)){
+  if(!path.startsWith(hermesImages)||!images.has(extname(path).toLowerCase())||
+     !images.has(extname(requestedPath).toLowerCase())||d.agent!=='Hermes'||
+     !d.events.some((event:any)=>event.role==='assistant'&&Array.isArray(event.media)&&event.media.includes(r.ref)))throw Error('此文件不允许预览');
+  hidden=[requestedPath,path].some(p=>p.slice(hermesImages.length).split('/').some(part=>part.startsWith('.')));
+ }
+ if((!storedAttachment&&hidden)||sensitivePath.test(path)||(!storedAttachment&&!extensions.has(extname(path).toLowerCase())))throw Error('此文件不允许预览');
  if(storedAttachment){const derived=/\/media\/(image|frame-\d+)\.jpg$/.test(path);const meta=JSON.parse(await readFile(derived?resolve(path,'..','..','meta.json'):resolve(path,'..','meta.json'),'utf8'));if(meta.session!==d.id||(derived&&!meta.image&&!meta.video))throw Error('附件不属于此会话');const extension=derived?'.jpg':extname(meta.name).toLowerCase();if(!extensions.has(extension))throw Error('附件格式不支持');const st=await stat(path);if(!st.isFile()||st.size>(derived?5:100)*1024*1024||(!derived&&st.size!==meta.size))throw Error('附件文件已变化');const image=derived||meta.image===true;return {...r,name:meta.name,image,path,data:undefined as Buffer|undefined,mime:derived?'image/jpeg':meta.mime,size:st.size,mtime:st.mtimeMs,extension};}
  const st=await stat(path);if(!st.isFile()||st.size>(['.mp4','.mov','.m4v','.webm'].includes(extname(path).toLowerCase())?100:50)*1024*1024)throw Error('文件不存在或超过 50 MB');
  return {...r,path,data:undefined as Buffer|undefined,mime:'',size:st.size,mtime:st.mtimeMs,extension:extname(path).toLowerCase()};
@@ -45,7 +119,8 @@ export async function resourceFile(d:any,id:string){
 async function markdownImage(document:string,ref:string,session:string){
  const decoded=decodeURIComponent(ref);if(/^[a-z][a-z0-9+.-]*:|^[/\\]|\0/i.test(decoded)||!images.has(extname(decoded).toLowerCase()))throw Error('图片地址不受支持');
  const root=await realpath(dirname(document)),path=await realpath(resolve(root,decoded));const child=relative(root,path);if(child.startsWith('..')||resolve(root,child)!==path)throw Error('图片超出文档目录');
- const d={id:session,cwd:root,events:[{role:'assistant',media:[path]}]};return resourceFile(d,references(d)[0].id);
+ // Document dependencies do not grant the privileges of a session assistant message.
+ const d={id:session,cwd:root,events:[{role:'user',media:[path]}]};return resourceFile(d,references(d)[0].id);
 }
 const esc=(s:string)=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 const safe=(s:string)=>sanitize(s,{allowedTags:sanitize.defaults.allowedTags.concat(['img','h1','h2']),allowedAttributes:{a:['href'],img:['src','alt'],td:['colspan','rowspan'],th:['colspan','rowspan']},allowedSchemes:['http','https','data'],allowedSchemesByTag:{img:['data']},allowProtocolRelative:false});

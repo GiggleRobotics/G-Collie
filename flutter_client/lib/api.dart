@@ -13,7 +13,14 @@ class ApiException implements Exception {
   final int status;
   final String? code;
   final String? outcome;
-  ApiException(this.message, [this.status = 0, this.code, this.outcome]);
+  final String? attachmentId;
+  ApiException(
+    this.message, [
+    this.status = 0,
+    this.code,
+    this.outcome,
+    this.attachmentId,
+  ]);
   @override
   String toString() => message;
 }
@@ -395,6 +402,9 @@ class CollieApi {
         response.statusCode,
         data is Map && data['code'] is String ? data['code'] : null,
         data is Map && data['outcome'] is String ? data['outcome'] : null,
+        data is Map && data['attachmentId'] is String
+            ? data['attachmentId']
+            : null,
       );
     }
     return data;

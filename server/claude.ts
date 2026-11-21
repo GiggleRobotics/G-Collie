@@ -10,19 +10,25 @@ import {join} from 'node:path';
 import {homedir} from 'node:os';
 
 const valid=(id:string)=>/^[a-f0-9]{8}-[a-f0-9-]{27,28}$/i.test(id);
+function claudeImage(part:any):string|undefined{
+ const src=part?.source;
+ if(part?.type==='image'&&src?.type==='base64'&&/^image\/(jpeg|png|gif|webp)$/.test(src.media_type)&&typeof src.data==='string')
+  return 'data:'+src.media_type+';base64,'+src.data;
+}
 export function claudeEvents(rows:any[],before?:string,all=false){
  const events:any[]=[];let usage={input:0,output:0,cached:0,semantics:'includes-cache'};const counted=new Set<string>();
  for(const r of rows){const m=r.message;if(!m||!['user','assistant'].includes(m.role)||r.isMeta||r.isSidechain||(r.type&&!['user','assistant'].includes(r.type)))continue;
   const parts=typeof m.content==='string'?[{type:'text',text:m.content}]:m.content||[];
   if(m.role==='user'){
-   const media=parts.filter((p:any)=>p.type==='image'&&p.source?.type==='base64'&&/^image\/(jpeg|png|gif|webp)$/.test(p.source.media_type)).map((p:any)=>`data:${p.source.media_type};base64,${p.source.data}`);
+   const media=parts.map(claudeImage).filter(Boolean);
    const text=parts.filter((p:any)=>p.type==='text').map((p:any)=>p.text).join('\n\n');
    if(text||media.length)events.push({id:r.uuid||String(events.length),role:'user',text:String(text).slice(0,24000),media,time:Date.parse(r.timestamp)||0});
   }
   for(let i=0;i<parts.length;i++){
    if(m.role==='user')continue;const p=parts[i];const role=p.type==='tool_result'||p.type==='tool_use'?'tool':m.role;
    const text=p.type==='text'?p.text:p.type==='tool_use'?'调用 '+p.name:p.type==='tool_result'?(typeof p.content==='string'?p.content:JSON.stringify(p.content)):'';
-   if(text)events.push({id:(r.uuid||String(events.length))+':'+i,role,text:String(text).slice(0,24000),time:Date.parse(r.timestamp)||0});
+   const image=claudeImage(p);
+   if(text||image)events.push({id:(r.uuid||String(events.length))+':'+i,role,text:String(text).slice(0,24000),...(image?{media:[image]}:{}),time:Date.parse(r.timestamp)||0});
   }
   if(m.usage&&!counted.has(m.id)){counted.add(m.id);const u=m.usage;usage.input+=(u.input_tokens||0)+(u.cache_read_input_tokens||0)+(u.cache_creation_input_tokens||0);usage.output+=u.output_tokens||0;usage.cached+=u.cache_read_input_tokens||0;}
  }

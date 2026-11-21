@@ -257,6 +257,63 @@ void main() {
     expect(p.sessions['s'], isEmpty);
   });
 
+  test('unknown sends keep exact request by session, text and attachments', () {
+    final p = PendingMessages();
+    for (final request in ['file-a', 'file-b']) {
+      p.add(
+        's',
+        request,
+        'same',
+        [],
+        attachments: true,
+        attachmentIds: [request],
+      );
+      p.update('s', request, 'unknown');
+    }
+    expect(p.unknownRequest('s', 'same', ['file-a']), 'file-a');
+    expect(p.unknownRequest('s', 'same', ['file-b']), 'file-b');
+    expect(p.unknownRequest('s', 'same ', ['file-b']), isNull);
+    expect(p.unknownRequest('s', 'same', []), isNull);
+    expect(p.unknownRequest('other', 'same', ['file-a']), isNull);
+  });
+
+  test('only an exact receipt can resolve an unconfirmed same-text send', () {
+    final p = PendingMessages();
+    p.add('s', 'request', 'same', []);
+    final confirmed = <String>[];
+    final event = {
+      'role': 'user',
+      'text': 'same',
+      'time': DateTime.now().millisecondsSinceEpoch,
+    };
+    final conflicting = {...event, 'id': 'other', 'requestId': 'different'};
+    final legacy = {...event, 'id': 'unidentified'};
+    for (final status in ['sending', 'unknown']) {
+      p.update('s', 'request', status);
+      p.merge({
+        'id': 's',
+        'events': [conflicting, legacy],
+      }, onAcknowledged: (_, text) => confirmed.add(text));
+      expect(p.isAcknowledged('s', 'request'), false);
+      expect(p.sessions['s']!.single['sendStatus'], status);
+    }
+    p.merge({
+      'id': 's',
+      'events': [conflicting],
+      'sendReceipts': [
+        {'requestId': 'request', 'turnId': 'turn'},
+      ],
+    }, onAcknowledged: (_, text) => confirmed.add(text));
+    expect(confirmed, ['same']);
+    expect(p.sessions['s']!.single['sendStatus'], 'sent');
+    p.merge({
+      'id': 's',
+      'events': [conflicting, legacy],
+    }, onAcknowledged: (_, text) => confirmed.add(text));
+    expect(p.sessions['s'], isEmpty);
+    expect(confirmed, ['same']);
+  });
+
   test('exact request id reconciles transformed steer text once only', () {
     final p = PendingMessages();
     p.add('s', 'r1', '同一句', []);

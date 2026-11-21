@@ -239,6 +239,7 @@ class CollieShell extends StatefulWidget {
   final bool online, loading, busy, enabled, attachmentEnabled, running;
   final List<dynamic> sessions, projects, warnings;
   final Json? detail;
+  final List<Json> uploads;
   final TextEditingController draft;
   final ScrollController scroll;
   final VoidCallback? onConversationMetrics, onConversationUserScroll;
@@ -279,6 +280,7 @@ class CollieShell extends StatefulWidget {
     required this.warnings,
     required this.detail,
     required this.draft,
+    required this.uploads,
     required this.scroll,
     this.onConversationMetrics,
     this.onConversationUserScroll,
@@ -319,10 +321,11 @@ class _CollieShellState extends State<CollieShell> {
         if (ref is String) refs.add(ref);
       }
       for (final m in RegExp(
-        r'!?\[[^\]]*\]\(([^\s)]+)\)',
+        r'(!?)\[[^\]]*\]\(([^\s)]+)\)',
       ).allMatches('${event['text'] ?? ''}')) {
-        final ref = m[1]!;
+        final ref = m[2]!;
         if (isSessionVideo(ref) ||
+            (m[1] == '!' && isRemoteMediaReference(ref)) ||
             RegExp(
               r'\.(png|jpe?g|gif|webp)([?#].*)?$',
               caseSensitive: false,
@@ -422,7 +425,7 @@ class _CollieShellState extends State<CollieShell> {
     );
   }
 
-  Widget eventBody(Json e) {
+  Widget eventBody(Json e, {bool compact = false}) {
     final text = '${e['text'] ?? ''}';
     final refs = <String>{
       ...List<String>.from(e['media'] ?? []),
@@ -431,7 +434,7 @@ class _CollieShellState extends State<CollieShell> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (text.isNotEmpty) markdownText(text),
+        if (text.isNotEmpty) markdownText(text, compact: compact),
         if (refs.length > 1)
           SessionGallery(
             key: ValueKey('${widget.detail?['id']}:${e['id']}:gallery'),
@@ -453,7 +456,7 @@ class _CollieShellState extends State<CollieShell> {
   final scaffold = GlobalKey<ScaffoldState>();
   String query = '', agent = 'all', project = '', page = 'chat';
   bool large = false, uploading = false;
-  final uploads = <Json>[];
+  List<Json> get uploads => widget.uploads;
   String uploadError = '';
   String uploadStatus = '';
   @override
@@ -1889,7 +1892,9 @@ class _CollieShellState extends State<CollieShell> {
               (d['localHistory'] == true || !widget.online))
             const SizedBox(height: 8),
           for (final e in d['events'] ?? [])
-            if (e['role'] == 'tool' || e['role'] == 'reasoning')
+            if (d['draft'] == true && e['sendStatus'] != null)
+              const SizedBox.shrink()
+            else if (e['role'] == 'tool' || e['role'] == 'reasoning')
               ProcessRecord(
                 key: ValueKey('process:${d['id']}:${e['id']}'),
                 record: Map<String, dynamic>.from(e),
@@ -1915,7 +1920,7 @@ class _CollieShellState extends State<CollieShell> {
             else if (e['phase'] == 'commentary')
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 10),
-                child: markdown('${e['text']}', compact: true),
+                child: eventBody(Map<String, dynamic>.from(e), compact: true),
               )
             else if (e['role'] == 'user')
               Align(
@@ -2636,17 +2641,108 @@ class _CollieShellState extends State<CollieShell> {
     setState(() {});
   }
 
+  Json? get firstSendReceipt {
+    final d = widget.detail;
+    if (d == null || d['draft'] != true) return null;
+    final request = (d['id'] as String).substring(6);
+    return (d['events'] as List)
+        .whereType<Json>()
+        .where((row) => row['id'] == request)
+        .lastOrNull;
+  }
+
+  Widget firstSendNotice(String status, String? explanation) {
+    final failed = status == 'failed';
+    final sending = status == 'sending';
+    final scheme = Theme.of(context).colorScheme;
+    final accent = failed ? scheme.error : scheme.onSurfaceVariant;
+    return Semantics(
+      liveRegion: true,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 0, 8, 10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              failed
+                  ? Icons.error_outline
+                  : sending
+                  ? Icons.schedule
+                  : Icons.sync,
+              size: 18,
+              color: accent,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    failed
+                        ? '首条消息未发送'
+                        : sending
+                        ? '正在发送首条消息…'
+                        : '正在确认发送结果',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: accent,
+                    ),
+                  ),
+                  if (explanation != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        explanation,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget composer() {
     final d = widget.detail;
     final quotaBlocked = this.quotaBlocked && d?['agent'] == 'Codex';
     final hasContent =
         widget.draft.text.trim().isNotEmpty || uploads.isNotEmpty;
+    final first = firstSendReceipt;
+    final status = first?['sendStatus'] as String?;
+    final locked = status == 'sending' || status == 'unknown';
+    final invalidImage = first?['invalidImage'] as String?;
+    final invalidFile = uploads
+        .where((f) => f['id'] == invalidImage)
+        .firstOrNull;
+    final hasInvalidImage = invalidImage != null && invalidFile != null;
+    String? explanation;
+    if (status == 'unknown') {
+      explanation = widget.online ? '正在查询电脑回执，请勿重复发送。' : '恢复连接后会继续查询电脑回执。';
+    } else if (status == 'failed') {
+      if (invalidImage == null) {
+        explanation = first?['failureReason'];
+      } else {
+        explanation = !hasInvalidImage
+            ? '可重新发送。'
+            : uploads.length == 1
+            ? '图片无法读取，请移除或更换'
+            : '${invalidFile['name']} 无法读取，请移除或更换';
+      }
+    }
     final showStop = widget.running && !hasContent;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (status != null) firstSendNotice(status, explanation),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
@@ -2713,7 +2809,10 @@ class _CollieShellState extends State<CollieShell> {
                               iconAction(
                                 'X',
                                 '移除附件 ${file['name']}',
-                                uploading || widget.busy
+                                uploading ||
+                                        widget.busy ||
+                                        locked ||
+                                        widget.role == 'view'
                                     ? null
                                     : () =>
                                           setState(() => uploads.remove(file)),
@@ -2766,6 +2865,7 @@ class _CollieShellState extends State<CollieShell> {
                         controller: widget.draft,
                         enabled:
                             widget.role != 'view' &&
+                            !locked &&
                             !widget.busy &&
                             !widget.loading &&
                             widget.detail != null,
@@ -2773,7 +2873,13 @@ class _CollieShellState extends State<CollieShell> {
                         maxLines: 1,
                         maxLength: 4000,
                         onChanged: (_) => widget.onDraft(),
-                        style: const TextStyle(fontSize: 14, height: 1.6),
+                        style: TextStyle(
+                          fontSize: 14,
+                          height: 1.6,
+                          color: locked
+                              ? Theme.of(context).colorScheme.onSurface
+                              : null,
+                        ),
                         decoration: InputDecoration(
                           hintText: quotaBlocked
                               ? '额度恢复后可继续，草稿会保留'
@@ -2806,26 +2912,27 @@ class _CollieShellState extends State<CollieShell> {
                     ),
                     const SizedBox(width: 8),
                     IconButton(
-                      tooltip: showStop ? '停止当前轮' : '发送',
+                      tooltip: showStop
+                          ? '停止当前轮'
+                          : status == 'failed'
+                          ? '重新发送'
+                          : '发送',
                       onPressed:
                           (widget.enabled && (!quotaBlocked || showStop)) &&
                               !uploading &&
+                              !locked &&
+                              !hasInvalidImage &&
                               (showStop
                                   ? (d?['turnId'] != null)
                                   : (widget.draft.text.trim().isNotEmpty ||
                                         uploads.isNotEmpty))
                           ? showStop
                                 ? widget.onStop
-                                : () async {
-                                    if (await widget.onSend(
-                                          uploads
-                                              .map((f) => f['id'] as String)
-                                              .toList(),
-                                        ) &&
-                                        mounted) {
-                                      setState(() => uploads.clear());
-                                    }
-                                  }
+                                : () => widget.onSend(
+                                    uploads
+                                        .map((f) => f['id'] as String)
+                                        .toList(),
+                                  )
                           : null,
                       style: IconButton.styleFrom(
                         backgroundColor: companionGreen,
@@ -2997,7 +3104,11 @@ class _CollieShellState extends State<CollieShell> {
                             )
                           : d != null
                           ? InkWell(
-                              onTap: sessionMenu,
+                              onTap:
+                                  d['draft'] == true &&
+                                      (!widget.enabled || widget.role == 'view')
+                                  ? null
+                                  : sessionMenu,
                               child: Row(
                                 children: [
                                   agentLogo(d['agent'], size: 24),
@@ -3060,6 +3171,7 @@ class _CollieShellState extends State<CollieShell> {
               ),
             ),
             if (widget.error.isNotEmpty &&
+                widget.error != firstSendReceipt?['failureReason'] &&
                 !(quotaBlocked && d?['agent'] == 'Codex'))
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16),

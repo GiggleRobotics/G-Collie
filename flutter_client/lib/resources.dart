@@ -1,8 +1,8 @@
 import 'dart:io';
+import 'dart:ui' as ui;
 import 'session_gallery.dart';
 import 'session_video.dart';
 import 'dart:async';
-import 'dart:ui' as ui;
 import 'dart:math' as math;
 import 'offline_assets.dart';
 import 'dart:convert';
@@ -13,6 +13,13 @@ import 'session_web.dart';
 import 'api.dart';
 import 'preview.dart';
 import 'native.dart';
+
+bool isRemoteMediaReference(String ref) {
+  final uri = Uri.tryParse(ref);
+  return uri != null &&
+      uri.host.isNotEmpty &&
+      ['http', 'https'].contains(uri.scheme);
+}
 
 class SessionResources {
   final CollieApi api;
@@ -128,7 +135,8 @@ class SessionResources {
       }
       final known = items.map((r) => '${r['ref']}').toSet();
       for (final source in scopeReferences) {
-        if (!isSessionVideo(source) &&
+        if (!isRemoteMediaReference(source) &&
+            !isSessionVideo(source) &&
             !RegExp(
               r'\.(png|jpe?g|gif|webp)([?#].*)?$',
               caseSensitive: false,
@@ -319,8 +327,7 @@ class _SessionImageState extends State<SessionImage> {
     }
   }
 
-  bool get remote =>
-      ['http', 'https'].contains(Uri.tryParse(widget.source)?.scheme);
+  bool get remote => isRemoteMediaReference(widget.source);
   @override
   void initState() {
     super.initState();
@@ -416,12 +423,38 @@ class SessionGallery extends StatefulWidget {
 
 class _SessionGalleryState extends State<SessionGallery> {
   String? selected;
-  final thumbnails = <String, Future<Uint8List>>{};
+  final thumbnails = <String, Future<ImageProvider>>{};
   final ratios = <String, double>{};
-  Future<Uint8List> galleryImage(String ref) =>
+
+  Future<ImageProvider> galleryImage(String ref) =>
       thumbnails.putIfAbsent(ref, () async {
+        final video = widget.videos.contains(ref) || isSessionVideo(ref);
+        if (!video && isRemoteMediaReference(ref)) {
+          final image = NetworkImage(ref);
+          final stream = image.resolve(createLocalImageConfiguration(context));
+          final ratio = Completer<double>();
+          final listener = ImageStreamListener(
+            (info, _) {
+              if (!ratio.isCompleted) {
+                ratio.complete(info.image.width / info.image.height);
+              }
+              info.dispose();
+            },
+            onError: (Object e, StackTrace? stack) {
+              if (!ratio.isCompleted) ratio.completeError(e, stack);
+            },
+          );
+          stream.addListener(listener);
+          try {
+            final aspect = await ratio.future;
+            if (mounted) setState(() => ratios[ref] = aspect);
+          } finally {
+            stream.removeListener(listener);
+          }
+          return image;
+        }
         final Uint8List bytes;
-        if (widget.videos.contains(ref) || isSessionVideo(ref)) {
+        if (video) {
           final file = await widget.resources.find(ref);
           if (file == null) throw StateError('视频暂不可读');
           bytes = Uint8List.fromList(
@@ -438,7 +471,7 @@ class _SessionGalleryState extends State<SessionGallery> {
         descriptor.dispose();
         buffer.dispose();
         if (mounted) setState(() => ratios[ref] = ratio);
-        return bytes;
+        return MemoryImage(bytes);
       });
   @override
   void didUpdateWidget(covariant SessionGallery oldWidget) {
@@ -455,7 +488,7 @@ class _SessionGalleryState extends State<SessionGallery> {
   Widget build(BuildContext context) {
     if (widget.sources.isEmpty) return const SizedBox.shrink();
     final current = selected ?? widget.sources.first;
-    galleryImage(current).catchError((_) => Uint8List(0));
+    galleryImage(current).ignore();
     return LayoutBuilder(
       builder: (context, constraints) {
         final height = math.min(
@@ -517,11 +550,11 @@ class _SessionGalleryState extends State<SessionGallery> {
                           ),
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(5),
-                            child: FutureBuilder<Uint8List>(
+                            child: FutureBuilder<ImageProvider>(
                               future: galleryImage(ref),
                               builder: (context, value) => value.hasData
-                                  ? Image.memory(
-                                      value.data!,
+                                  ? Image(
+                                      image: value.data!,
                                       fit: BoxFit.cover,
                                       excludeFromSemantics: true,
                                       errorBuilder: (_, _, _) => const Icon(

@@ -35,3 +35,28 @@
 .chat-app .delete-session-sheet .delete-session-actions .danger-action:hover{background:#912018}
 .chat-app .recent-heading .home-new-session{color:inherit;font-weight:500;white-space:nowrap}
 @media(max-width:480px){.recent-heading{flex-wrap:wrap;gap:8px}.recent-heading h2{flex-basis:100%;margin-bottom:2px}.recent-heading .home-new-session{margin-left:0!important}.recent-heading button:last-child{margin-left:auto}}
+
+.first-send-notice{display:flex;align-items:flex-start;gap:12px;margin:0 0 10px;padding:12px 14px;border:1px solid #dededc;border-radius:12px;background:#f8f8f7;color:#343432}
+.first-send-notice>svg{flex:none;width:18px;height:18px;margin-top:1px;color:#686863}
+.first-send-notice strong{display:block;font-size:14px;font-weight:600;line-height:20px}
+.first-send-notice p{margin:3px 0 0;color:#62625d;font-size:12px;line-height:18px;overflow-wrap:anywhere}
+.first-send-notice.failed{background:#fff8f2;border-color:#e7d8cb}
+.first-send-notice.failed>svg{color:#97562f}
+:root[data-theme=dark] .first-send-notice{color:#eee;background:#303030;border-color:#505050}
+:root[data-theme=dark] .first-send-notice p,:root[data-theme=dark] .first-send-notice>svg{color:#cececa}
+:root[data-theme=dark] .first-send-notice.failed{background:#382e27;border-color:#624b39}
+.chat-app .aux-page-menu{display:none}
+@media(max-width:850px){
+ .chat-page>:is(.section-heading,.usage-title):has(.aux-page-menu){gap:10px}
+ .chat-app .aux-page-menu{display:inline-flex;align-self:flex-start;flex:none;width:40px;height:40px;margin:-4px 0 0 -7px}
+ .aux-page-menu+div{flex:1;min-width:0}
+ .aux-page-menu~.page-actions,.aux-page-menu~button{flex:none;align-self:flex-start}
+ .chat-app .aux-page-menu~.page-actions>.outlined-button{margin-top:0}
+ .chat-app .aux-page-menu~.page-actions>.icon-button{padding:8px}
+}
+@media(max-width:500px){.first-send-notice{gap:8px;padding:10px}}
+.first-send-files{display:flex;gap:6px;flex-wrap:wrap;max-height:76px;overflow:auto;margin-bottom:8px}
+.first-send-files:empty{display:none}
+.first-send-files .first-send-file{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-height:28px;padding:4px 9px;border:1px solid var(--workspace-border);border-radius:8px;background:transparent;font-size:11px;color:inherit}
+.first-send-file>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.first-send-file svg{flex:none}

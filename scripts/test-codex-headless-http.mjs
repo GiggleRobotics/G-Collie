@@ -1,6 +1,6 @@
 // Route integration fixture: no model, real user home, or desktop is accessed.
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {spawn} from 'node:child_process';
@@ -8,6 +8,7 @@ const root=mkdtempSync(join(tmpdir(),'gcollie-headless-http-')),home=join(root,'
 writeFileSync(bin,`#!${process.execPath}
 const readline=require('node:readline');let turn=0;const thread={id:'headless-qa',status:{type:'idle'},turns:[],model:'qa-model'};
 readline.createInterface({input:process.stdin}).on('line',line=>{const m=JSON.parse(line);if(m.id===undefined||!m.method)return;let result={};
+if(['thread/start','turn/start'].includes(m.method))require('node:fs').appendFileSync(${JSON.stringify(join(root,'creates.log'))},m.method+'\\n');
 if(['thread/start','thread/read','thread/resume'].includes(m.method))result={thread,model:'qa-model'};
 if(m.method==='turn/start'){const t={id:'turn-'+ ++turn,status:'inProgress',items:[]};thread.turns=[t];thread.status={type:'active',activeFlags:[]};result={turn:t}}
 if(m.method==='turn/steer')result={turnId:thread.turns.at(-1).id};
@@ -27,7 +28,19 @@ try{
  const system=await api('/diagnostics/system');assert.equal(system.body.version,expectedVersion);assert.equal(system.body.codex.backend,'app-server');assert.equal(system.body.codex.available,true);
  const hermesUnknown=await api('/hermes/fakehermes',{action:'send',requestId:'unknown-http',text:'must not resend'});assert.equal(hermesUnknown.status,409);assert.equal(hermesUnknown.body.code,'hermes_result_unknown');assert.equal(hermesUnknown.body.outcome,'unknown');
  const creation={agent:'Codex',requestId:'headless-http-new',draftId:'draft:headless-http-new',prompt:'QA first',cwd:''};
+ // The PNG header passes upload validation, but the truncated image cannot be decoded.
+ const image=await api('/attachments',{session:creation.draftId,name:'truncated.png',image:true,data:'iVBORw0KGgo='});
+ assert.equal(image.status,200);
+ const rejected=await api('/sessions',{...creation,attachments:[image.body.id]});
+ assert.equal(rejected.status,409);
+ const imageFailure={error:'图片无法读取，请移除或更换。',code:'session_create_invalid_image',attachmentId:image.body.id};
+ assert.deepEqual(rejected.body,{...imageFailure,outcome:'failed'});
+ const receiptPath='/sessions/requests/'+creation.requestId;
+ assert.deepEqual((await api(receiptPath)).body,{state:'failed',...imageFailure});
+ assert.equal(existsSync(join(root,'creates.log')),false);
  const created=await api('/sessions',creation);assert.equal(created.status,200);assert.equal(created.body.id,'codex:headless-qa');assert.deepEqual((await api('/sessions',creation)).body,created.body);
+ assert.deepEqual((await api(receiptPath)).body,{state:'done',result:created.body});
+ assert.deepEqual(readFileSync(join(root,'creates.log'),'utf8').trim().split('\n'),['thread/start','turn/start']);
  const detail=await api('/local/codex:headless-qa');assert.equal(detail.status,200);assert.equal(detail.body.desktopLive,true);assert.equal(detail.body.desktopControl,true);assert.equal(detail.body.status,'running');
  const send=await api('/desktop/headless-qa',{action:'send',text:'QA steer',requestId:'headless-http-send'});assert.equal(send.status,200);assert.equal(send.body.turnId,'turn-1');
  assert.equal((await api('/desktop/headless-qa',{action:'stop',turnId:'stale',requestId:'headless-http-stale'})).status,409);

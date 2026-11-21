@@ -30,10 +30,25 @@ class _AboutContentState extends State<AboutContent> {
             ),
           ),
           const SizedBox(height: 12),
-          const Text(
-            'G-Collie',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 25, fontWeight: FontWeight.w600),
+          Semantics(
+            header: true,
+            label: 'G-Collie · Agent 会话控制台',
+            excludeSemantics: true,
+            child: DefaultTextStyle.merge(
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+              child: const Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 5,
+                children: [
+                  Text('G-Collie ·'),
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 5,
+                    children: [Text('Agent'), Text('会话控制台')],
+                  ),
+                ],
+              ),
+            ),
           ),
           const SizedBox(height: 4),
           FutureBuilder<String>(

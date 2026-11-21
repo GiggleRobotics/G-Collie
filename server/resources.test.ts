@@ -1,16 +1,52 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,writeFile,readFile,mkdir,symlink} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
+import {mkdtemp,writeFile,readFile,mkdir,symlink,link,rm} from 'node:fs/promises';
+import os,{tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import express from 'express';
+import {AttachmentStore} from './attachments.js';
+import {Readable} from 'node:stream';
 import {references,compactDetail,compactReferences,resourceFile,installPreviews} from './resources.js';
 const fixture=async()=>{const cwd=await mkdtemp(join(tmpdir(),'collie-resource-'));await writeFile(join(cwd,'report.md'),'# Report\n<script>alert(1)</script>\n[bad](javascript:alert(1))');return {cwd,id:'codex:test',events:[{role:'assistant',text:'[报告](report.md)'}]};};
+test('Hermes generated image galleries authorize each explicit image in the home media directory',async t=>{
+ const home=await mkdtemp(join(tmpdir(),'collie-hermes-media-'));
+ t.mock.method(os,'homedir',()=>home);
+ try{
+  const folder=join(home,'.media','images','album');
+  await mkdir(join(folder,'.private'),{recursive:true});
+  const first=join(folder,'第一张.png'),second=join(folder,'second.png');
+  const png=Buffer.from('89504e470d0a1a0a','hex');
+  await writeFile(first,png);await writeFile(second,png);
+  const detail={agent:'Hermes',id:'hermes:gallery',events:[{role:'assistant',media:[first,second]}]};
+  const listing=references(detail);
+  assert.equal(listing.length,2);
+  for(const item of listing){
+   const file=await resourceFile(detail,item.id);
+   assert.equal(file.image,true);assert.deepEqual(await readFile(file.path),png);
+  }
+  const lookup=(events:any[],agent='Hermes')=>{
+   const d={...detail,agent,events};
+   return resourceFile(d,references(d)[0].id);
+  };
+  await assert.rejects(lookup([{role:'assistant',text:`![link](${first})`}]));
+  await assert.rejects(lookup([{role:'user',media:[first]}]));
+  await assert.rejects(lookup(detail.events,'Codex'));
+  await assert.rejects(resourceFile({...detail,id:'hermes:other'},listing[0].id));
+  const privateImage=join(folder,'.private','image.png'),secret=join(folder,'credentials.png');
+  const sibling=join(home,'.media','other.png'),doc=join(folder,'notes.txt');
+  for(const blocked of [privateImage,secret,sibling,doc]){
+   await writeFile(blocked,png);
+   await assert.rejects(lookup([{role:'assistant',media:[blocked]}]));
+  }
+  const outside=join(home,'outside.png'),alias=join(folder,'alias.png');
+  await writeFile(outside,png);await symlink(outside,alias);
+  await assert.rejects(lookup([{role:'assistant',media:[alias]}]));
+ }finally{await rm(home,{recursive:true,force:true});}
+});
 test('only message references can be read; reject traversal into secret files and symlinks',async()=>{const d=await fixture();const r=references(d)[0];assert.equal((await resourceFile(d,r.id)).name,'report.md');await assert.rejects(resourceFile(d,'a'.repeat(32)));await mkdir(join(d.cwd,'.ssh'));await writeFile(join(d.cwd,'.ssh','key.md'),'secret');await symlink(join(d.cwd,'.ssh','key.md'),join(d.cwd,'leak.md'));d.events.push({role:'assistant',text:'[leak](leak.md)'});await assert.rejects(resourceFile(d,references(d)[1].id));});
 test('structured inline image survives projection and validates mime',async()=>{const d={id:'codex:image',events:[{role:'user',media:['data:image/png;base64,aGVsbG8='],text:''}]};const r=references(d)[0];assert.equal(r.image,true);assert.equal((await resourceFile(d,r.id)).data?.toString(),'hello');});
 test('browser ticket previews sanitized markdown, supports download and revocation',async()=>{const d=await fixture();let allowed=true;const app=express();const issue=installPreviews(app,async()=>d,()=>allowed);const server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));try{const port=(server.address() as any).port;const path=await issue(d.id,references(d)[0].id,'phone');const base='http://127.0.0.1:'+port;const html=await(await fetch(base+path)).text();assert.match(html,/<h1>Report/);const embedded=await(await fetch(base+path+'?embedded=1')).text();assert.doesNotMatch(embedded,/<header>/);assert.match(embedded,/<h1>Report/);assert.doesNotMatch(html,/alert\(1\)/);const download=await fetch(base+path.replace('/view','/content?download=1'));assert.match(download.headers.get('content-disposition')||'',/attachment/);allowed=false;assert.equal((await fetch(base+path)).status,410);}finally{server.close();}});
-import {AttachmentStore} from './attachments.js';import {Readable} from 'node:stream';import {rm} from 'node:fs/promises';
 test('managed video previews inline, supports Range, and remains bound to its session',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'gcollie-video-preview-')),old=process.env.GCOLLIE_DATA_DIR;process.env.GCOLLIE_DATA_DIR=dir;
  const session='claude:12345678-1234-1234-1234-123456789012',store=new AttachmentStore(dir);
@@ -97,4 +133,96 @@ test('tool image file URLs resolve encoded Unicode and spaces without relaxing a
   for(const address of forbidden.slice(0,3))await assert.rejects(lookup(address),/不支持此文件地址/);
   for(const blocked of forbidden.slice(3))await assert.rejects(lookup(blocked),/不允许预览/);
  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test('assistant Markdown images in the session workspace build directory preview from validated bytes',async t=>{
+ const cwd=await mkdtemp(join(tmpdir(),'gcollie-codex-images-'));
+ t.after(()=>rm(cwd,{recursive:true,force:true}));
+ const folder=join(cwd,'.packaging','website','qa');
+ await mkdir(folder,{recursive:true});
+ const fixtures=[
+  ['桌面 预览.png','image/png','iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mO4uZULAAQDAZlPBCu3AAAAAElFTkSuQmCC'],
+  ['mobile.jpg','image/jpeg','/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDABALDA4MChAODQ4SERATGCgaGBYWGDEjJR0oOjM9PDkzODdASFxOQERXRTc4UG1RV19iZ2hnPk1xeXBkeFxlZ2P/2wBDARESEhgVGC8aGi9jQjhCY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2P/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAABAb/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCsAlD3/9k='],
+  ['sequence.gif','image/gif','R0lGODdhAQABAIEAANm1CgAAAAAAAAAAACwAAAAAAQABAAAIBAABBAQAOw=='],
+  ['crop.webp','image/webp','UklGRjgAAABXRUJQVlA4ICwAAACQAQCdASoBAAEAAsBMJaACdLoAA5gA/uu3r/00j/hh/+GH+MH8UApHAeAAAA=='],
+ ];
+ const detail={id:'codex:review',agent:'Codex',cwd,events:[{role:'assistant',text:''}]};
+ for(const [name,mime,encoded] of fixtures){
+  const bytes=Buffer.from(encoded,'base64'),abs=join(folder,name);
+  const ref=mime==='image/png'?abs:'.packaging/website/qa/'+name;
+  await writeFile(abs,bytes);
+  detail.events[0].text+='\n![预览](<'+ref+'>)';
+  const resource=references(detail).find(r=>r.ref===ref)!;
+  const file=await resourceFile(detail,resource.id);
+  assert.equal(file.mime,mime);assert.deepEqual(file.data,bytes);assert.equal(file.path,'');
+ }
+ const app=express();let allowed=true;
+ const issue=installPreviews(app,async()=>detail,()=>allowed);
+ const server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));t.after(()=>server.close());
+ const base='http://127.0.0.1:'+(server.address() as any).port;
+ const preview=await issue(detail.id,references(detail)[0].id,'paired-phone');
+ const content=base+preview.replace('/view','/content');
+ for(const url of [content,content+'?download=1']){
+  const response=await fetch(url);assert.equal(response.status,200);assert.equal(response.headers.get('content-type'),'image/png');
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()),Buffer.from(fixtures[0][2],'base64'));
+ }
+ allowed=false;assert.equal((await fetch(content)).status,410);
+});
+
+test('build output images require an explicit assistant image, canonical location and matching raster bytes',async t=>{
+ const cwd=await mkdtemp(join(tmpdir(),'gcollie-codex-private-')),folder=join(cwd,'.packaging','review');
+ t.after(()=>rm(cwd,{recursive:true,force:true}));
+ await mkdir(folder,{recursive:true});
+ const img=join(folder,'result.png'),png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mO4uZULAAQDAZlPBCu3AAAAAElFTkSuQmCC','base64');await writeFile(img,png);
+ const markdown=(ref:string)=>'![图](<'+ref+'>)';
+ const detail={id:'codex:private',agent:'Codex',cwd,events:[{role:'assistant',text:markdown(img)}]};
+ async function denied(events:any[],ref=img,other={}){
+  const d={...detail,...other,events};const r=references(d).find(x=>x.ref===ref);assert(r,ref);
+  await assert.rejects(resourceFile(d,r.id),/不允许预览/);
+ }
+ for(const event of [{role:'user',text:markdown(img)},{role:'assistant',text:'[普通文件](<'+img+'>)'},{role:'assistant',text:'`'+markdown(img)+'`'},{role:'assistant',text:'\n```md\n'+markdown(img)+'\n```'},{role:'tool',media:[img]},{role:'user',media:[img]}])await denied([event]);
+ await denied(detail.events,img,{cwd:'',projectPath:cwd});
+ await denied(detail.events,img,{cwd:join(cwd,'other')});
+ await assert.rejects(resourceFile({...detail,id:'codex:other'},references(detail)[0].id),/未被此会话引用/);
+ await mkdir(join(folder,'.private'));await mkdir(join(folder,'credentials'));
+ const outside=join(cwd,'outside.png');await writeFile(outside,png);
+ const outsideLink=join(folder,'outside.png'),insideLink=join(folder,'alias.png'),outsideAlias=join(cwd,'alias.png'),hard=join(folder,'hard.png');
+ await symlink(outside,outsideLink);await symlink(img,insideLink);await symlink(img,outsideAlias);await link(outside,hard);
+ const nested=join(folder,'.private','result.png'),secret=join(folder,'credentials','result.png'),spoof=join(folder,'fake.png'),mismatch=join(folder,'wrong.jpg');
+ await writeFile(nested,png);await writeFile(secret,png);await writeFile(spoof,'private text');await writeFile(mismatch,png);
+ for(const ref of [nested,secret,spoof,mismatch,outsideLink,insideLink,outsideAlias,hard,folder+'/../review/result.png']){
+  await denied([{role:'assistant',text:markdown(ref)}],ref);
+ }
+});
+
+test('project images follow session evidence across providers and control modes',async t=>{
+ const cwd=await mkdtemp(join(tmpdir(),'gcollie-session-evidence-'));
+ t.after(()=>rm(cwd,{recursive:true,force:true}));
+ const folder=join(cwd,'.packaging','qa'),ref='.packaging/qa/result.png';
+ await mkdir(folder,{recursive:true});
+ const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mO4uZULAAQDAZlPBCu3AAAAAElFTkSuQmCC','base64');
+ await writeFile(join(cwd,ref),png);
+ for(const session of [
+  {id:'codex:desktop',agent:'Codex'},
+  {id:'codex:headless',agent:'Codex',readOnly:true,archived:true},
+  {id:'hermes:history',agent:'Hermes'},
+  {id:'claude:5885bde1-e624-4381-9af0-b744c5fb2698',agent:'Claude Code'},
+  {id:'managed:native',agent:'Codex'},
+  {id:'opaque-valid-key'},
+ ]){
+  for(const event of [{role:'assistant',text:'![result]('+ref+')'},{role:'assistant',media:[ref]}]){
+   const d={...session,cwd,events:[event]},r=references(d)[0];
+   assert.deepEqual((await resourceFile(d,r.id)).data,png,session.id);
+   await assert.rejects(resourceFile({...d,id:'other-session'},r.id),/未被此会话引用/);
+   await assert.rejects(resourceFile({...d,events:[{role:'user',media:[ref]}]},r.id),/不允许预览/);
+  }
+ }
+ // A linked Markdown file is a document, even when the assistant authored its link.
+ const d={cwd,id:'hermes:doc',events:[{role:'assistant',text:'[report](report.md)'}]};
+ await writeFile(join(cwd,'report.md'),'![图]('+ref+')');
+ const app=express(),issue=installPreviews(app,async()=>d,()=>true),server=app.listen(0,'127.0.0.1');
+ await new Promise<void>(resolve=>server.once('listening',resolve));t.after(()=>server.close());
+ const path=await issue(d.id,references(d)[0].id,'phone');
+ const html=await (await fetch('http://127.0.0.1:'+(server.address() as any).port+path)).text();
+ assert.match(html,/markdown-image-unavailable/);assert.doesNotMatch(html,/src="\.\/asset/);
 });

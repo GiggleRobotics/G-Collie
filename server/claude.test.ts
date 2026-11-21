@@ -3,3 +3,15 @@ test('Claude projection excludes thinking/meta and counts cache within input',()
 test('terminal histories are read only; managed create/send/resume/stop are bound to original turn',async()=>{const dir=await mkdtemp(join(tmpdir(),'claude-test-'));let bridge:ClaudeBridge|undefined;try{const root=join(dir,'projects');await mkdir(join(root,'test'),{recursive:true});const native='5885bde1-e624-4381-9af0-b744c5fb2698';await writeFile(join(root,'test',native+'.jsonl'),JSON.stringify({cwd:'/tmp',uuid:'x',message:{role:'user',content:'history'}})+'\n');const bin=join(dir,'cli');await writeFile(bin,'#!/usr/bin/env node\nprocess.stdin.resume();process.stdin.on("end",()=>{console.log(JSON.stringify({type:"system",subtype:"init"}));setTimeout(()=>{console.log(JSON.stringify({type:"result",is_error:false}));},1000)})\n',{mode:0o700});bridge=new ClaudeBridge(dir,()=>{},root,bin);assert.equal((await bridge.detail(native)).readOnly,true);await assert.rejects(bridge.action(native,{action:'send',text:'x',requestId:'request-1'}));const created=await bridge.create('test',dir);const id=created.id.slice(7);const r=await bridge.action(id,{action:'send',text:'first',requestId:'request-2'});await assert.rejects(bridge.action(id,{action:'send',text:'duplicate',requestId:'request-2'}));await assert.rejects(bridge.action(id,{action:'stop',turnId:'wrong'}));await bridge.action(id,{action:'stop',turnId:r.turnId});await new Promise(r=>setTimeout(r,100));assert.equal((await bridge.detail(id)).status,'interrupted');await assert.rejects(bridge.action(id,{action:'send',text:'again',requestId:'request-2'}));}finally{bridge?.close();await rm(dir,{recursive:true,force:true})}});
 
 test('Claude internal API request snapshots and image companion messages never become duplicate user bubbles',()=>{const message={role:'user',content:[{type:'text',text:'原始问题'}]};const result=claudeEvents([{type:'user',uuid:'real',message},{type:'api-request-blob',message:{role:'user',content:[{type:'text',text:'<system-reminder>内部上下文</system-reminder>'}]}},{type:'user',isMeta:true,turnCompanion:true,message:{role:'user',content:'[Image: source: /tmp/internal.jpg]'}},{type:'user',isSidechain:true,message}]);assert.deepEqual(result.events.map(e=>e.text),['原始问题'])});
+
+test('assistant image projection accepts native image blocks without interpreting tool text or local path guesses',()=>{
+ const block={type:'image',source:{type:'base64',media_type:'image/png',data:'cGl4ZWw='}};
+ const result=claudeEvents([{type:'assistant',uuid:'receipt',message:{role:'assistant',content:[
+  {type:'text',text:'这是结果'},block,{type:'image',path:'/private/photo.png'},
+  {type:'image',source:{type:'url',url:'https://example.invalid/image.png'}},
+  {type:'tool_use',name:'Read',input:{path:'/private/other.png'}},
+ ]}}]);
+ assert.deepEqual(result.events.map(e=>[e.role,e.text,e.media]),[
+  ['assistant','这是结果',undefined],['assistant','',['data:image/png;base64,cGl4ZWw=']],['tool','调用 Read',undefined],
+ ]);
+});

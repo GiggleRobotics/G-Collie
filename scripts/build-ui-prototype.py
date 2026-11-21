@@ -34,7 +34,7 @@ for src in sorted((root/'flutter_client/lib').glob('*.dart')):
     assert src.read_bytes()==copied.read_bytes(), f'Widget source drift: {src}'
     manifest[src.name]=hashlib.sha256(src.read_bytes()).hexdigest()
 run(sdk,'pub','get','--offline')
-run(sdk,'build','web','--release','--target=lib/preview_main.dart','--base-href=/','--no-web-resources-cdn')
+run(sdk,'build','web','--no-pub','--release','--target=lib/preview_main.dart','--base-href=/','--no-web-resources-cdn')
 if out.exists(): shutil.rmtree(out)
 shutil.copytree(work/'build/web',out)
 license_path = Path('/usr/share/doc/fonts-noto-cjk/copyright')

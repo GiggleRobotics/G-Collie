@@ -36,6 +36,7 @@ void main() {
       await tester.tap(find.text('关于 G-Collie'));
       await tester.pumpAndSettle();
       expect(find.byType(AboutContent), findsOneWidget);
+      expect(find.bySemanticsLabel('G-Collie · Agent 会话控制台'), findsOneWidget);
       expect(find.byType(BottomSheet), findsOneWidget);
       await tester.tap(find.byTooltip('关闭关于 G-Collie'));
       await tester.pumpAndSettle();
@@ -68,7 +69,7 @@ void main() {
   );
 
   for (final size in [const Size(390, 844), const Size(890, 400)]) {
-    for (final scale in [1.3, 1.6]) {
+    for (final scale in [1.3, 1.6, 2.0]) {
       testWidgets(
         'about keeps centered concise sheet content at $size / $scale',
         (tester) async {
@@ -106,9 +107,16 @@ void main() {
             findsOneWidget,
           );
           expect(
-            tester.widget<Text>(find.text('G-Collie')).textAlign,
-            TextAlign.center,
+            find.bySemanticsLabel('G-Collie · Agent 会话控制台'),
+            findsOneWidget,
           );
+          final group = find.text('会话控制台');
+          // At every scale the Chinese name occupies one complete line.
+          expect(tester.getSize(group).height, lessThan(2 * 20 * scale));
+          final title = find
+              .ancestor(of: group, matching: find.byType(Wrap))
+              .last;
+          expect(tester.widget<Wrap>(title).alignment, WrapAlignment.center);
           await tester.scrollUntilVisible(
             find.text('反馈时请提供页面提示、Agent 类型及会话 ID，方便定位问题。'),
             180,

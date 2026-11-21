@@ -6,6 +6,9 @@ import {join,dirname} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import type {Attachment} from './attachments.js';
 const exec=promisify(execFile);
+export class InvalidImageAttachment extends Error {
+ constructor(readonly attachmentId:string){super('图片无法读取，请移除或更换。')}
+}
 export const ffmpeg=()=>process.env.GCOLLIE_FFMPEG||[join(process.cwd(),'ffmpeg'),join(process.cwd(),'.tools/ffmpeg/ffmpeg'),'/usr/lib/g-collie/ffmpeg'].find(existsSync)||'ffmpeg';
 async function convert(args:string[],timeout:number){try{return await exec(ffmpeg(),args,{timeout,maxBuffer:1024*1024})}catch(e:any){if(e.code==='ENOENT')throw Error('电脑服务缺少图片／视频处理组件，请更新或修复安装包后重试');throw e}}
 
@@ -42,7 +45,18 @@ export async function claudeMediaInput(text:string,files:Attachment[]=[]){
   const cache=join(dirname(file.path),'media');await mkdir(cache,{recursive:true,mode:0o700});
   const timeout=()=>Math.max(1,Math.min(10000,deadline-Date.now()));
   if(file.image){
-   const output=join(cache,'image.jpg');await repairCachedImage(file.path,timeout());
+   const output=join(cache,'image.jpg');
+   try{await repairCachedImage(file.path,timeout())}
+   catch(error){
+    const failure=error as {code?:unknown;stderr?:string};
+    if(typeof failure.code==='number'){
+     if(/invalid data found when processing input|error while decoding stream|error submitting packet to decoder|decode error rate/i.test(failure.stderr||'')){
+      throw new InvalidImageAttachment(file.id);
+     }
+     throw Error('电脑暂时无法处理图片，请稍后重试。');
+    }
+    throw error;
+   }
    content.push(await image(output));
   }else{
    let duration=0;
