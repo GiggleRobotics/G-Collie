@@ -2,7 +2,7 @@
 
 **帮你照看每一个Agent**
 
-G-Collie 把你在 Linux 电脑上使用的 AI 助手（Codex、Hermes、Claude Code）接到手机和浏览器上。离开座位后，你可以看助手做到哪一步、接着原来的对话交代下一步，也可以从手机发起一个新任务。助手始终在那台电脑上工作，用的还是原来的项目和文件。
+离开电脑后，你仍然可以用手机或另一台电脑的浏览器，查看 Codex、Hermes 或 Claude Code 的工作进度。通过 G-Collie，你可以打开原来的对话，在支持续聊的会话里补充要求，也可以选一个项目开始新任务。无论从哪台设备操作，助手都在原来的 Linux 电脑上运行，使用那里的项目和文件。
 
 [看功能演示](https://gigglerobotics.github.io/G-Collie/#demo) · [下载 Linux 电脑端](https://github.com/GiggleRobotics/G-Collie/releases/download/v0.3.36/g-collie_0.3.36_amd64.deb) · [下载 Android 手机端](https://github.com/GiggleRobotics/G-Collie/releases/download/v0.3.36/g-collie-0.1.52-android-arm64-release.apk)
 
