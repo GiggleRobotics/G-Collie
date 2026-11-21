@@ -2,38 +2,38 @@
 
 **帮你照看每一个Agent**
 
-G-Collie 让你用手机或另一台电脑，远程查看和使用自己电脑上的 AI 助手。
+G-Collie 把你在 Linux 电脑上使用的 AI 助手（Codex、Hermes、Claude Code）接到手机和浏览器上。离开座位后，你可以看助手做到哪一步、接着原来的对话交代下一步，也可以从手机发起一个新任务。助手始终在那台电脑上工作，用的还是原来的项目和文件。
 
-比如，你让电脑上的 Codex 跑测试，接着就出门了。路上打开手机，就能看到测试跑到了哪一步；如果有测试失败，还可以在支持续聊的原对话里说「看看这项为什么失败」，让 Codex 在那台电脑上接着查。
-
-支持 Codex、Hermes 和 Claude Code。你也可以直接从手机或浏览器发起新任务。
-
-[官网自动演示](https://gigglerobotics.github.io/G-Collie/#demo) · [下载 Linux amd64 电脑端（DEB 0.3.36）](https://github.com/GiggleRobotics/G-Collie/releases/download/v0.3.36/g-collie_0.3.36_amd64.deb) · [下载 Android arm64 手机端（APK 0.1.52）](https://github.com/GiggleRobotics/G-Collie/releases/download/v0.3.36/g-collie-0.1.52-android-arm64-release.apk)
+[看功能演示](https://gigglerobotics.github.io/G-Collie/#demo) · [下载 Linux 电脑端](https://github.com/GiggleRobotics/G-Collie/releases/download/v0.3.36/g-collie_0.3.36_amd64.deb) · [下载 Android 手机端](https://github.com/GiggleRobotics/G-Collie/releases/download/v0.3.36/g-collie-0.1.52-android-arm64-release.apk)
 
 <picture>
   <source media="(prefers-reduced-motion: reduce)" srcset="docs/使用示例/g-collie-cover.jpg">
   <img src="docs/使用示例/g-collie-demo.gif" alt="G-Collie 演示：左侧电脑执行，右侧手机同步进度并追加要求；在手机工作台选择助手和项目，新建会话。">
 </picture>
 
+## 你可以怎么用
+
+- **出门后，接着电脑上的工作。** 比如 Codex 正在跑测试，你可以在手机上看到哪一项失败了，打开它发来的截图，再在支持续聊的对话里说「帮我查一下原因」。之前的消息都在。
+- **手边只有手机，也能开工。** 在手机上选一个助手和电脑上的项目，发一句「看看这个项目今天改了什么」。电脑上的助手开始处理，回复出现在手机里。
+- **换一台电脑，继续同一件事。** 在笔记本浏览器里连接运行助手的电脑，打开原对话，看结果或继续交代任务。笔记本上无需重新安装助手、复制项目。
+
+三个助手都能查看历史。Codex 和 Hermes 能否继续已有对话，取决于电脑上的助手接口；Claude Code 从外部终端创建的对话可回看，从 G-Collie 创建的对话可继续操作。[查看各助手支持的操作](docs/能力矩阵.md)
+
 ## 安装与首次连接
 
-先在运行 Agent 的 Linux 电脑上安装 DEB，用平时使用助手的账号启动 `g-collie`。接着按你手边的设备选择演示：
+先在**运行助手的 Linux 电脑**上安装电脑端，用平时登录助手的账号运行 `g-collie`，并保持电脑开机联网。接下来按手边的设备选择教程：
 
-- **手机 App**：两端加入同一私网，在 Android App 输入电脑地址和六位配对码，打开原会话。[看手机配对演示（30 秒）](https://gigglerobotics.github.io/G-Collie/start/#phone-demo)
-- **另一台电脑**：用浏览器打开执行电脑的私网地址，填写设备名称和配对码，即可查看原会话。任务继续在原电脑上执行。[看浏览器配对演示（20 秒）](https://gigglerobotics.github.io/G-Collie/start/#browser-demo)
+| 手边的设备 | 怎么连 |
+| --- | --- |
+| Android 手机 | 安装 G-Collie App，让手机和电脑加入同一私网。在 App 里输入电脑给出的地址和六位配对码。[看手机配对演示（30 秒）](https://gigglerobotics.github.io/G-Collie/start/#phone-demo) |
+| 另一台电脑 | 连到能访问执行电脑的网络，用浏览器打开它的完整地址，填写设备名称和六位配对码。[看浏览器配对演示（20 秒）](https://gigglerobotics.github.io/G-Collie/start/#browser-demo) |
 
-其他架构、SHA256 校验文件和旧内测用户的同签名升级包见 [v0.3.36 发行页](https://github.com/GiggleRobotics/G-Collie/releases/tag/v0.3.36)。
+当前下载为 Linux amd64 **0.3.36** 和 Android arm64 **0.1.52**。Android x86_64 安装包、旧内测签名升级包及校验文件见[发行页](https://github.com/GiggleRobotics/G-Collie/releases/tag/v0.3.36)。
 
-## 继续已有会话
+## 使用与开发
 
-打开「最近会话」或按项目查找，查看消息、工具调用和附件。Codex、Hermes 可以在本机接口支持时继续原会话。Claude Code 的外部终端历史可查看，通过 G-Collie 创建的会话可继续发送或停止。[三种助手的操作范围](docs/能力矩阵.md)
+- **安装、使用或排查连接问题**：[电脑端手册](docs/电脑端使用说明.md) · [手机端手册](docs/手机端使用说明.md) · [网络排错](docs/内置远程连接.md)
+- **从源码运行或贡献代码**：[贡献指南](CONTRIBUTING.md) · [测试说明](TESTING.md) · [Android 构建](flutter_client/README.md)
+- **查看版本变化或反馈问题**：[更新日志](docs/更新日志.md) · [提交 Issue](https://github.com/GiggleRobotics/G-Collie/issues)
 
-## 文档与开发
-
-[电脑端手册](docs/电脑端使用说明.md) · [手机端手册](docs/手机端使用说明.md) · [远程连接与排错](docs/内置远程连接.md)
-
-- 查安装与升级，可读[用户手册](docs/README.md)和[发行说明](RELEASE.md)。源码中的后续改动见[更新日志](docs/更新日志.md)。
-- 从[参与开发](CONTRIBUTING.md)了解代码结构、本地运行方式，再查[测试说明](TESTING.md)和[Android 构建指南](flutter_client/README.md)。
-- 遇到问题，请附上版本、助手类型和复现步骤。[提交问题](https://github.com/GiggleRobotics/G-Collie/issues)
-
-项目自有代码按 GNU GPL v3（仅第 3 版）分发。模型请求和私网连接遵循你所用服务的数据政策，反馈问题前请移除凭证和私人会话。[许可证](LICENSE) · [项目声明](NOTICE) · [第三方许可](THIRD_PARTY_NOTICES.md)
+项目自有代码按 GPL-3.0-only 分发。[许可证](LICENSE) · [项目声明](NOTICE) · [第三方许可](THIRD_PARTY_NOTICES.md)
