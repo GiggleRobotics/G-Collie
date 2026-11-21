@@ -1,4 +1,6 @@
-# G-Collie
+# G-Collie · Agent 会话控制台
+
+[项目官网](https://gigglerobotics.github.io/G-Collie/) · [功能演示](https://gigglerobotics.github.io/G-Collie/#demo) · [宣传素材](https://gigglerobotics.github.io/G-Collie/press/)
 
 **帮你照看每一个 Agent**
 
