@@ -1,21 +1,102 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>首次连接指南 · G-Collie</title><meta name="description" content="安装 G-Collie 的 Linux 电脑服务和 Android 客户端，让手机通过私网连接电脑，打开自己的 Agent 会话。">
-<link rel="icon" href="../assets/collie.webp" type="image/webp"><link rel="stylesheet" href="../site.css?v=5776a3202487">
-<style>
-.guide{max-width:940px;margin:auto;padding:54px 5% 72px}.guide h1{font-size:clamp(36px,6vw,62px);line-height:1.12;letter-spacing:-.05em;margin:12px 0 16px}.guide h2{font-size:clamp(23px,3vw,33px);margin:0 0 14px}.guide p,.guide li{line-height:1.8}.guide a{color:#245939;text-decoration:underline;text-underline-offset:4px}.guide .return{font-size:14px}.guide section{padding:26px 0;border-top:1px solid #cbd3c7}.guide .lead{color:#405247;max-width:60ch}.guide video{width:100%;height:auto;display:block;aspect-ratio:16/9;background:#1b2922;border-radius:12px;margin:24px 0 34px}.guide pre{background:#18261e;color:#eff8eb;padding:16px 20px;border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.75 ui-monospace,monospace}.guide figure{margin:18px 0 0}.guide figure img{width:100%;height:auto;max-width:630px;display:block;border:1px solid #d9ded6;border-radius:8px}.guide figcaption{font-size:13px;color:#4b5a4f;margin-top:6px}.guide .end{display:flex;gap:20px;flex-wrap:wrap}.guide summary{cursor:pointer;font-weight:600;padding:12px 0}.guide details p{margin-top:0}
-</style></head>
-<body><header class="mast"><div class="wrap mast-inner"><a class="brand" href="../"><img src="../assets/collie.webp" width="44" height="44" alt=""><b>G-Collie</b><span>Agent 会话控制台</span></a><nav aria-label="主导航"><a href="../#download">下载安装</a></nav></div></header>
-<main class="guide"><a class="return" href="../">← 返回官网</a><h1>连接你的第一台电脑</h1><p class="lead">以 Linux amd64 电脑和 Android arm64 手机为例。先让两端加入同一个可互访的私网，再用一次性配对码授权手机。开始前，在电脑上用自己的日常用户登录至少一个受支持的助手。</p>
-<video controls playsinline preload="none" poster="../media/first-connection.jpg" aria-label="首次连接流程，内嵌中文字幕"><source src="../media/first-connection.mp4" type="video/mp4"></video>
-<section><h2>在电脑上启动服务</h2><p>从<a href="../#download">下载区</a>获取 Linux DEB，并从同一发行页下载它的 <code>.sha256</code> 文件。在下载目录执行前两条命令，随后以日常用户运行 <code>g-collie</code>。</p>
-<pre><code>sha256sum -c g-collie_0.3.35_amd64.deb.sha256
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <title>首次连接指南 · G-Collie</title>
+  <meta name="description" content="在电脑和手机上加入同一个私网，用一次性配对码连接 G-Collie，从手机打开电脑上原有的 Agent 会话。">
+  <link rel="icon" href="../assets/collie.webp" type="image/webp">
+  <link rel="stylesheet" href="../site.css?v=5776a3202487">
+  <link rel="stylesheet" href="./guide.css">
+  <script defer src="./guide.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">跳到主要内容</a>
+<header class="mast"><div class="wrap mast-inner">
+  <a class="brand" href="../" aria-label="G-Collie · Agent 会话控制台首页"><img src="../assets/collie.webp" width="34" height="34" alt=""><b>G-Collie</b><span>Agent 会话控制台</span></a>
+  <nav aria-label="主导航"><a href="../">官网首页</a><a href="../#download">下载安装</a></nav>
+</div></header>
+<main class="guide" id="main">
+  <section class="overview" aria-labelledby="guide-title">
+    <div class="intro-guide">
+      <h1 id="guide-title">连接你的第一台电脑</h1>
+      <p class="lead">用手机或另一台电脑的浏览器接入执行电脑，从原会话继续工作。任务仍在执行电脑上运行。</p>
+      <p class="prerequisite">在执行电脑上用日常账号登录助手并启动 G-Collie。手机接入请安装 Android App；电脑接入请看<a href="#browser-pair">浏览器配对步骤 ↓</a>。</p>
+      <details class="setup">
+        <summary>首次安装与校验</summary>
+        <div class="setup-body">
+          <p>以下命令适用于 Linux amd64。将 <a href="https://github.com/GiggleRobotics/G-Collie/releases/download/v0.3.35/g-collie_0.3.35_amd64.deb">电脑端 DEB</a> 和 <a href="https://github.com/GiggleRobotics/G-Collie/releases/download/v0.3.35/g-collie_0.3.35_amd64.deb.sha256">对应校验文件</a> 保存在同一目录，随后在该目录依次执行下列命令。</p>
+          <pre><code>sha256sum -c g-collie_0.3.35_amd64.deb.sha256
 sudo apt install ./g-collie_0.3.35_amd64.deb
-g-collie</code></pre><p>电脑管理网页默认位于 <code>http://127.0.0.1:4310/</code>。只有 SSH 终端时，按<a href="https://github.com/GiggleRobotics/G-Collie/blob/v0.3.35/docs/电脑端使用说明.md">服务器部署说明</a>操作。</p></section>
-<section><h2>让电脑和手机入网</h2><p>在电脑打开「服务端管理 → 网络与服务 → 内置远程连接」，启动并完成 Tailscale 授权。在手机安装 <a href="../#download">Android App</a>，从「⋮ → 远程连接」登录或授权加入同一私网。复制电脑页面给出的完整手机访问地址，保留协议和端口。</p>
-<figure><img src="network.webp" width="1107" height="581" alt="电脑管理端的内置远程连接面板，状态为已加入私有网络"><figcaption>公开版 0.3.35 的管理页面，使用隔离示例地址。</figcaption></figure></section>
-<section><h2>配对并打开原会话</h2><p>电脑进入「手机配对与设备」，选中刚才的私网地址并点击「生成配对二维码」。在 App 的连接页填入完整地址和六位码，或粘贴完整配对链接，核对后提交。配对码十分钟有效，用过一次后重新生成。</p>
-<figure><img src="pair.webp" width="1107" height="372" alt="手机配对与设备面板，选好私网地址后可生成配对二维码"><figcaption>录制时使用示例数据。实际操作请选自己电脑显示的地址。</figcaption></figure><p>连接成功后，核对手机顶部的电脑名称，从「最近会话」打开原来的任务。能否继续发送、追加或审批，取决于助手来源、设备权限和当前会话状态。</p></section>
-<section><h2>常见问题</h2><details><summary>也可以从浏览器访问吗？</summary><p>可以。浏览器所在设备须能访问电脑服务。浏览器与 Android App 各用一份设备授权，请分别生成配对码。手机端的 <code>127.0.0.1</code> 指向手机自身。</p></details><details><summary>电脑需要一直开着吗？</summary><p>执行任务的电脑需要开机、联网并运行服务。可用常开的 Linux 电脑或服务器作为工作电脑。</p></details><details><summary>手机安装 APK 时提示签名冲突怎么办？</summary><p>先核对原安装包的签名。旧内测用户应从同次发行页选择匹配旧证书的覆盖包。详情见<a href="https://github.com/GiggleRobotics/G-Collie/blob/v0.3.35/RELEASE.md">发行说明</a>。</p></details></section>
-<div class="end"><a href="https://github.com/GiggleRobotics/G-Collie/blob/v0.3.35/docs/手机端使用说明.md">手机端完整手册 ↗</a><a href="https://github.com/GiggleRobotics/G-Collie/blob/v0.3.35/docs/内置远程连接.md">网络连接手册 ↗</a><a href="../media/first-connection.mp4" download>下载连接教程 ↓</a></div>
-</main></body></html>
+g-collie</code></pre>
+          <p>最后一条命令使用日常账号运行。电脑本机管理页默认为 <code>http://127.0.0.1:4310/</code>。Android arm64 手机安装<a href="https://github.com/GiggleRobotics/G-Collie/releases/download/v0.3.35/g-collie-0.1.51-android-arm64-release.apk">手机端 APK</a>。仅有 SSH 终端时，按<a href="https://github.com/GiggleRobotics/G-Collie/blob/v0.3.35/docs/电脑端使用说明.md">电脑端指南</a>配置。</p>
+        </div>
+      </details>
+    </div>
+    <figure class="walkthrough" aria-label="首次连接视频教程">
+      <div class="tutorial-picker" aria-label="选择视频教程">
+        <a id="phone-demo" href="../media/first-connection.mp4" data-poster="../media/first-connection.jpg" aria-current="true">手机 App</a>
+        <a id="browser-demo" href="../media/browser-connection.mp4" data-poster="../media/browser-connection.jpg">电脑浏览器</a>
+      </div>
+      <div id="tutorial-player">
+        <video controls muted playsinline preload="none" width="1280" height="720" poster="../media/first-connection.jpg" aria-label="手机 App 首次连接演示">
+          <source src="../media/first-connection.mp4" type="video/mp4">
+          <a href="../media/first-connection.mp4">打开手机 App 教程</a>
+        </video>
+      </div>
+      <figcaption><span id="tutorial-name">手机 App 首次连接演示</span><a id="tutorial-download" href="../media/first-connection.mp4" download aria-label="下载手机 App 首次连接演示">下载视频 <span aria-hidden="true">↓</span></a></figcaption>
+    </figure>
+  </section>
+
+  <section class="walk-steps" aria-label="连接步骤">
+    <ol>
+      <li id="network"><article>
+        <h2>让两端加入同一私网</h2>
+        <p><b>电脑</b>　打开「服务端管理 → 网络与服务 → 内置远程连接」。启动内置网络，在浏览器完成 Tailscale 授权。</p>
+        <p><b>手机</b>　从 App 右上角「⋮ → 远程连接」加入同一个有访问权限的私网。两端显示已加入后，开始配对。</p>
+        <details class="reference"><summary>查看电脑端入网界面</summary><figure><a href="./network.webp" aria-label="打开完整入网示例图片"><img src="./network.webp" width="1107" height="581" alt="内置远程连接面板显示已加入私网" loading="lazy"></a><figcaption>点击图片查看原图。</figcaption></figure></details>
+      </article></li>
+      <li id="pair"><article>
+        <h2>用一次性配对码连接</h2>
+        <p><b>电脑</b>　进入「服务端管理 → 手机配对与设备」，选择手机可访问的私网地址，点击「生成配对二维码」。</p>
+        <p><b>手机</b>　在「连接电脑」填写电脑给出的<strong>完整私网地址</strong>（含协议和端口）及六位码，点「配对并连接」。也可粘贴完整配对链接。</p>
+        <details class="reference"><summary>查看电脑端配对界面</summary><figure><a href="./pair.webp" aria-label="打开完整配对示例图片"><img src="./pair.webp" width="1107" height="372" alt="手机配对与设备面板中选择地址并生成配对二维码" loading="lazy"></a><figcaption>使用自己电脑生成的地址与配对码。</figcaption></figure></details>
+      </article></li>
+      <li id="session"><article>
+        <h2>在手机打开原会话</h2>
+        <p><b>手机</b>　首次配对后，可在本机资料页点「暂时跳过」或「进入工作台」。核对电脑名称，从「最近使用」打开任务，查看原有记录。</p>
+        <p>支持继续操作的会话可以接着发消息。能否追加要求或处理审批，取决于助手来源、设备权限和当前会话状态。</p>
+      </article></li>
+    </ol>
+  </section>
+
+  <section id="browser-pair" aria-labelledby="browser-title" class="browser-guide">
+    <div class="browser-heading"><h2 id="browser-title">用另一台电脑的浏览器接入</h2><a href="#browser-demo" class="jump-video">看浏览器演示 ↑</a></div>
+    <ol>
+      <li><strong>执行电脑生成配对码。</strong>打开「服务端管理 → 手机配对与设备」，选择另一台电脑能访问的私网地址，点击「生成配对二维码」，记下六位码。</li>
+      <li><strong>另一台电脑打开网页。</strong>加入同一可互访的网络，在浏览器地址栏输入执行电脑的完整访问地址（含协议和端口）。填写设备名称和六位码，点击「配对设备」。这台电脑只需浏览器即可使用 G-Collie。</li>
+      <li><strong>打开原会话。</strong>从工作台找到执行电脑上的会话，查看进度。有控制权限且会话支持时，可以接着发送消息。任务和文件仍留在执行电脑上。</li>
+    </ol>
+    <p>手机已用过的配对码需要重新生成。在另一台电脑输入 <code>127.0.0.1</code> 会打开它自己，请使用执行电脑提供的可达地址。</p>
+  </section>
+
+  <div class="support">
+    <section class="questions" aria-labelledby="faq-title">
+      <h2 id="faq-title">常见问题</h2>
+      <details><summary>已经入网，为什么还要配对？</summary><p>入网让手机能访问电脑，配对才授予 G-Collie 设备权限。六位码十分钟内一次有效。码已用过或已过期时，在电脑重新生成。</p></details>
+      <details><summary>执行任务的电脑需要一直开着吗？</summary><p>需要保持开机、联网并运行 G-Collie 服务。也可以使用常开的 Linux 电脑或服务器。</p></details>
+      <details><summary>安装 APK 时出现签名冲突怎么办？</summary><p>先核对原安装包的签名。旧内测用户可在同一次发行中选择匹配旧证书的覆盖包。具体步骤见<a href="https://github.com/GiggleRobotics/G-Collie/blob/v0.3.35/RELEASE.md">发行说明</a>。</p></details>
+    </section>
+    <section class="manuals" id="manuals" aria-labelledby="manuals-title">
+      <h2 id="manuals-title">设备指南</h2>
+      <ul>
+        <li><a href="https://github.com/GiggleRobotics/G-Collie/blob/v0.3.35/docs/电脑端使用说明.md">电脑端指南 <span aria-hidden="true">↗</span></a></li>
+        <li><a href="https://github.com/GiggleRobotics/G-Collie/blob/v0.3.35/docs/手机端使用说明.md">手机端指南 <span aria-hidden="true">↗</span></a></li>
+        <li><a href="https://github.com/GiggleRobotics/G-Collie/blob/v0.3.35/docs/内置远程连接.md">内置远程连接手册 <span aria-hidden="true">↗</span></a></li>
+      </ul>
+    </section>
+  </div>
+</main>
+</body>
+</html>
