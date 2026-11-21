@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#f7f7f0">
-  <meta name="description" content="G-Collie 是开源、自托管的 Agent 会话控制台。在手机或浏览器上查看和继续运行在自己电脑上的 Codex、Hermes 和 Claude Code 会话。">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="description" content="G-Collie 是开源、自托管的 Agent 会话控制台。在手机或浏览器上新建会话，或继续支持的原会话。Codex、Hermes 和 Claude Code 在自己的电脑上执行。">
   <meta property="og:title" content="G-Collie · Agent 会话控制台">
-  <meta property="og:description" content="电脑上的会话，拿起手机接着做。体验双端接续演示，下载 Linux 电脑端和 Android 手机端。">
+  <meta property="og:description" content="帮你照看每一个Agent。在手机上继续已有会话或新建会话，任务在你的电脑上执行。">
   <meta property="og:type" content="website">
   <meta property="og:image" content="https://gigglerobotics.github.io/G-Collie/media/cover.jpg">
   <meta property="og:image:alt" content="G-Collie 电脑与手机接续同一 Agent 会话">
@@ -19,70 +19,41 @@
 <body>
 <a class="skip" href="#main">跳到主要内容</a>
 <header class="mast"><div class="wrap mast-inner">
-  <a class="brand" href="./" aria-label="G-Collie · Agent 会话控制台首页"><img src="./assets/collie.webp" alt="" width="44" height="44"><b>G-Collie</b><span>Agent 会话控制台</span></a>
-  <nav aria-label="主导航"><a href="#agents">支持的助手</a><a href="./start/">安装指南</a><a class="repo" href="https://github.com/GiggleRobotics/G-Collie">GitHub <span aria-hidden="true">↗</span></a></nav>
+  <a class="brand" href="./" aria-label="G-Collie · Agent 会话控制台首页"><img src="./assets/collie.webp" alt="" width="34" height="34"><b>G-Collie</b><span>Agent 会话控制台</span></a>
+  <nav aria-label="主导航"><a id="install" href="./start/">首次连接</a><a href="https://github.com/GiggleRobotics/G-Collie">GitHub <span aria-hidden="true">↗</span></a></nav>
 </div></header>
-<main id="main">
-<section class="hero wrap">
-  <div class="hero-copy">
-    <p class="byline"><span class="status-dot" aria-hidden="true"></span>开源 · 自托管</p>
-    <h1><span>电脑上的会话，</span><span>拿起手机接着做。</span></h1>
-    <p class="intro">出门后也能打开电脑上的 Agent 会话。看进展、补充要求、处理审批，任务继续在你自己的电脑上运行。</p>
-    <div class="actions"><a class="button solid" href="#download">下载与安装 <span aria-hidden="true">↓</span></a><a class="button quiet" id="watch-film" href="./media/demo-wide.mp4"><span class="play-mark" aria-hidden="true"></span>观看短片</a></div>
-  </div>
-  <div class="showcase" id="demo" data-step="0" role="group" aria-label="使用示例数据的会话接续演示">
-    <div class="showcase-label"><span>会话接续演示</span><span class="small-mono">示例数据</span></div>
-    <div class="scene">
-      <div class="desktop device">
-        <div class="device-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><strong>测试报告</strong><span class="device-name">电脑</span></div>
-        <div class="screen-content">
-          <p class="tool-name"><span class="agent-dot" aria-hidden="true"></span>Codex</p>
-          <p id="computer-text">已生成测试报告，12 项中有 2 项失败。</p>
-          <div class="file"><span class="file-icon" aria-hidden="true">≡</span> report.md</div>
-        </div>
-      </div>
-      <div class="phone device">
-        <span class="earpiece" aria-hidden="true"></span>
-        <div class="phone-bar"><b>测试报告</b><span>手机</span></div>
-        <div class="phone-body"><small id="phone-label">原会话 · Codex</small><p id="phone-text">12 项测试已完成。</p><span class="phone-file">report.md</span></div>
-      </div>
+<main class="home wrap" id="main">
+  <section class="intro" aria-labelledby="title">
+    <img class="companion" src="./assets/companion.webp" width="156" height="102" alt="">
+    <h1 id="title">帮你照看<br>每一个<span lang="en">Agent</span></h1>
+    <p>在手机或浏览器上新建会话，也能在支持的原会话里接着发消息。Codex、Hermes 和 Claude Code 仍在你的电脑上执行。</p>
+    <div class="downloads" id="download" aria-label="下载当前公开版本">
+      <a class="package primary" href="https://github.com/GiggleRobotics/G-Collie/releases/download/v0.3.35/g-collie_0.3.35_amd64.deb"><span class="download-icon" aria-hidden="true">↓</span><span><b>下载 Linux 电脑端</b><small>DEB · amd64 · 0.3.35</small></span></a>
+      <a class="package" href="https://github.com/GiggleRobotics/G-Collie/releases/download/v0.3.35/g-collie-0.1.51-android-arm64-release.apk"><span class="download-icon" aria-hidden="true">↓</span><span><b>下载 Android 手机端</b><small>APK · arm64 · 0.1.51</small></span></a>
     </div>
-    <div class="demo-steps" aria-label="选择演示步骤">
-      <button type="button" data-show="0" aria-pressed="true">电脑生成</button>
-      <span aria-hidden="true">→</span><button type="button" data-show="1" aria-pressed="false">手机补充</button>
-      <span aria-hidden="true">→</span><button type="button" data-show="2" aria-pressed="false">查看结果</button>
+  </section>
+  <section class="demo" id="demo" aria-label="功能演示">
+    <div class="film-gallery">
+      <div class="preview-pair">
+        <img class="desk-shot" src="./assets/demo-desktop.webp" width="1280" height="800" alt="电脑工作台里的报告会话">
+        <img class="phone-shot" src="./assets/demo-mobile.webp" width="390" height="844" alt="手机上接着给同一报告发消息">
+        <img class="new-shot" src="./assets/new-session-mobile.webp" width="780" height="1688" alt="手机浏览器中选择 Hermes 和项目，新建会话">
+        <video class="scene-video" muted playsinline preload="none" aria-label="电脑执行、手机同步，再从手机继续输入"></video>
+        <noscript>
+          <video class="native-scene native-sync" muted autoplay loop playsinline preload="none" aria-label="电脑执行、手机同步，再从手机继续输入"><source src="./media/session-sync-preview.mp4" type="video/mp4" media="(prefers-reduced-motion: no-preference)"></video>
+          <video class="native-scene native-new" muted autoplay loop playsinline preload="none" poster="./assets/new-session-mobile.webp" aria-label="手机浏览器新建会话实录"><source src="./media/new-session.mp4" type="video/mp4" media="(prefers-reduced-motion: no-preference)"></video>
+        </noscript>
+      </div>
+      <fieldset class="film-options">
+        <legend class="sr-only">选择演示场景</legend>
+        <label class="film-option"><input type="radio" name="scene" value="existing" data-src="./media/session-sync-preview.mp4" data-description="电脑执行、手机同步，再从手机继续输入" checked><span>继续已有会话</span></label>
+        <label class="film-option"><input type="radio" name="scene" value="new" data-src="./media/new-session.mp4" data-description="手机浏览器新建会话实录"><span>手机新建会话</span></label>
+      </fieldset>
     </div>
-    <span class="sr" role="status" id="demo-status"></span>
-  </div>
-</section>
-<dialog id="film" aria-labelledby="film-title">
-  <div class="film-bar"><h2 id="film-title">同一条会话，在两端继续</h2><button type="button" id="close-film" aria-label="关闭短片">关闭 ×</button></div>
-  <video controls playsinline preload="none" poster="./media/cover.jpg" aria-label="电脑生成报告、手机补充要求、返回电脑查看更新的功能演示"><source src="./media/demo-wide.mp4" type="video/mp4"></video>
-  <p><a href="./media/demo-wide.mp4">直接打开视频 ↗</a></p>
-</dialog>
-<section class="agents" id="agents"><div class="wrap">
-  <div class="section-heading"><h2>接入你正在用的助手</h2><a class="text-link" href="https://github.com/GiggleRobotics/G-Collie/blob/v0.3.35/docs/能力矩阵.md">查看能力矩阵 ↗</a></div>
-  <div class="agent-list">
-    <article><h3>Codex</h3><p>在桌面或 app-server 支持的会话里读取进度、继续发送。部分由其他终端持有的会话仅可查看。</p></article>
-    <article><h3>Hermes</h3><p>连接兼容的本机 gateway，继续原会话、追加要求或停止当前轮次。可处理的请求取决于运行模式。</p></article>
-    <article><h3>Claude Code</h3><p>在 G-Collie 创建的会话里继续发送或停止。外部终端会话支持回看历史。</p></article>
-  </div>
-</div></section>
-<section class="download wrap" id="download">
-  <div class="section-heading"><h2>下载 G-Collie</h2><a class="text-link" href="https://github.com/GiggleRobotics/G-Collie/releases/tag/v0.3.35">发行说明与校验文件 ↗</a></div>
-  <div class="packages">
-    <article><div class="package-title"><span class="platform-icon monitor" aria-hidden="true"></span><h3>Linux 电脑端</h3></div><p>在运行助手的电脑安装服务，启动后也可通过浏览器打开工作台。</p><a class="button solid" href="https://github.com/GiggleRobotics/G-Collie/releases/download/v0.3.35/g-collie_0.3.35_amd64.deb">下载 DEB <span aria-hidden="true">↓</span></a><small>0.3.35 · amd64</small></article>
-    <article><div class="package-title"><span class="platform-icon handset" aria-hidden="true"></span><h3>Android 手机端</h3></div><p>在手机安装 App，与自己的电脑配对后打开原会话。首次安装可选下方正式签名包。</p><a class="button solid" href="https://github.com/GiggleRobotics/G-Collie/releases/download/v0.3.35/g-collie-0.1.51-android-arm64-release.apk">下载 APK <span aria-hidden="true">↓</span></a><small>0.1.51 · arm64</small><a class="alt-package" href="https://github.com/GiggleRobotics/G-Collie/releases/tag/v0.3.35">其他架构与旧内测签名 ↗</a></article>
-  </div>
-</section>
-<section class="connect wrap" id="install">
-  <div class="connect-copy"><h2>连接你的第一台电脑</h2><ol>
-    <li><b>启动服务</b><span>在已安装并登录助手的电脑上启动 G-Collie。</span></li>
-    <li><b>入网并配对</b><span>电脑与手机加入同一可达私网，再用电脑生成的一次性码配对。</span></li>
-    <li><b>打开原会话</b><span>在最近会话中找到原来的任务，查看进度或继续操作。</span></li>
-  </ol><div class="guide-links"><a class="button solid" href="./start/">首次连接指南 <span aria-hidden="true">→</span></a><a class="text-link" href="https://github.com/GiggleRobotics/G-Collie/blob/v0.3.35/docs/电脑端使用说明.md">电脑端指南 ↗</a><a class="text-link" href="https://github.com/GiggleRobotics/G-Collie/blob/v0.3.35/docs/手机端使用说明.md">手机端指南 ↗</a></div></div>
-  <img class="companion" src="./assets/companion.webp" alt="" width="540" height="360" loading="lazy">
-</section>
+  </section>
 </main>
-<footer class="wrap footing"><strong>G-Collie · Agent 会话控制台</strong><div><a href="https://github.com/GiggleRobotics/G-Collie">GitHub ↗</a></div></footer>
+<footer class="wrap footing">
+  <span>G-Collie · 开源自托管</span>
+  <div><a id="agents" href="https://github.com/GiggleRobotics/G-Collie/blob/v0.3.35/docs/能力矩阵.md">助手支持范围</a><a href="https://github.com/GiggleRobotics/G-Collie/releases/tag/v0.3.35">其他安装包与校验 ↗</a></div>
+</footer>
 </body></html>

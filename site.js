@@ -1,39 +1,60 @@
-const demo = document.getElementById('demo');
-const demoButtons = [...demo.querySelectorAll('[data-show]')];
-const states = [
-  {computer:'已生成测试报告，12 项中有 2 项失败。', label:'原会话 · Codex', phone:'12 项测试已完成。'},
-  {computer:'收到手机补充要求，正在调整报告顺序。', label:'你的补充要求', phone:'把失败的两项放到报告最前面。'},
-  {computer:'已更新报告，失败项排在最前面。', label:'报告已更新', phone:'失败项：登录超时、附件预览失败。'}
-];
+const gallery = document.querySelector('.film-gallery');
+const video = gallery.querySelector('.scene-video');
+const scenes = Array.from(gallery.querySelectorAll('input[name="scene"]'));
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+const connection = navigator.connection;
+let current = scenes.findIndex(scene => scene.checked);
+let inView = false;
+let userSelected = false;
 
-function chooseStep(index) {
-  const state = states[index];
-  demo.dataset.step = String(index);
-  document.getElementById('computer-text').textContent = state.computer;
-  document.getElementById('phone-label').textContent = state.label;
-  document.getElementById('phone-text').textContent = state.phone;
-  for (const [position, button] of demoButtons.entries()) {
-    button.setAttribute('aria-pressed', String(position === index));
+function displayScene() {
+  const scene = scenes[current];
+  scene.checked = true;
+  video.setAttribute('aria-label', scene.dataset.description);
+  const allowMotion = userSelected || (!reducedMotion.matches && !connection?.saveData);
+  if (!allowMotion || !inView || document.hidden) {
+    video.pause();
+    if (!allowMotion) gallery.classList.remove('show-video');
+    return;
   }
-  document.getElementById('demo-status').textContent = state.computer + state.phone;
-}
-for (const button of demoButtons) {
-  button.addEventListener('click', () => chooseStep(Number(button.dataset.show)));
+  if (video.getAttribute('src') !== scene.dataset.src) {
+    gallery.classList.remove('show-video');
+    video.src = scene.dataset.src;
+  }
+  video.play().catch(() => {
+    // The scene's still frame stays visible if autoplay is unavailable.
+  });
 }
 
-const film = document.getElementById('film');
-const video = film.querySelector('video');
-document.getElementById('watch-film').addEventListener('click', event => {
-  if (typeof film.showModal !== 'function' || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-  event.preventDefault();
-  film.showModal();
-  video.play().catch(() => { /* Native controls allow manual playback. */ });
-});
-document.getElementById('close-film').addEventListener('click', () => film.close());
-film.addEventListener('close', () => video.pause());
-film.addEventListener('click', event => {
-  if (event.target !== film) return;
-  const bounds = film.getBoundingClientRect();
-  if (event.clientX < bounds.left || event.clientX > bounds.right ||
-      event.clientY < bounds.top || event.clientY > bounds.bottom) film.close();
-});
+function selectScene(index, explicit) {
+  current = index;
+  userSelected = explicit;
+  displayScene();
+}
+
+for (const [index, scene] of scenes.entries()) {
+  scene.addEventListener('change', () => selectScene(index, true));
+  scene.addEventListener('click', () => {
+    if (index === current && video.paused) selectScene(index, true);
+  });
+}
+video.addEventListener('playing', () => gallery.classList.add('show-video'));
+video.addEventListener('error', () => gallery.classList.remove('show-video'));
+video.addEventListener('ended', () => selectScene((current + 1) % scenes.length, false));
+if ('IntersectionObserver' in window) {
+  const visibility = new IntersectionObserver(([entry]) => {
+    inView = entry.isIntersecting;
+    displayScene();
+  });
+  visibility.observe(gallery);
+} else {
+  inView = true;
+  displayScene();
+}
+function applyPreference() {
+  userSelected = false;
+  displayScene();
+}
+reducedMotion.addEventListener('change', applyPreference);
+connection?.addEventListener?.('change', applyPreference);
+document.addEventListener('visibilitychange', displayScene);
