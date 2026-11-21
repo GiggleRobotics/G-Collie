@@ -6,7 +6,7 @@ G-Collie 是个人自托管的 Agent 会话工作台：任务在自己的电脑�
 
 [![观看 35 秒演示：电脑生成测试报告，手机在同一条 Codex 会话里补充要求，电脑端显示更新](docs/使用示例/g-collie-cover.jpg)](https://gigglerobotics.github.io/G-Collie/media/demo-wide.mp4)
 
-[观看 35 秒演示](https://gigglerobotics.github.io/G-Collie/media/demo-wide.mp4) · [项目官网](https://gigglerobotics.github.io/G-Collie/) · [下载安装包](https://github.com/GiggleRobotics/G-Collie/releases/tag/v0.3.35) · [交互演示](https://gigglerobotics.github.io/G-Collie/#demo) · [宣传素材](https://gigglerobotics.github.io/G-Collie/press/)
+[观看 35 秒演示](https://gigglerobotics.github.io/G-Collie/media/demo-wide.mp4) · [项目官网](https://gigglerobotics.github.io/G-Collie/) · [下载安装包](https://github.com/GiggleRobotics/G-Collie/releases/tag/v0.3.35) · [交互演示](https://gigglerobotics.github.io/G-Collie/#demo)
 
 本版为第一次公开发行，功能范围已冻结。Linux 版本为 **0.3.35**，Android 为 **0.1.51（2058）**。旧的 0.3.25／0.1.40 beta 是本机内测基线，不应与正式签名包混淆。下载、兼容证据及尚未验收项目见 [发行说明](RELEASE.md)。最终发行文件、校验值及升级方式见发行说明。
 
