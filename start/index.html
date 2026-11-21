@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>首次连接指南 · G-Collie</title><meta name="description" content="安装 G-Collie 的 Linux 电脑服务和 Android 客户端，让手机通过私网连接电脑，打开自己的 Agent 会话。">
+<link rel="icon" href="../assets/collie.webp" type="image/webp"><link rel="stylesheet" href="../site.css">
+<style>
+.guide{max-width:940px;margin:auto;padding:54px 5% 72px}.guide h1{font-size:clamp(36px,6vw,62px);line-height:1.12;letter-spacing:-.05em;margin:12px 0 16px}.guide h2{font-size:clamp(23px,3vw,33px);margin:0 0 14px}.guide p,.guide li{line-height:1.8}.guide a{color:#245939;text-decoration:underline;text-underline-offset:4px}.guide .return{font-size:14px}.guide section{padding:26px 0;border-top:1px solid #cbd3c7}.guide .lead{color:#405247;max-width:60ch}.guide video{width:100%;height:auto;display:block;aspect-ratio:16/9;background:#1b2922;border-radius:12px;margin:24px 0 34px}.guide pre{background:#18261e;color:#eff8eb;padding:16px 20px;border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.75 ui-monospace,monospace}.guide figure{margin:18px 0 0}.guide figure img{width:100%;max-width:630px;display:block;border:1px solid #d9ded6;border-radius:8px}.guide figcaption{font-size:13px;color:#4b5a4f;margin-top:6px}.guide .end{display:flex;gap:20px;flex-wrap:wrap}.guide summary{cursor:pointer;font-weight:600;padding:12px 0}.guide details p{margin-top:0}
+</style></head>
+<body><header class="mast"><div class="wrap mast-inner"><a class="brand" href="../"><img src="../assets/collie.webp" width="44" height="44" alt=""><b>G-Collie</b><span>Agent 会话控制台</span></a><nav aria-label="主导航"><a href="../#download">下载安装</a><a href="../press/">宣传素材</a></nav></div></header>
+<main class="guide"><a class="return" href="../">← 返回官网</a><h1>连接你的第一台电脑</h1><p class="lead">以 Linux amd64 电脑和 Android arm64 手机为例。先让两端加入同一个可互访的私网，再用一次性配对码授权手机。开始前，在电脑上用自己的日常用户登录至少一个受支持的助手。</p>
+<video controls playsinline preload="none" poster="../media/first-connection.jpg" aria-label="首次连接流程，内嵌中文字幕"><source src="../media/first-connection.mp4" type="video/mp4"></video>
+<section><h2>在电脑上启动服务</h2><p>从<a href="../#download">下载区</a>获取 Linux DEB，并从同一发行页下载它的 <code>.sha256</code> 文件。在下载目录执行前两条命令，随后以日常用户运行 <code>g-collie</code>。</p>
+<pre><code>sha256sum -c g-collie_0.3.35_amd64.deb.sha256
+sudo apt install ./g-collie_0.3.35_amd64.deb
+g-collie</code></pre><p>电脑管理网页默认位于 <code>http://127.0.0.1:4310/</code>。只有 SSH 终端时，按<a href="https://github.com/GiggleRobotics/G-Collie/blob/v0.3.35/docs/电脑端使用说明.md">服务器部署说明</a>操作。</p></section>
+<section><h2>让电脑和手机入网</h2><p>在电脑打开「服务端管理 → 网络与服务 → 内置远程连接」，启动并完成 Tailscale 授权。在手机安装 <a href="../#download">Android App</a>，从「⋮ → 远程连接」登录或授权加入同一私网。复制电脑页面给出的完整手机访问地址，保留协议和端口。</p>
+<figure><img src="network.webp" width="1107" height="581" alt="电脑管理端的内置远程连接面板，状态为已加入私有网络"><figcaption>公开版 0.3.35 的管理页面，使用隔离示例地址。</figcaption></figure></section>
+<section><h2>配对并打开原会话</h2><p>电脑进入「手机配对与设备」，选中刚才的私网地址并点击「生成配对二维码」。在 App 的连接页填入完整地址和六位码，或粘贴完整配对链接，核对后提交。配对码十分钟有效，用过一次后重新生成。</p>
+<figure><img src="pair.webp" width="1107" height="372" alt="手机配对与设备面板，选好私网地址后可生成配对二维码"><figcaption>录制时使用示例数据。实际操作请选自己电脑显示的地址。</figcaption></figure><p>连接成功后，核对手机顶部的电脑名称，从「最近会话」打开原来的任务。能否继续发送、追加或审批，取决于助手来源、设备权限和当前会话状态。</p></section>
+<section><h2>常见问题</h2><details><summary>也可以从浏览器访问吗？</summary><p>可以。浏览器所在设备须能访问电脑服务。浏览器与 Android App 各用一份设备授权，请分别生成配对码。手机端的 <code>127.0.0.1</code> 指向手机自身。</p></details><details><summary>电脑需要一直开着吗？</summary><p>执行任务的电脑需要开机、联网并运行服务。可用常开的 Linux 电脑或服务器作为工作电脑。</p></details><details><summary>手机安装 APK 时提示签名冲突怎么办？</summary><p>先核对原安装包的签名。旧内测用户应从同次发行页选择匹配旧证书的覆盖包。详情见<a href="https://github.com/GiggleRobotics/G-Collie/blob/v0.3.35/RELEASE.md">发行说明</a>。</p></details></section>
+<div class="end"><a href="https://github.com/GiggleRobotics/G-Collie/blob/v0.3.35/docs/手机端使用说明.md">手机端完整手册 ↗</a><a href="https://github.com/GiggleRobotics/G-Collie/blob/v0.3.35/docs/内置远程连接.md">网络连接手册 ↗</a><a href="../media/first-connection.mp4" download>下载连接教程 ↓</a></div>
+</main></body></html>

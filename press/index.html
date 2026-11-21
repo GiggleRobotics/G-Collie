@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f8f8f2">
+<meta name="description" content="下载 G-Collie · Agent 会话控制台的产品演示、宣传图片和中文介绍。">
+<link rel="icon" href="../assets/collie.webp" type="image/webp">
+<title>宣传素材 · G-Collie · Agent 会话控制台</title>
+<link rel="stylesheet" href="../site.css">
+<style>
+*{box-sizing:border-box}
+body{margin:0}
+.frame{width:min(1180px,90%);margin-inline:auto}
+header{border-bottom:1px solid var(--line)}
+.bar,footer .frame{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.bar{min-height:68px;padding-block:10px}
+.brand{display:inline-flex;align-items:center;gap:9px;font-size:23px;font-weight:750;letter-spacing:-.05em;color:var(--ink);text-decoration:none}
+nav{display:flex;align-items:center;gap:24px}
+a{color:var(--forest);text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:4px}
+a:hover{text-decoration-thickness:2px}
+a:focus-visible,video:focus-visible{outline:3px solid #c2671b;outline-offset:4px}
+main{padding-bottom:68px}
+.press-intro{padding-block:clamp(44px,7vw,90px) 28px}
+h1,h2,h3,p,figure{margin:0}
+h1{font-size:clamp(40px,6vw,70px);letter-spacing:-.055em;line-height:1.15}
+h2{font-size:clamp(24px,3vw,34px);letter-spacing:-.045em;line-height:1.35}
+h3{font-size:19px}
+p{line-height:1.85}
+.press-intro p{max-width:44em;margin-top:18px;color:var(--sub);font-size:17px}
+.block{margin-top:32px;padding-top:26px;border-top:1px solid var(--line)}
+.grid{display:grid;grid-template-columns:1.6fr 1fr;gap:24px;margin-top:20px;align-items:start}
+.grid>*{min-width:0}
+.preview{display:grid;place-items:center;overflow:hidden;background:#e9eee8;border:1px solid var(--line);border-radius:12px}
+.wide{aspect-ratio:16/9}
+.tall{aspect-ratio:9/16;width:min(100%,222px);margin-inline:auto}
+video,.preview img{display:block;width:100%;height:100%;object-fit:contain}
+figcaption,.row{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
+figcaption{margin-top:12px}
+figcaption a,.row a{font-size:15px;font-weight:600}
+.copy{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.6fr);gap:40px;margin-top:24px}
+.copy h3{margin-bottom:8px}
+.copy p+p{margin-top:11px}
+.release,.release a{line-height:2}
+footer{padding-block:24px;border-top:1px solid var(--line);font-size:14px}
+@media(max-width:640px){.frame{width:min(100% - 32px,1090px)}.grid,.copy{grid-template-columns:1fr;gap:28px}.tall{width:min(100%,270px)}.bar{min-height:58px}nav{gap:16px}.press-intro{padding-block:38px 10px}}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">跳到主要内容</a>
+<header><div class="bar frame"><a class="brand" href="../" aria-label="G-Collie 官网首页"><img src="../assets/collie.webp" width="38" height="38" alt="">G-Collie</a><nav aria-label="网站导航"><a href="../start/">首次连接</a><a href="https://github.com/GiggleRobotics/G-Collie">GitHub 项目</a></nav></div></header>
+<main id="main" class="frame">
+<div class="press-intro"><h1>宣传素材</h1><p>G-Collie · Agent 会话控制台的演示视频、图片和中文发布文案。</p></div>
+<section class="block" aria-labelledby="videos"><h2 id="videos">演示视频</h2>
+<div class="grid">
+<figure><div class="preview wide"><video controls playsinline preload="metadata" poster="../media/cover.jpg" aria-label="横屏产品演示"><source src="../media/demo-wide.mp4" type="video/mp4"></video></div><figcaption><h3>横屏演示</h3><a href="../media/demo-wide.mp4" download>下载横屏 MP4</a></figcaption></figure>
+<figure><div class="preview tall"><video controls playsinline preload="metadata" poster="../media/poster.jpg" aria-label="竖屏产品演示"><source src="../media/demo-vertical.mp4" type="video/mp4"></video></div><figcaption><h3>竖屏演示</h3><a href="../media/demo-vertical.mp4" download>下载竖屏 MP4</a></figcaption></figure>
+</div><p style="margin-top:24px">第一次配对？<a href="../start/">查看首次连接图文教程</a>，或<a href="../media/first-connection.mp4" download>下载首次连接短片 MP4</a>。</p></section>
+<section class="block" aria-labelledby="images"><h2 id="images">封面与海报</h2><div class="grid">
+<figure><div class="preview wide"><img src="../media/cover.jpg" alt="G-Collie 横版宣传封面" loading="lazy"></div><figcaption><h3>横版封面</h3><a href="../media/cover.jpg" download>下载封面 JPG</a></figcaption></figure>
+<figure><div class="preview tall"><img src="../media/poster.jpg" alt="G-Collie 竖版宣传海报" loading="lazy"></div><figcaption><h3>竖版海报</h3><a href="../media/poster.jpg" download>下载海报 JPG</a></figcaption></figure>
+</div></section>
+<section class="block" aria-labelledby="release-copy"><div class="row"><h2 id="release-copy">中文发布文案</h2><a href="launch-copy.txt" download>下载文案 TXT</a></div><div class="copy">
+<article><h3>短文案</h3><p>离开工位，也能接着看电脑上的 Agent 在做什么。用 G-Collie 在手机或浏览器打开原有会话，查看进展，也能在支持的会话里补一句要求。任务继续在自己的电脑上运行。</p></article>
+<article><h3>长文案</h3><p>电脑上的 Agent 跑到哪一步了？打开 G-Collie · Agent 会话控制台，从手机或浏览器选中原来的会话，就能看到历史消息、工具调用和会话里引用的文件。碰到需要补充的细节，可以在支持的会话里直接发消息。任务仍由原来那台电脑执行。</p><p>G-Collie 支持 Codex、Hermes 和 Claude Code。Codex 和 Hermes 的控制能力取决于本机接口和会话状态。Claude Code 的外部终端记录可查看，通过 G-Collie 创建的 Claude Code 会话还可以继续发送或停止当前轮。手机一次可以配对多台电脑，每台电脑单独管理设备授权。</p><p>目前公开版提供 Linux amd64 安装包（电脑服务和网页 0.3.35），以及 Android 0.1.51。先在运行 Agent 的电脑安装服务，再用手机配对连接。</p></article></div></section>
+<section class="block release" aria-labelledby="downloads"><h2 id="downloads">产品与下载</h2><p><a href="https://github.com/GiggleRobotics/G-Collie/releases/download/v0.3.35/g-collie_0.3.35_amd64.deb">Linux amd64 · DEB</a>　<a href="https://github.com/GiggleRobotics/G-Collie/releases/download/v0.3.35/g-collie-0.1.51-android-arm64-release.apk">Android arm64 · APK</a></p><p>旧内测用户的覆盖安装包、校验文件及其他版本说明见 <a href="https://github.com/GiggleRobotics/G-Collie/releases/tag/v0.3.35">v0.3.35 发行页</a>。</p></section>
+</main>
+<footer><div class="frame"><span>G-Collie · Agent 会话控制台</span><a href="../">返回官网</a></div></footer>
+</body>
+</html>
