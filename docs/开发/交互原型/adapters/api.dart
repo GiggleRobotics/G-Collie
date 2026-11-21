@@ -11,7 +11,8 @@ class ApiException implements Exception {
   final int status;
   final String? code;
   final String? outcome;
-  ApiException(this.message, [this.status = 0, this.code, this.outcome]);
+  final String? attachmentId;
+  ApiException(this.message, [this.status = 0, this.code, this.outcome, this.attachmentId]);
   @override
   String toString() => message;
 }
@@ -62,8 +63,52 @@ bool canControl(Json d, String role, bool online) =>
 bool isActive(Json d) =>
     ['running', 'starting', 'waiting'].contains(d['status']);
 
+const firstSendDraftId = 'draft:first-send-preview';
+const firstSendImageId = 'preview-progress-image';
+const firstSendPrompt = '请根据附件整理本周的项目进展。';
+const firstSendFailure = '图片无法读取，请移除或更换';
+const firstSendDetails = {
+  'first-send-pending',
+  'first-send-unknown',
+  'first-send-failed',
+};
+
 // Preview-only in-memory transport. No HTTP client or real credentials.
 class CollieApi {
+  Json? firstSubmission;
+  Json? firstReceipt;
+  Completer<Json>? pendingFirstSend;
+
+  void receiveFirstSend(String state) {
+    final submission = firstSubmission;
+    if (submission == null || firstReceipt != null) return;
+    if (state == 'done') {
+      final result = createSession(submission);
+      firstReceipt = {'state': 'done', 'result': result};
+      pendingFirstSend?.complete(result);
+    } else if (state == 'failed') {
+      firstReceipt = {'state': 'failed', 'error': firstSendFailure};
+      pendingFirstSend?.completeError(ApiException(firstSendFailure, 409, null, 'failed'));
+    }
+    pendingFirstSend = null;
+  }
+
+  Json createSession(Json body) {
+    final agent = body['agent'] ?? 'Codex';
+    final id = "${agent == 'Claude Code' ? 'claude' : agent.toString().toLowerCase()}:${requestId()}";
+    final prompt = body['prompt'] as String? ?? '';
+    final d = detail(id, agent, prompt.isEmpty ? '新会话' : prompt);
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final turn = requestId();
+    d['events'] = [
+      {'id': requestId(), 'role': 'user', 'text': prompt, 'time': now, 'turnId': turn,
+       'requestId': body['requestId'], 'attachmentIds': body['attachments'] ?? []},
+      {'id': requestId(), 'role': 'assistant', 'text': body['draftId'] == firstSendDraftId ? '已收到。' : '已收到。这是同源 Flutter 页面中的模拟回复。', 'time': now + 1},
+    ];
+    sessions[id] = d;
+    return {'id': id, 'turnId': turn};
+  }
+
   // Local-only preview metadata; never reads production attachment caches.
   final Map<String, Json> attachmentPreviews = {};
   Future<bool> reachable() async => !previewOffline;
@@ -248,7 +293,9 @@ class CollieApi {
     void Function(int, int)? onProgress,
   }) async => throw ApiException('视频上传与抽帧需在 Android 真机验收');
   Future<dynamic> call(String path, [Json? body]) async {
-    await Future<void>.delayed(const Duration(milliseconds: 180));
+    if (path != '/sessions' || body?['draftId'] != firstSendDraftId) {
+      await Future<void>.delayed(const Duration(milliseconds: 180));
+    }
     final scenario = Uri.base.queryParameters['state'];
     // Offline previews return cached demo records; controls remain disabled.
     if (previewOffline && (path.startsWith('/control/') || path == '/sessions'))
@@ -301,16 +348,27 @@ class CollieApi {
       if(body?['action']=='archive') demo['archived']=true;
       return {'ok':true};
     }
+    if (path == '/sessions/requests/first-send-preview') {
+      return firstReceipt ?? {'state': 'sending'};
+    }
     if (path == '/sessions') {
-      final id =
-          '${body?['agent'] == 'Claude Code' ? 'claude' : body?['agent'].toString().toLowerCase()}:${requestId()}';
-      final d = detail(id, body?['agent'] ?? 'Codex', body?['prompt'] ?? '新会话');
-      d['events'] = [
-        {'role': 'user', 'text': body?['prompt'] ?? ''},
-        {'role': 'assistant', 'text': '已收到。这是同源 Flutter 页面中的模拟回复。'},
-      ];
-      sessions[id] = d;
-      return {'id': id};
+      if (body?['draftId'] == firstSendDraftId) {
+        final initial = firstSubmission == null;
+        firstSubmission = Map.of(body!);
+        final scenario = Uri.base.queryParameters['detail'];
+        if (initial && scenario == 'first-send-pending') {
+          pendingFirstSend = Completer<Json>();
+          return pendingFirstSend!.future;
+        }
+        if (initial && scenario == 'first-send-unknown') {
+          throw ApiException('正在确认发送结果', 504, null, 'unknown');
+        }
+        if ((body['attachments'] as List).contains(firstSendImageId)) {
+          firstReceipt = {'state': 'failed', 'error': firstSendFailure};
+          throw ApiException(firstSendFailure, 409, null, 'failed');
+        }
+      }
+      return createSession(body!);
     }
     if (path.startsWith('/control/')) {
       final id = Uri.decodeComponent(path.substring(9));

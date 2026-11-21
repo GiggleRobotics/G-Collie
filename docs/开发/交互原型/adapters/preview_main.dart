@@ -2,6 +2,8 @@ import 'dart:convert';
 // Browser-only fixture navigation; the Flutter engine stays loaded.
 // ignore: deprecated_member_use
 import 'dart:html' as html;
+// ignore: deprecated_member_use
+import 'dart:js_util' as js;
 import 'package:flutter/material.dart';
 
 import 'main.dart' as product;
@@ -66,6 +68,8 @@ ThemeData previewTheme(Brightness brightness) {
   );
 }
 
+CollieApi? activePreviewApi;
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   html.window.onMessage.listen((event) {
@@ -76,7 +80,18 @@ Future<void> main() async {
     } on FormatException {
       return; // Readiness and other plain-text messages are not navigation.
     }
-    if (message is! Map || message['type'] != 'prototype:navigate') return;
+    if (message is! Map) return;
+    if (message['type'] == 'prototype:first-send-receipt') {
+      // dart:html wraps cross-frame windows separately on each property read.
+      final source = js.getProperty<Object?>(event, 'source');
+      final parent = js.getProperty<Object?>(html.window, 'parent');
+      if (!identical(source, parent)) return;
+      if (['done', 'failed'].contains(message['state'])) {
+        activePreviewApi?.receiveFirstSend(message['state'] as String);
+      }
+      return;
+    }
+    if (message['type'] != 'prototype:navigate') return;
     final query = message['query'];
     if (query is! String) return;
     html.window.history.replaceState(null, '', '?$query');
@@ -138,6 +153,7 @@ class _PreviewComputerWorkspaceState extends State<PreviewComputerWorkspace> {
           previewComputerId: id,
         ),
       );
+      activePreviewApi = api;
       api.previewOffline =
           computer['online'] != true || previewComputers.connecting;
       for (final session in api.sessions.values) {
@@ -167,7 +183,11 @@ class _PreviewComputerWorkspaceState extends State<PreviewComputerWorkspace> {
         initialData: {
           'sessions': params['state'] == 'empty' ? [] : api.sessions.values.toList(),
           'projects': api.projects,
-          'detail': api.sessions[initialSession],
+          'detail': firstSendDetails.contains(params['detail'])
+              ? {'id': firstSendDraftId, 'draft': true, 'title': '新会话',
+                 'agent': 'Codex', 'cwd': '/demo/G-Collie', 'status': 'idle',
+                 'events': <Json>[]}
+              : api.sessions[initialSession],
           'online': !api.previewOffline,
         },
       );

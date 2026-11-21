@@ -1,6 +1,6 @@
 # G-Collie 0.3.35 / Android 0.1.51
 
-发布日期：2026-11-17。电脑服务／网页版本0.3.35；Android版本0.1.51，arm64构建号2058、x86_64构建号4058。
+2026-11-17 发布。电脑服务与网页为 0.3.35，Android 为 0.1.51（arm64 构建号 2058，x86_64 构建号 4058）。下文对应公开标签 v0.3.35。工作区中的后续改动见 [更新日志](docs/更新日志.md)。
 
 [GitHub Release 与下载](https://github.com/GiggleRobotics/G-Collie/releases/tag/v0.3.35) · [完整验证记录](docs/开发/06-版本发布记录.md) · [能力矩阵](docs/能力矩阵.md)
 
@@ -13,21 +13,16 @@
 - 纯终端Codex使用原生app-server／安全现存daemon；修复旧数据库兼容、派生JPEG条纹、内置网络子进程代理继承和Hermes未知结果误判。
 - 真实Hermes旧sidecar支持浮点秒轮次标识；新版gateway按已核验的实例、profile及authority幂等附着已运行会话。缺失runtime拒绝冷接管；审批要求完整回放和当前代际。
 
-## 本轮验证
-
-- 服务端178项、Flutter162项、类型检查、Flutter静态分析、Web构建和Go核心race回归通过。
-- SG实际Codex CLI0.169：13项原生／独立daemon桥控制测试通过，仅使用临时CODEX_HOME及回环模型。旧409已确认为发送前状态同步保护，没有重放用户正文。
-- 真实Hermes旧sidecar及JDCLOUD原生gateway分别使用专用profile与回环模型验证发送、幂等、当前轮停止；原生authority附着、完整事件回放及冷恢复拒绝已实测。
-- Xiaomi真机原App同签升级0.1.51/2058，原数据保留。工具图片收展及Markdown正常／缺图通过；后台520秒期间Wi-Fi→蜂窝后自动追平两条稳定ID测试消息，重复刷新与反向切网无重复。测试电脑已解除，原三台配对保留，网络设置恢复。
-- DEB独立HOME包内烟测及源码／许可／SHA校验，双ABI APK生产签名、非debug、16KiB对齐均单列核验。具体最终SHA见随包SHA256SUMS-first-release和逐文件.sha256。
-
 ## 下载与升级
 
-- Linux amd64：`g-collie_0.3.35_amd64.deb`。
-- Android新用户：`g-collie-0.1.51-android-arm64-release.apk`；x86_64包用于对应设备及模拟器。
-- 旧内测手机：`g-collie-flutter-0.1.51-arm64-beta.apk`，仅供相同旧证书覆盖升级。它与生产arm64包82个非签名ZIP条目逐项一致；真机运行验证使用此包，不冒称生产证书已在该手机全新安装。
-- Android生产证书SHA256：`6286e58588a3b92e786f4511bb84cb59e954b527e2bf2c1f3e11c5b2e80cc08b`。不同证书不能直接覆盖，不自动卸载、清数据或承诺跨签无损迁移。
-- 同次提供源码包、每个产物.sha256、生产签名元数据及校验清单。DEB提供SHA256，现有流程未配置独立DEB密码学签名。
+| 使用环境 | Release 附件 |
+| --- | --- |
+| Linux amd64 电脑 | `g-collie_0.3.35_amd64.deb` |
+| 首次安装的 arm64 Android 手机 | `g-collie-0.1.51-android-arm64-release.apk` |
+| x86_64 Android 设备或模拟器 | `g-collie-0.1.51-android-x86_64-release.apk` |
+| 已使用旧内测签名的 arm64 手机 | `g-collie-flutter-0.1.51-arm64-beta.apk` |
+
+下载文件及其同名 `.sha256` 到同一目录。以 Linux DEB 为例：
 
 ```bash
 sha256sum -c g-collie_0.3.35_amd64.deb.sha256
@@ -35,7 +30,15 @@ sudo apt install ./g-collie_0.3.35_amd64.deb
 g-collie
 ```
 
-升级前保留旧包及本人数据备份；安装后核对版本、配对和原会话。个人数据位于`~/.local/share/g-collie`，卸载程序默认保留。备份含配对凭据和网络身份，应私密保管；`g-collie backup`会短暂停G-Collie服务，须避开依赖它的任务。
+首次连接见 [电脑使用手册](docs/电脑端使用说明.md) 和 [手机使用手册](docs/手机端使用说明.md)。升级前请保留旧包和数据备份。电脑端数据位于 `~/.local/share/g-collie`。运行 `g-collie backup` 会短暂停止 G-Collie 服务，备份含设备授权和网络身份，请择时运行并私密保管。
+
+## Android 签名与升级
+
+生产证书 SHA256 为 `6286e58588a3b92e786f4511bb84cb59e954b527e2bf2c1f3e11c5b2e80cc08b`。旧内测覆盖包与生产包使用不同证书。升级已有安装请选择原签名对应的文件，核对签名后覆盖安装可保留数据。Release 同时提供源码包、生产签名元数据与 SHA256 清单。DEB 的完整性校验使用随包 SHA256。
+
+## 本轮验证
+
+该 Tag 的服务端 178 项测试、Flutter 162 项测试、静态分析、网页构建及 Go 核心 race 回归通过。Codex 0.169 与 Hermes 在隔离会话和回环模型下验证了原生控制。Android 使用旧内测同签包在小米手机上验收升级、图片和 Markdown 展示，以及约 8 分钟后台期间切网后追平和去重。生产双 ABI APK 单独核验签名和 16 KiB 对齐。[发行验收记录](docs/开发/06-版本发布记录.md)
 
 ## 能力边界
 

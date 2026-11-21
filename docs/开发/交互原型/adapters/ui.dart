@@ -229,6 +229,7 @@ class CollieShell extends StatefulWidget {
   final bool online, loading, busy, enabled, attachmentEnabled, running;
   final List<dynamic> sessions, projects, warnings;
   final Json? detail;
+  final List<Json> uploads;
   final TextEditingController draft;
   final ScrollController scroll;
   final VoidCallback? onConversationMetrics, onConversationUserScroll;
@@ -269,6 +270,7 @@ class CollieShell extends StatefulWidget {
     required this.warnings,
     required this.detail,
     required this.draft,
+    required this.uploads,
     required this.scroll,
     this.onConversationMetrics,
     this.onConversationUserScroll,
@@ -606,7 +608,7 @@ class _CollieShellState extends State<CollieShell> {
       ].contains(Uri.base.queryParameters['page']) ||
       Uri.base.queryParameters['state'] == 'quota';
   bool large = false, uploading = false;
-  final uploads = <Json>[];
+  List<Json> get uploads => widget.uploads;
   String uploadError = '';
   String uploadStatus = '';
   @override
@@ -723,6 +725,12 @@ class _CollieShellState extends State<CollieShell> {
           await Future<void>.delayed(const Duration(milliseconds: 100));
           if (!mounted) return;
         }
+      }
+      if (widget.detail?['id'] == firstSendDraftId && firstSendDetails.contains(detail)) {
+        widget.draft.text = firstSendPrompt;
+        setState(() => uploads.add({'id': firstSendImageId, 'name': '示例照片.jpg', 'image': true}));
+        await widget.onSend([firstSendImageId]);
+        return;
       }
       switch (detail) {
         case 'more-menu':
@@ -2289,7 +2297,9 @@ class _CollieShellState extends State<CollieShell> {
         Center(child: muted(context, '电脑离线 · 当前显示缓存记录', size: 10)),
         const SizedBox(height: 8),
       ],
-      for (final e in d['events'] ?? [])
+      for (final e in (d['events'] as List? ?? []).where(
+        (e) => d['id'] != firstSendDraftId || e['sendStatus'] == null,
+      ))
         if (e['role'] == 'tool' || e['role'] == 'reasoning')
           ProcessRecord(
             key: ValueKey('process:${d['id']}:${e['id']}'),
@@ -2847,16 +2857,61 @@ class _CollieShellState extends State<CollieShell> {
     );
   }
 
+  Widget firstSendNotice(String status) {
+    final failed = status == 'failed';
+    final pending = status == 'sending';
+    final scheme = Theme.of(context).colorScheme;
+    final accent = failed ? scheme.error : scheme.onSurfaceVariant;
+    return Semantics(
+      liveRegion: true,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 0, 8, 10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(failed ? Icons.error_outline : pending ? Icons.schedule : Icons.sync,
+                size: 18, color: accent),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(failed ? '首条消息未发送' : pending ? '正在发送首条消息…' : '正在确认发送结果',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: accent)),
+                if (failed || !pending)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(failed
+                        ? uploads.any((f) => f['id'] == firstSendImageId)
+                            ? firstSendFailure : '可重新发送。'
+                        : '正在查询电脑回执，请勿重复发送。',
+                        style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+                  ),
+              ]),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget composer() {
     final d = widget.detail;
     final hasContent =
         widget.draft.text.trim().isNotEmpty || uploads.isNotEmpty;
     final showStop = widget.running && !hasContent;
+    String? firstSendStatus;
+    if (d != null && d['id'] == firstSendDraftId) {
+      final events = d['events'] as List;
+      if (events.isNotEmpty) firstSendStatus = events.last['sendStatus'];
+    }
+    final receiptLocked = firstSendStatus == 'sending' || firstSendStatus == 'unknown';
+    final invalidImage = firstSendStatus == 'failed' &&
+        uploads.any((file) => file['id'] == firstSendImageId);
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (firstSendStatus != null) firstSendNotice(firstSendStatus),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
@@ -2923,7 +2978,7 @@ class _CollieShellState extends State<CollieShell> {
                               iconAction(
                                 'X',
                                 '移除附件 ${file['name']}',
-                                uploading || widget.busy
+                                receiptLocked || uploading || widget.busy
                                     ? null
                                     : () =>
                                           setState(() => uploads.remove(file)),
@@ -2979,7 +3034,8 @@ class _CollieShellState extends State<CollieShell> {
                         maxLines: 1,
                         maxLength: 4000,
                         onChanged: (_) => widget.onDraft(),
-                        style: const TextStyle(fontSize: 14, height: 1.6),
+                        style: TextStyle(fontSize: 14, height: 1.6,
+                            color: receiptLocked ? Theme.of(context).colorScheme.onSurface : null),
                         decoration: InputDecoration(
                           hintText: widget.api.previewOffline
                               ? '电脑连接后可发送'
@@ -3012,9 +3068,10 @@ class _CollieShellState extends State<CollieShell> {
                     ),
                     const SizedBox(width: 8),
                     IconButton(
-                      tooltip: showStop ? '停止当前轮' : '发送',
+                      tooltip: showStop ? '停止当前轮' : firstSendStatus == 'failed' ? '重新发送' : '发送',
                       onPressed:
                           (widget.enabled && !quotaBlocked) &&
+                              !invalidImage &&
                               !uploading &&
                               (showStop
                                   ? (d?['turnId'] != null)
@@ -3022,16 +3079,9 @@ class _CollieShellState extends State<CollieShell> {
                                         uploads.isNotEmpty))
                           ? showStop
                                 ? widget.onStop
-                                : () async {
-                                    if (await widget.onSend(
-                                          uploads
-                                              .map((f) => f['id'] as String)
-                                              .toList(),
-                                        ) &&
-                                        mounted) {
-                                      setState(() => uploads.clear());
-                                    }
-                                  }
+                                : () => widget.onSend(
+                                    uploads.map((f) => f['id'] as String).toList(),
+                                  )
                           : null,
                       style: IconButton.styleFrom(
                         backgroundColor: companionGreen,
@@ -3282,7 +3332,7 @@ class _CollieShellState extends State<CollieShell> {
                 ),
               ),
             ),
-            if (widget.error.isNotEmpty && !quotaBlocked)
+            if (widget.error.isNotEmpty && !quotaBlocked && d?['id'] != firstSendDraftId)
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 color: Theme.of(context).colorScheme.errorContainer,
